@@ -1,10 +1,10 @@
 #!/usr/bin/env pwsh
 
 param(
-  [string]$RepoPath = $(if ($env:AGENT_SKILLS_REPO_PATH) { $env:AGENT_SKILLS_REPO_PATH } else { "$HOME/src/agent-skills" }),
-  [string]$RepoUrl = $(if ($env:AGENT_SKILLS_REPO_URL) { $env:AGENT_SKILLS_REPO_URL } else { "https://github.com/joshyorko/agent-skills.git" }),
+  [string]$RepoPath = $(if ($env:AGENT_SKILLS_REPO_PATH) { $env:AGENT_SKILLS_REPO_PATH } else { "$HOME/src/plugins" }),
+  [string]$RepoUrl = $(if ($env:AGENT_SKILLS_REPO_URL) { $env:AGENT_SKILLS_REPO_URL } else { "https://github.com/joshyorko/plugins.git" }),
   [string]$CodexHome = $(if ($env:AGENT_SKILLS_CODEX_HOME) { $env:AGENT_SKILLS_CODEX_HOME } else { "$HOME/.codex" }),
-  [string]$MarketplaceName = $(if ($env:AGENT_SKILLS_MARKETPLACE_NAME) { $env:AGENT_SKILLS_MARKETPLACE_NAME } else { "agent-skills" }),
+  [string]$MarketplaceName = $(if ($env:AGENT_SKILLS_MARKETPLACE_NAME) { $env:AGENT_SKILLS_MARKETPLACE_NAME } else { "plugins" }),
   [ValidateSet("auto", "link", "copy")] [string]$SkillMode = $(if ($env:AGENT_SKILLS_SKILL_MODE) { $env:AGENT_SKILLS_SKILL_MODE } else { "auto" }),
   [ValidateSet("auto", "git", "archive")] [string]$InstallMethod = $(if ($env:AGENT_SKILLS_INSTALL_METHOD) { $env:AGENT_SKILLS_INSTALL_METHOD } else { "auto" }),
   [string]$Ref = $(if ($env:AGENT_SKILLS_REF) { $env:AGENT_SKILLS_REF } else { "" }),
@@ -15,7 +15,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoOwner = "joshyorko"
-$RepoName = "agent-skills"
+$RepoName = "plugins"
 $ApiBase = "https://api.github.com/repos/$RepoOwner/$RepoName"
 
 function Show-Usage {
@@ -25,8 +25,8 @@ Usage: install.ps1 [-RepoPath PATH] [-RepoUrl URL] [-CodexHome PATH] [-Marketpla
 Remote bootstrap for the Agent Skills marketplace.
 
 Examples:
-  irm https://raw.githubusercontent.com/joshyorko/agent-skills/main/install.ps1 | iex
-  `$env:AGENT_SKILLS_REF='v1.2.3'; irm https://raw.githubusercontent.com/joshyorko/agent-skills/main/install.ps1 | iex
+  irm https://raw.githubusercontent.com/joshyorko/plugins/main/install.ps1 | iex
+  `$env:AGENT_SKILLS_REF='v1.2.3'; irm https://raw.githubusercontent.com/joshyorko/plugins/main/install.ps1 | iex
 "@
 }
 
@@ -214,27 +214,27 @@ function Install-FromArchive {
     }
   }
 
-  $tmpRoot = Join-Path ([IO.Path]::GetTempPath()) ("agent-skills-" + [guid]::NewGuid().ToString("N"))
+  $tmpRoot = Join-Path ([IO.Path]::GetTempPath()) ("plugins-" + [guid]::NewGuid().ToString("N"))
   Ensure-Directory $tmpRoot
   try {
     if ($resolvedRef -eq "main") {
-      $archivePath = Join-Path $tmpRoot "agent-skills-main.zip"
+      $archivePath = Join-Path $tmpRoot "plugins-main.zip"
       Invoke-WebRequest -Uri "https://github.com/$RepoOwner/$RepoName/archive/refs/heads/main.zip" -OutFile $archivePath
     }
     else {
-      $archivePath = Join-Path $tmpRoot "agent-skills-$resolvedRef.zip"
+      $archivePath = Join-Path $tmpRoot "plugins-$resolvedRef.zip"
       $checksumsPath = Join-Path $tmpRoot "SHA256SUMS"
-      Invoke-WebRequest -Uri "https://github.com/$RepoOwner/$RepoName/releases/download/$resolvedRef/agent-skills-$resolvedRef.zip" -OutFile $archivePath -ErrorAction Stop
+      Invoke-WebRequest -Uri "https://github.com/$RepoOwner/$RepoName/releases/download/$resolvedRef/plugins-$resolvedRef.zip" -OutFile $archivePath -ErrorAction Stop
       Invoke-WebRequest -Uri "https://github.com/$RepoOwner/$RepoName/releases/download/$resolvedRef/SHA256SUMS" -OutFile $checksumsPath
 
-      $expected = Select-String -Path $checksumsPath -Pattern "agent-skills-$resolvedRef.zip" | Select-Object -First 1
+      $expected = Select-String -Path $checksumsPath -Pattern "plugins-$resolvedRef.zip" | Select-Object -First 1
       if (-not $expected) {
-        throw "Missing checksum for agent-skills-$resolvedRef.zip"
+        throw "Missing checksum for plugins-$resolvedRef.zip"
       }
       $expectedHash = ($expected.Line -split '\s+')[0].ToLowerInvariant()
       $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
       if ($expectedHash -ne $actualHash) {
-        throw "Checksum mismatch for agent-skills-$resolvedRef.zip"
+        throw "Checksum mismatch for plugins-$resolvedRef.zip"
       }
     }
 

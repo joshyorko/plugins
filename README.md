@@ -1,4 +1,4 @@
-[![Bootstrap Smoke](https://github.com/joshyorko/agent-skills/actions/workflows/bootstrap-smoke.yml/badge.svg)](https://github.com/joshyorko/agent-skills/actions/workflows/bootstrap-smoke.yml)
+[![Bootstrap Smoke](https://github.com/joshyorko/plugins/actions/workflows/bootstrap-smoke.yml/badge.svg)](https://github.com/joshyorko/plugins/actions/workflows/bootstrap-smoke.yml)
 
 # Agent Skills
 
@@ -13,7 +13,7 @@ The canonical source of truth lives under `plugins/`. The repo exposes a generat
 ## Structure
 
 ```text
-agent-skills/
+plugins/
 ├── AGENTS.md
 ├── README.md
 ├── .agents/
@@ -152,26 +152,26 @@ Install this repo once per machine and expose its plugins/skills globally.
 macOS/Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joshyorko/agent-skills/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/joshyorko/plugins/main/install.sh | bash
 ```
 
 Pinned macOS/Linux install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joshyorko/agent-skills/main/install.sh | bash -s -- --ref v1.2.3
+curl -fsSL https://raw.githubusercontent.com/joshyorko/plugins/main/install.sh | bash -s -- --ref v1.2.3
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://raw.githubusercontent.com/joshyorko/agent-skills/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/joshyorko/plugins/main/install.ps1 | iex
 ```
 
 Pinned Windows install:
 
 ```powershell
 $env:AGENT_SKILLS_REF = "v1.2.3"
-irm https://raw.githubusercontent.com/joshyorko/agent-skills/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/joshyorko/plugins/main/install.ps1 | iex
 ```
 
 The remote entrypoints prefer a git checkout when available and fall back to verified release archives when git is unavailable. See [docs/codex-bootstrap.md](docs/codex-bootstrap.md) for options, manual fallback, uninstall flow, and devcontainer usage.
@@ -234,9 +234,9 @@ The repo also emits Hermes-compatible plugin shims for each plugin:
 Install a plugin directly from its subdirectory and enable it:
 
 ```bash
-hermes plugins install joshyorko/agent-skills/plugins/37signals --enable
-hermes plugins install joshyorko/agent-skills/plugins/fizzy --enable
-hermes plugins install joshyorko/agent-skills/plugins/rcc --enable
+hermes plugins install joshyorko/plugins/plugins/37signals --enable
+hermes plugins install joshyorko/plugins/plugins/fizzy --enable
+hermes plugins install joshyorko/plugins/plugins/rcc --enable
 ```
 
 Hermes plugin skills are explicit-load and namespaced. They do not appear in the flat `hermes skills list` output or the system prompt skill index. Load them with the plugin prefix, for example:

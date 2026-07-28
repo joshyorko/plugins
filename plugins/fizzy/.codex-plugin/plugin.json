@@ -7,8 +7,8 @@
     "email": "joshua.yorko@gmail.com",
     "url": "https://github.com/joshyorko"
   },
-  "homepage": "https://github.com/joshyorko/agent-skills",
-  "repository": "https://github.com/joshyorko/agent-skills",
+  "homepage": "https://github.com/joshyorko/plugins",
+  "repository": "https://github.com/joshyorko/plugins",
   "license": "MIT",
   "keywords": [
     "fizzy",
@@ -29,9 +29,9 @@
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/joshyorko/agent-skills",
-    "privacyPolicyURL": "https://github.com/joshyorko/agent-skills",
-    "termsOfServiceURL": "https://github.com/joshyorko/agent-skills",
+    "websiteURL": "https://github.com/joshyorko/plugins",
+    "privacyPolicyURL": "https://github.com/joshyorko/plugins",
+    "termsOfServiceURL": "https://github.com/joshyorko/plugins",
     "defaultPrompt": [
       "List boards and summarize active work in Fizzy.",
       "Manage Fizzy cards and comments from the CLI or available MCP tools."

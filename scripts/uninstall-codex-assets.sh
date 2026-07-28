@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_PATH_DEFAULT="${HOME}/src/agent-skills"
+REPO_PATH_DEFAULT="${HOME}/src/plugins"
 CODEX_HOME_DEFAULT="${HOME}/.codex"
 AGENTS_HOME_DEFAULT="${HOME}/.agents"
-MARKETPLACE_NAME_DEFAULT="agent-skills"
+MARKETPLACE_NAME_DEFAULT="plugins"
 
 REPO_PATH="$REPO_PATH_DEFAULT"
 CODEX_HOME="$CODEX_HOME_DEFAULT"
@@ -24,10 +24,10 @@ Usage: scripts/uninstall-codex-assets.sh [options]
 Remove Codex skill links/copies and marketplace entries created by install-codex-assets.sh.
 
 Options:
-  --repo-path PATH        Location of the agent-skills checkout (default: ~/src/agent-skills)
+  --repo-path PATH        Location of the plugins checkout (default: ~/src/plugins)
   --codex-home PATH       Codex user directory (default: ~/.codex)
   --agents-home PATH      Agents user directory for legacy marketplace metadata (default: ~/.agents)
-  --marketplace-name NAME Marketplace name to remove (default: agent-skills)
+  --marketplace-name NAME Marketplace name to remove (default: plugins)
   --force                 Remove matching copy-mode skill directories
   -h, --help              Show this help message
 EOF
@@ -89,7 +89,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 CODEX_HOME="$(normalize_path "$CODEX_HOME")"
-STATE_PATH="${CODEX_HOME}/state/agent-skills.json"
+STATE_PATH="${CODEX_HOME}/state/plugins.json"
 
 load_state_defaults() {
   [[ -f "$STATE_PATH" ]] || return 0
@@ -134,7 +134,7 @@ AGENTS_HOME="$(normalize_path "$AGENTS_HOME")"
 MARKETPLACE_NAME="${MARKETPLACE_NAME:-$MARKETPLACE_NAME_DEFAULT}"
 
 SKILLS_ROOT="${CODEX_HOME}/skills"
-STATE_PATH="${CODEX_HOME}/state/agent-skills.json"
+STATE_PATH="${CODEX_HOME}/state/plugins.json"
 
 resolve_link_target() {
   python3 - "$1" <<'PY'

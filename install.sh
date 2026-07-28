@@ -2,11 +2,11 @@
 set -euo pipefail
 
 REPO_OWNER="joshyorko"
-REPO_NAME="agent-skills"
+REPO_NAME="plugins"
 REPO_URL_DEFAULT="https://github.com/${REPO_OWNER}/${REPO_NAME}.git"
 REPO_PATH_DEFAULT="${HOME}/src/${REPO_NAME}"
 CODEX_HOME_DEFAULT="${HOME}/.codex"
-MARKETPLACE_NAME_DEFAULT="agent-skills"
+MARKETPLACE_NAME_DEFAULT="plugins"
 API_BASE="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}"
 
 REPO_URL="${AGENT_SKILLS_REPO_URL:-$REPO_URL_DEFAULT}"
@@ -25,10 +25,10 @@ Usage: install.sh [options]
 Remote bootstrap for the Agent Skills marketplace.
 
 Options:
-  --repo-path PATH          Stable local checkout path (default: ~/src/agent-skills)
-  --repo-url URL            Git clone URL (default: https://github.com/joshyorko/agent-skills.git)
+  --repo-path PATH          Stable local checkout path (default: ~/src/plugins)
+  --repo-url URL            Git clone URL (default: https://github.com/joshyorko/plugins.git)
   --codex-home PATH         Codex home directory (default: ~/.codex)
-  --marketplace-name NAME   Marketplace name (default: agent-skills)
+  --marketplace-name NAME   Marketplace name (default: plugins)
   --skill-mode MODE         auto (default), link, or copy
   --install-method MODE     auto (default), git, or archive
   --ref REF                 Release tag, branch, or commit to install
@@ -36,8 +36,8 @@ Options:
   -h, --help                Show this help message
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/joshyorko/agent-skills/main/install.sh | bash
-  curl -fsSL https://raw.githubusercontent.com/joshyorko/agent-skills/main/install.sh | bash -s -- --ref v1.2.3
+  curl -fsSL https://raw.githubusercontent.com/joshyorko/plugins/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/joshyorko/plugins/main/install.sh | bash -s -- --ref v1.2.3
 EOF
 }
 
@@ -323,13 +323,13 @@ install_from_archive() {
 
   local archive_path checksum_path archive_url checksum_url
   if [[ "$resolved_ref" == "main" ]]; then
-    archive_path="${TMP_ROOT}/agent-skills-main.tar.gz"
+    archive_path="${TMP_ROOT}/plugins-main.tar.gz"
     archive_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/heads/main.tar.gz"
     curl -fsSL "$archive_url" -o "$archive_path"
   else
-    archive_path="${TMP_ROOT}/agent-skills-${resolved_ref}.tar.gz"
+    archive_path="${TMP_ROOT}/plugins-${resolved_ref}.tar.gz"
     checksum_path="${TMP_ROOT}/SHA256SUMS"
-    archive_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${resolved_ref}/agent-skills-${resolved_ref}.tar.gz"
+    archive_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${resolved_ref}/plugins-${resolved_ref}.tar.gz"
     checksum_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${resolved_ref}/SHA256SUMS"
     curl -fsSL "$archive_url" -o "$archive_path" || {
       echo "Archive mode requires a published release tag. Could not download assets for ${resolved_ref}." >&2

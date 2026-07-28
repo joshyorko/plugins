@@ -64,7 +64,7 @@ jobs:
             --resolved-ref ci \
             --skip-repo-sync \
             --force
-          test -f "$tmp_root/codex/state/agent-skills.json"
+          test -f "$tmp_root/codex/state/plugins.json"
           bash scripts/uninstall-codex-assets.sh --codex-home "$tmp_root/codex" --force
 
   validate-windows:
@@ -89,7 +89,7 @@ jobs:
             -SkipRepoSync `
             -SkillMode copy `
             -Force
-          if (-not (Test-Path (Join-Path $tmpCodex "state/agent-skills.json"))) {
+          if (-not (Test-Path (Join-Path $tmpCodex "state/plugins.json"))) {
             throw "state file missing after install"
           }
 
@@ -124,7 +124,7 @@ jobs:
             -InstallMethod git `
             -SkillMode copy `
             -Force
-          if (-not (Test-Path (Join-Path $tmpCodex "state/agent-skills.json"))) {
+          if (-not (Test-Path (Join-Path $tmpCodex "state/plugins.json"))) {
             throw "state file missing after remote entrypoint install"
           }
 

@@ -1,5 +1,5 @@
 {
-  "name": "agent-skills",
+  "name": "plugins",
   "interface": {
     "displayName": "Agent Skills"
   },
@@ -31,9 +31,9 @@
           "Read",
           "Write"
         ],
-        "websiteURL": "https://github.com/joshyorko/agent-skills",
-        "privacyPolicyURL": "https://github.com/joshyorko/agent-skills",
-        "termsOfServiceURL": "https://github.com/joshyorko/agent-skills",
+        "websiteURL": "https://github.com/joshyorko/plugins",
+        "privacyPolicyURL": "https://github.com/joshyorko/plugins",
+        "termsOfServiceURL": "https://github.com/joshyorko/plugins",
         "defaultPrompt": [
           "Use $37signals-rails-implement to implement this Rails feature with source-grounded recipes.",
           "Use $37signals-product-refresh to refresh this existing product workflow without turning it into a rewrite.",
@@ -74,9 +74,9 @@
           "Read",
           "Write"
         ],
-        "websiteURL": "https://github.com/joshyorko/agent-skills",
-        "privacyPolicyURL": "https://github.com/joshyorko/agent-skills",
-        "termsOfServiceURL": "https://github.com/joshyorko/agent-skills",
+        "websiteURL": "https://github.com/joshyorko/plugins",
+        "privacyPolicyURL": "https://github.com/joshyorko/plugins",
+        "termsOfServiceURL": "https://github.com/joshyorko/plugins",
         "defaultPrompt": [
           "List boards and summarize active work in Fizzy.",
           "Manage Fizzy cards and comments from the CLI or available MCP tools."
@@ -120,9 +120,9 @@
           "Read",
           "Write"
         ],
-        "websiteURL": "https://github.com/joshyorko/agent-skills",
-        "privacyPolicyURL": "https://github.com/joshyorko/agent-skills",
-        "termsOfServiceURL": "https://github.com/joshyorko/agent-skills",
+        "websiteURL": "https://github.com/joshyorko/plugins",
+        "privacyPolicyURL": "https://github.com/joshyorko/plugins",
+        "termsOfServiceURL": "https://github.com/joshyorko/plugins",
         "defaultPrompt": [
           "Choose the right RCC specialist skill for this task.",
           "Orient me in RCC source, holotree, caches, endpoints, or templates.",

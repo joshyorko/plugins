@@ -1,10 +1,10 @@
 #!/usr/bin/env pwsh
 
 param(
-  [string]$RepoPath = "$HOME/src/agent-skills",
-  [string]$RepoUrl = $(if ($env:REPO_URL) { $env:REPO_URL } else { "https://github.com/joshyorko/agent-skills.git" }),
+  [string]$RepoPath = "$HOME/src/plugins",
+  [string]$RepoUrl = $(if ($env:REPO_URL) { $env:REPO_URL } else { "https://github.com/joshyorko/plugins.git" }),
   [string]$CodexHome = "$HOME/.codex",
-  [string]$MarketplaceName = "agent-skills",
+  [string]$MarketplaceName = "plugins",
   [ValidateSet("auto", "link", "copy")] [string]$SkillMode = $(if ($env:SKILL_MODE) { $env:SKILL_MODE } else { "auto" }),
   [ValidateSet("git", "archive")] [string]$InstallMethod = $(if ($env:INSTALL_METHOD) { $env:INSTALL_METHOD } else { "git" }),
   [string]$Ref = $(if ($env:REF_SPEC) { $env:REF_SPEC } else { "" }),
@@ -23,9 +23,9 @@ Usage: pwsh -File scripts/install-codex-assets.ps1 [-RepoPath PATH] [-RepoUrl UR
 Bootstrap Codex plugins and skills from this repository into a user-level installation.
 
 Examples:
-  pwsh -File "$HOME/src/agent-skills/scripts/install-codex-assets.ps1" -RepoPath "$HOME/src/agent-skills"
-  pwsh -File "$HOME/src/agent-skills/scripts/install-codex-assets.ps1" -RepoPath "$HOME/src/agent-skills" -SkillMode copy -Force
-  pwsh -File "$HOME/src/agent-skills/scripts/install-codex-assets.ps1" -RepoPath "$HOME/src/agent-skills" -SkipRepoSync -InstallMethod archive -ResolvedRef v1.2.3
+  pwsh -File "$HOME/src/plugins/scripts/install-codex-assets.ps1" -RepoPath "$HOME/src/plugins"
+  pwsh -File "$HOME/src/plugins/scripts/install-codex-assets.ps1" -RepoPath "$HOME/src/plugins" -SkillMode copy -Force
+  pwsh -File "$HOME/src/plugins/scripts/install-codex-assets.ps1" -RepoPath "$HOME/src/plugins" -SkipRepoSync -InstallMethod archive -ResolvedRef v1.2.3
 "@
 }
 
@@ -106,7 +106,7 @@ $script:MarketplaceAddArgs = $null
 
 $SkillsRoot = Join-Path $CodexHome "skills"
 $StateRoot = Join-Path $CodexHome "state"
-$StatePath = Join-Path $StateRoot "agent-skills.json"
+$StatePath = Join-Path $StateRoot "plugins.json"
 $CatalogPath = Join-Path $RepoPath "marketplaces/catalog.json"
 $LegacyAgentsHome = Normalize-Path "$HOME/.agents"
 

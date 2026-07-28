@@ -7,8 +7,8 @@
     "email": "joshua.yorko@gmail.com",
     "url": "https://github.com/joshyorko"
   },
-  "homepage": "https://github.com/joshyorko/agent-skills",
-  "repository": "https://github.com/joshyorko/agent-skills",
+  "homepage": "https://github.com/joshyorko/plugins",
+  "repository": "https://github.com/joshyorko/plugins",
   "license": "MIT",
   "keywords": [
     "rcc",
@@ -33,9 +33,9 @@
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/joshyorko/agent-skills",
-    "privacyPolicyURL": "https://github.com/joshyorko/agent-skills",
-    "termsOfServiceURL": "https://github.com/joshyorko/agent-skills",
+    "websiteURL": "https://github.com/joshyorko/plugins",
+    "privacyPolicyURL": "https://github.com/joshyorko/plugins",
+    "termsOfServiceURL": "https://github.com/joshyorko/plugins",
     "defaultPrompt": [
       "Choose the right RCC specialist skill for this task.",
       "Orient me in RCC source, holotree, caches, endpoints, or templates.",

@@ -34,27 +34,27 @@ See `python-library-audit.md` for the current cross-source Python library map, e
 Additional sources inspected for that audit:
 
 - `https://github.com/Sema4AI/actions`
-  - Research checkout: `/tmp/agent-skills-rcc-phase-review-20260523/sema4ai-actions`
+  - Research checkout: `/tmp/plugins-rcc-phase-review-20260523/sema4ai-actions`
   - Branch/commit inspected: `master` / `9d9479e`
   - Supports `sema4ai.actions`, `sema4ai.mcp`, `package.yaml` v2, data access query templates, `Request`, `Table`, `ActionError`, `SecretSpec`, and MCP tool annotation hints.
 
 - `https://github.com/joshyorko/actions`
-  - Research checkout: `/tmp/agent-skills-rcc-phase-review-20260523/joshyorko-actions-community`
+  - Research checkout: `/tmp/plugins-rcc-phase-review-20260523/joshyorko-actions-community`
   - Branch/commit inspected: `community` / `3bae23bb49fe`
   - Supports the community-only `workflow-producer-consumer` template, `actions-work-items` recipes, and Action Server RCC utility orientation.
 
 - `https://github.com/joshyorko/rcc`
-  - Research checkout: `/tmp/agent-skills-rcc-phase-review-20260523/joshyorko-rcc`
+  - Research checkout: `/tmp/plugins-rcc-phase-review-20260523/joshyorko-rcc`
   - Branch/commit inspected: `main` / `59011b848ee1`
   - Supports current RCC docs for isolated Python automation packages, dependency export/freeze, `rcc task script`, endpoint overrides, uv-native mode, and holotree cache behavior.
 
 - `https://github.com/robocorp/robocorp`
-  - Research checkout: `/tmp/agent-skills-rcc-phase-review-20260523/robocorp`
+  - Research checkout: `/tmp/plugins-rcc-phase-review-20260523/robocorp`
   - Branch/commit inspected: `master` / `64cc9a3`
   - Supports `robocorp.tasks`, `robocorp.browser`, `robocorp.workitems`, `robocorp.vault`, `robocorp.storage`, and `robocorp.log` examples.
 
 - `https://github.com/Sema4AI/gallery`
-  - Research checkout: `/tmp/agent-skills-python-library-audit-20260501/sema4ai-gallery`
+  - Research checkout: `/tmp/plugins-python-library-audit-20260501/sema4ai-gallery`
   - Branch/commit inspected: `main` / `d6afd61`
   - Supports real action package shapes, auth/model patterns, and `package.yaml` examples across prebuilt actions.
 
@@ -62,22 +62,22 @@ Org-level `gh repo list` scans were also run for `Sema4AI`, `robocorp`, and `jos
 
 ## Josh Repositories
 
-- `https://github.com/joshyorko/agent-skills`
+- `https://github.com/joshyorko/plugins`
   - Branch/commit inspected: `main` / `d9c6289`
   - Supports RCC plugin/skill layout, generated runtime symlink views, marketplace metadata flow, and repository validation rules.
 
 - `https://github.com/joshyorko/rcc.git`
-  - Research checkout: `/tmp/agent-skills-rcc-research/rcc`
+  - Research checkout: `/tmp/plugins-rcc-research/rcc`
   - Branch/commit inspected: `main` / `59011b848ee1`
   - Supports RCC command names, `robot.yaml`/`conda.yaml` recipes, holotree commands, bundles, diagnostics, uv-native examples, and RCC remote client commands.
 
 - `https://github.com/joshyorko/actions.git`
-  - Research checkout: `/tmp/agent-skills-rcc-research/actions`
+  - Research checkout: `/tmp/plugins-rcc-research/actions`
   - Branch/commit inspected: `community` / `3bae23bb49fe`
   - Supports Action Server community source build commands, `package.yaml` v2 examples, Sema4AI action/MCP docs, `actions-work-items`, workflow producer/consumer templates, and frontend community build notes.
 
 - `https://github.com/joshyorko/robot-templates.git`
-  - Research checkout: `/tmp/agent-skills-rcc-research/robot-templates`
+  - Research checkout: `/tmp/plugins-rcc-research/robot-templates`
   - Branch/commit inspected: `main` / `487cdfc`
   - Supports template names and patterns for minimal Python, browser, work items, Assistant AI, Action Server work items, uv-native, and maintenance robot workflows.
 
@@ -92,12 +92,12 @@ Org-level `gh repo list` scans were also run for `Sema4AI`, `robocorp`, and `jos
   - Supports RCC diagnostic dev task patterns such as `Doctor`, work item env printing, SQLite smoke runs, contract/parity robot tests, and hosted-smoke style validation.
 
 - `https://github.com/joshyorko/robocorp_adapters_custom.git`
-  - Research checkout: `/tmp/agent-skills-rcc-research/robocorp_adapters_custom`
+  - Research checkout: `/tmp/plugins-rcc-research/robocorp_adapters_custom`
   - Branch/commit inspected: `main` / `c56c70102423`
   - Supports custom adapter class names, env variables, SQLite/Redis/DocumentDB/Yorko Control Room behavior, Fizzy orchestration helpers, and adapter tests.
 
 - `https://github.com/joshyorko/rccremote-docker.git`
-  - Research checkout: `/tmp/agent-skills-rcc-research/rccremote-docker`
+  - Research checkout: `/tmp/plugins-rcc-research/rccremote-docker`
   - Branch/commit inspected: `self-hosted` / `b265fbc`
   - Supports RCC remote deployment/client orientation and `RCC_REMOTE_ORIGIN` usage.
 
@@ -122,13 +122,13 @@ Org-level `gh repo list` scans were also run for `Sema4AI`, `robocorp`, and `jos
   - Supports browser/action packages with `ActionError`, `Response`, dotenv/env development handling, and packaging excludes.
 
 - `https://github.com/joshyorko/robocorp-action-server041.git`
-  - Research checkout: `/tmp/agent-skills-rcc-research/robocorp-action-server041`
+  - Research checkout: `/tmp/plugins-rcc-research/robocorp-action-server041`
   - Branch/commit inspected: `main` / `2c860cc`
   - Optional probe result: available during this run.
   - Supports historical Robocorp/Action Server 0.4.1 source orientation only; do not use it for current-version claims.
 
 - `https://github.com/joshyorko/room-of-requirement.git`
-  - Research checkout: `/tmp/agent-skills-room-of-requirement`
+  - Research checkout: `/tmp/plugins-room-of-requirement`
   - Branch/commit inspected: `main` / `a7e00e632865e0af434c78b7da809f2c07420fe7`
   - Supports RCC maintenance robot structure, scheduled GitHub Actions pattern, pinned RCC install, `ROBOCORP_HOME` cache key, telemetry disable, no-cache commit guard, allowlist strategy, and maintenance report artifact behavior.
 
@@ -176,7 +176,7 @@ Org-level `gh repo list` scans were also run for `Sema4AI`, `robocorp`, and `jos
 ## Local-Only Josh Repositories
 
 - `bps-rpa-cx-qa-bot-main`
-  - Local path inspected: `/var/home/kdlocpanda/Projects/agent-skills/bps-rpa-cx-qa-bot-main`
+  - Local path inspected: `/var/home/kdlocpanda/Projects/plugins/bps-rpa-cx-qa-bot-main`
   - Inspected date: 2026-05-14
   - Supports production DocDB/MongoDB RPA patterns: run-scoped queue ladder, `robocorp_adapters_custom._docdb.DocumentDBAdapter`, `RunDocDBHelper`, `DOCDB_HELPER_ARGS_JSON`, per-job secret loading through RCC, dynamic worker matrix from DocDB counts, retry/outbox/replay, artifact and screenshot storage, failure categories, timing payloads, and workflow contract tests.
 
@@ -236,11 +236,11 @@ Org-level `gh repo list` scans were also run for `Sema4AI`, `robocorp`, and `jos
 
 ## Optional Repository Probe
 
-- No optional Josh repositories were private/unavailable during this run. Probe status is recorded in `/tmp/agent-skills-rcc-research/OPTIONAL-UNAVAILABLE.txt`.
+- No optional Josh repositories were private/unavailable during this run. Probe status is recorded in `/tmp/plugins-rcc-research/OPTIONAL-UNAVAILABLE.txt`.
 
 ## Official Docs Fetched
 
-Fetched into `/tmp/agent-skills-rcc-research/official-docs/`.
+Fetched into `/tmp/plugins-rcc-research/official-docs/`.
 
 - `https://raw.githubusercontent.com/Sema4AI/actions/master/action_server/docs/guides/00-startup-command-line.md`
   - Supports Action Server startup/import/start behavior.

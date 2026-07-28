@@ -1,6 +1,6 @@
 # DocDB RPA Production Patterns
 
-Source: local example `bps-rpa-cx-qa-bot-main`, inspected 2026-05-14 from the `agent-skills` workspace.
+Source: local example `bps-rpa-cx-qa-bot-main`, inspected 2026-05-14 from the `plugins` workspace.
 
 Use this reference when a robot treats DocumentDB/MongoDB as the durable work-item system, artifact store, retry source, replay source, or outbox boundary. It is a production RPA pattern, not just a bigger local adapter example.
 

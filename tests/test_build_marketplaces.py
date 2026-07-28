@@ -28,7 +28,7 @@ class MarketplaceBuilderTest(unittest.TestCase):
             encoding="utf-8",
         )
         catalog = {
-            "name": "agent-skills",
+            "name": "plugins",
             "interface": {"displayName": "Agent Skills"},
             "plugins": [
                 {

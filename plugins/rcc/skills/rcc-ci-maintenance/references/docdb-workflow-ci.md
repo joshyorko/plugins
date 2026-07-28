@@ -1,6 +1,6 @@
 # DocDB RPA Workflow CI Pattern
 
-Source: local example `bps-rpa-cx-qa-bot-main`, inspected 2026-05-14 from the `agent-skills` workspace.
+Source: local example `bps-rpa-cx-qa-bot-main`, inspected 2026-05-14 from the `plugins` workspace.
 
 Use this for production GitHub Actions workflows that run RCC-backed RPA bots with DocumentDB/MongoDB work-item queues. Use `../../rcc-workitems/references/docdb-rpa-patterns.md` for adapter, queue, retry, outbox, and payload details.
 

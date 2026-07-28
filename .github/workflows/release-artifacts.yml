@@ -28,11 +28,11 @@ jobs:
         run: |
           tag="${GITHUB_REF_NAME}"
           mkdir -p dist
-          git archive --format=tar.gz --prefix="agent-skills-${tag}/" -o "dist/agent-skills-${tag}.tar.gz" "${GITHUB_SHA}"
-          git archive --format=zip --prefix="agent-skills-${tag}/" -o "dist/agent-skills-${tag}.zip" "${GITHUB_SHA}"
+          git archive --format=tar.gz --prefix="plugins-${tag}/" -o "dist/plugins-${tag}.tar.gz" "${GITHUB_SHA}"
+          git archive --format=zip --prefix="plugins-${tag}/" -o "dist/plugins-${tag}.zip" "${GITHUB_SHA}"
           (
             cd dist
-            sha256sum "agent-skills-${tag}.tar.gz" "agent-skills-${tag}.zip" > SHA256SUMS
+            sha256sum "plugins-${tag}.tar.gz" "plugins-${tag}.zip" > SHA256SUMS
           )
 
       - name: Publish release assets

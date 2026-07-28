@@ -16,7 +16,7 @@ Use this skill for normal Action Server package authoring and debugging across J
 
 ## Non-Goals
 
-- Do not prototype an agent-skills marketplace server.
+- Do not prototype an plugins marketplace server.
 - Do not create a new MCP server, action server, daemon, web service, or marketplace runtime product for this repo.
 - Do not make plugin distribution sound hosted; this skill is for ordinary Action Server action packages.
 

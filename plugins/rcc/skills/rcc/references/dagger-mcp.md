@@ -13,7 +13,7 @@ The bridge does not embed RCC source code or pin a repo by default. It starts Da
 
 ## Runtime Boundary
 
-- Host: the MCP client starts the launcher script from this `agent-skills` checkout.
+- Host: the MCP client starts the launcher script from this `plugins` checkout.
 - Dagger: runs the module from current working directory when it contains `dagger.json` and `.dagger/`.
 - No module: if current directory is not a Dagger module and no override is set, the launcher starts `dagger mcp --no-mod --env-privileged` so Dagger can expose core API tools without a repo module.
 - Optional override: `RCC_DAGGER_REPO=/path/to/module` pins the module path when current-directory behavior is not wanted.
@@ -34,7 +34,7 @@ On Josh's Bluefin host, prefer current-directory registration:
 
 ```bash
 codex mcp add rcc-dagger \
-  -- /var/home/kdlocpanda/second_brain/Areas/agent-skills/plugins/rcc/skills/rcc/scripts/rcc-dagger-mcp
+  -- /var/home/kdlocpanda/second_brain/Areas/plugins/plugins/rcc/skills/rcc/scripts/rcc-dagger-mcp
 ```
 
 For a fixed RCC-only registration, add the override:
@@ -42,7 +42,7 @@ For a fixed RCC-only registration, add the override:
 ```bash
 codex mcp add rcc-dagger \
   --env RCC_DAGGER_REPO=/var/home/kdlocpanda/second_brain/Projects/automation-control-plane/rcc \
-  -- /var/home/kdlocpanda/second_brain/Areas/agent-skills/plugins/rcc/skills/rcc/scripts/rcc-dagger-mcp
+  -- /var/home/kdlocpanda/second_brain/Areas/plugins/plugins/rcc/skills/rcc/scripts/rcc-dagger-mcp
 ```
 
 For another machine, change the script path and any optional module override to local absolute paths.
@@ -87,10 +87,10 @@ Dagger's MCP server exposes a generic method interface:
 
 Agents should call `ListMethods` first, then select and call the RCC module methods they need. In the current RCC Dagger module, the useful methods are:
 
-| Method | Use |
-|--------|-----|
-| `rcc` | Run an RCC command in the Dagger container and return stdout. |
-| `rcc-with-output` | Run an RCC command and return a directory from the container. |
+| Method            | Use                                                                             |
+| ----------------- | ------------------------------------------------------------------------------- |
+| `rcc`             | Run an RCC command in the Dagger container and return stdout.                   |
+| `rcc-with-output` | Run an RCC command and return a directory from the container.                   |
 | `run-robot-tests` | Run the RCC Robot Framework acceptance suite through the Dagger test container. |
 
 The Dagger docs note that externally exposed MCP currently supports modules with no required constructor arguments. The RCC module fits that shape.

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_URL_DEFAULT="https://github.com/joshyorko/agent-skills.git"
-REPO_PATH_DEFAULT="${HOME}/src/agent-skills"
+REPO_URL_DEFAULT="https://github.com/joshyorko/plugins.git"
+REPO_PATH_DEFAULT="${HOME}/src/plugins"
 CODEX_HOME_DEFAULT="${HOME}/.codex"
-MARKETPLACE_NAME_DEFAULT="agent-skills"
+MARKETPLACE_NAME_DEFAULT="plugins"
 SKILL_MODE_DEFAULT="auto"
 INSTALL_METHOD_DEFAULT="git"
 LEGACY_AGENTS_HOME="${HOME}/.agents"
@@ -35,10 +35,10 @@ Usage: scripts/install-codex-assets.sh [options]
 Bootstrap Codex plugins and skills from this repository into a user-level installation.
 
 Options:
-  --repo-path PATH          Destination for the agent-skills checkout (default: ~/src/agent-skills)
-  --repo-url URL           Git clone URL to use when syncing the repo (default: https://github.com/joshyorko/agent-skills.git)
+  --repo-path PATH          Destination for the plugins checkout (default: ~/src/plugins)
+  --repo-url URL           Git clone URL to use when syncing the repo (default: https://github.com/joshyorko/plugins.git)
   --codex-home PATH        Codex user directory (default: ~/.codex)
-  --marketplace-name NAME  Marketplace name to register (default: agent-skills)
+  --marketplace-name NAME  Marketplace name to register (default: plugins)
   --skill-mode MODE        auto (default), link, or copy
   --link                   Symlink skills into Codex
   --copy                   Copy skills into Codex
@@ -55,9 +55,9 @@ Environment overrides:
   RESOLVED_REF  Resolved ref metadata
 
 Examples:
-  bash ~/src/agent-skills/scripts/install-codex-assets.sh --repo-path ~/src/agent-skills
-  bash ~/src/agent-skills/scripts/install-codex-assets.sh --repo-path ~/src/agent-skills --skill-mode copy --force
-  bash ~/src/agent-skills/scripts/install-codex-assets.sh --repo-path ~/src/agent-skills --skip-repo-sync --install-method archive --resolved-ref v1.2.3
+  bash ~/src/plugins/scripts/install-codex-assets.sh --repo-path ~/src/plugins
+  bash ~/src/plugins/scripts/install-codex-assets.sh --repo-path ~/src/plugins --skill-mode copy --force
+  bash ~/src/plugins/scripts/install-codex-assets.sh --repo-path ~/src/plugins --skip-repo-sync --install-method archive --resolved-ref v1.2.3
 EOF
 }
 
@@ -215,7 +215,7 @@ MARKETPLACE_NAME="${MARKETPLACE_NAME:-$MARKETPLACE_NAME_DEFAULT}"
 
 SKILLS_ROOT="${CODEX_HOME}/skills"
 STATE_ROOT="${CODEX_HOME}/state"
-STATE_PATH="${STATE_ROOT}/agent-skills.json"
+STATE_PATH="${STATE_ROOT}/plugins.json"
 CATALOG_PATH="${REPO_PATH}/marketplaces/catalog.json"
 
 clone_or_update_repo() {
