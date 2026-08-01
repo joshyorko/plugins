@@ -1,0 +1,4 @@
+interface:
+  display_name: "RCC Robot Framework"
+  short_description: "Robot Framework suites and RCC acceptance tests."
+  default_prompt: "Use $rcc-robot-framework to author, run, or debug a Robot Framework suite or RCC robot_tests acceptance test."
