@@ -28,9 +28,9 @@ Validate payload
     Validate JSON by schema    ${payload}    ${schema}
 ```
 
-## Safe archives
+## Safe archive creation and extraction
 
-Before extraction, enumerate members and reject absolute paths, `..` segments, and any resolved destination outside `${ARTIFACTS}`. Then create/extract only reviewed inputs:
+Create only reviewed files. For untrusted input, this recipe lists every member and fails before extraction if a member is absolute, drive-qualified, or traverses with `..`:
 
 ```robot
 *** Settings ***
@@ -39,9 +39,16 @@ Library    RPA.Archive
 *** Tasks ***
 Create reviewed ZIP
     Archive Folder With Zip    %{ROBOT_ARTIFACTS}${/}reviewed    %{ROBOT_ARTIFACTS}${/}submission.zip
+
+Extract reviewed ZIP
+    @{members}=    List Archive    ${CURDIR}${/}received.zip
+    FOR    ${member}    IN    @{members}
+        Should Not Match Regexp    ${member}[name]    ^(?:/|[A-Za-z]:[\\/]|.*[\\/]\.\.(?:[\\/]|$)|\.\.(?:[\\/]|$))
+    END
+    Extract Archive    ${CURDIR}${/}received.zip    %{ROBOT_ARTIFACTS}${/}extracted
 ```
 
-Do not treat `RPA.Archive` extraction as a traversal defense; verify current release behavior and enforce the member policy in a project helper before extracting untrusted ZIP/TAR files.
+This is a fail-closed compatibility gate, not a claim that released 32.0.1 fixes Zip Slip. The traversal fix appears in upcoming 32.0.2; once live metadata confirms that fixed release and the project freeze uses it, direct extraction may rely on its documented `ValueError` boundary. Until then, retain member verification.
 
 ## HTTP download artifact
 
@@ -73,23 +80,45 @@ Upload archive
 
 Initialize with `rfbrowser init` only when this is a Robot Framework Browser project and the project documentation requires its browser engines. Verify the current Browser Playwright API: stale examples commonly use obsolete initialization and keyword forms.
 
-## Choose a document/data integration
+## Excel, PDF, email, and database selection
 
 ```robot
 *** Settings ***
 Library    RPA.Excel.Files
+
+*** Tasks ***
+Read workbook
+    Open Workbook    ${CURDIR}${/}source.xlsx
+```
+
+```robot
+*** Settings ***
 Library    RPA.PDF
+
+*** Tasks ***
+Read PDF
+    Get Text From PDF    ${CURDIR}${/}source.pdf
+```
+
+```robot
+*** Settings ***
 Library    RPA.Email.ImapSmtp
+
+*** Tasks ***
+Send receipt
+    Send Message    sender=${SENDER}    recipients=${RECIPIENT}    subject=Receipt    body=Complete
+```
+
+```robot
+*** Settings ***
 Library    RPA.Database
 
 *** Tasks ***
-Select the owning library
-    Open Workbook    ${CURDIR}${/}source.xlsx
-    Get Text From PDF    ${CURDIR}${/}source.pdf
+Query database
     Connect To Database Using Custom Params    ${DATABASE_CONNECT_STRING}
 ```
 
-Use only the library needed by the task; the grouped imports demonstrate selection, not a default bundle. Configure mail TLS/OAuth and database drivers through the RCC environment and keep exports under artifacts.
+Configure mail TLS/OAuth and database drivers through the RCC environment and keep exports under artifacts. Import only the library for the selected task.
 
 ## Secret-safe logging
 

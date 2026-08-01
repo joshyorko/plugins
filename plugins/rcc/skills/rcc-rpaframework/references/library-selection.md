@@ -19,7 +19,8 @@ Inspect the project first. The sources below describe the library surface, not a
 | Secret-safe Robot logs | `RPA.RobotLogListener` | import before sensitive calls | modern logging APIs for modern Python robots | [RobotLogListener](https://rpaframework.org/libraries/robotloglistener/index.html) |
 | Legacy secrets | `RPA.Robocorp.Vault` | legacy `RPA_SECRET_*` manager contract | `robocorp.vault` in a modern Python boundary | [Vault](https://rpaframework.org/libraries/robocorp_vault/index.html) |
 | Legacy work items | `RPA.Robocorp.WorkItems` | legacy `RPA_WORKITEMS_*` adapter contract | `robocorp.workitems` in a modern Python boundary | [WorkItems](https://rpaframework.org/libraries/robocorp_workitems/index.html) |
-| Cloud/file storage | `RPA.Cloud.*` | provider package, credentials, network policy | provider SDK already declared by the project | [Library index](https://rpaframework.org/) |
+| Hosted Control Room asset storage | `RPA.Robocorp.Storage` | Control Room adapter/auth configuration; not a local-file substitute | `RPA.FileSystem` for local artifacts or a declared provider SDK for another store | [Robocorp.Storage](https://rpaframework.org/libraries/robocorp_storage/index.html) |
+| Provider cloud storage | `RPA.Cloud.*` | provider package, credentials, network policy | provider SDK already declared by the project | [Library index](https://rpaframework.org/) |
 | Human-in-the-loop dialog | `RPA.Assistant` | supported browser/UI runtime and artifact policy | a project-owned UI when process must outlive the run | [Assistant](https://rpaframework.org/libraries/assistant/index.html) |
 
 Use the [library index](https://rpaframework.org/) to confirm a module’s current ownership and dependencies. Link a browser choice to its actual installation guide, not an old copied snippet.
