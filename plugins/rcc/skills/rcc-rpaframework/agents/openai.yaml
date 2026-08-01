@@ -1,0 +1,4 @@
+interface:
+  display_name: "RCC RPA Framework"
+  short_description: "RPA Framework libraries in RCC automation."
+  default_prompt: "Use $rcc-rpaframework to choose and apply RPA Framework libraries safely in an RCC-managed automation project."
