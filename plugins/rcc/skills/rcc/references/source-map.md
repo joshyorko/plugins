@@ -4,6 +4,21 @@ This file records sources inspected across RCC skill refreshes and what each sou
 
 Treat Josh-owned RCC sources as the primary evidence path for current stack behavior. Use upstream Robocorp/Sema4.ai repositories and docs as dependency/interface-history evidence unless a task explicitly targets those packages, APIs, or hosted services. Preserve literal package/API names like `robocorp.tasks`, `robocorp.workitems`, `robocorp-browser`, and `ROBOCORP_HOME` when they are the real interfaces in use.
 
+## 2026-08-01 Robot Framework / RPA Framework Coverage
+
+Sources inspected for Robot Framework and RPA Framework skill coverage:
+
+- OpenAI plugin skills: `https://developers.openai.com/plugins/build/skills`
+- OpenAI plugin packaging: `https://developers.openai.com/plugins/build/plugins`
+- OpenAI plugin architecture: `https://developers.openai.com/plugins/concepts/plugins`
+- RCC robot_tests: `https://github.com/joshyorko/rcc/tree/d5942d90994d7bd9034aeed6b88cc60fd7a3e330/robot_tests`
+- Robot Framework User Guide: `https://robotframework.org/robotframework/latest/RobotFrameworkUserGuide.html`
+- Robot Framework practical docs: `https://docs.robotframework.org/docs`
+- RPA Framework docs: `https://rpaframework.org/`
+- RPA Framework release notes: `https://rpaframework.org/releasenotes.html`
+
+Robot Framework 7.4.2 and RPA Framework 32.0.1 were observed source snapshots, not permanent recommended pins. RPA Framework 32.0.2 was listed as upcoming when checked.
+
 ## 2026-05-23 Robocorp / Sema4AI Documentation Refresh
 
 This refresh reviewed modern Robocorp Python libraries, RPA Framework, Action Server/Sema4AI packages, Josh RCC/actions forks, work-item adapters, and public Robocorp runtime/process examples. Use source-backed claims for package/API guidance. Mark Control Room backend architecture as inference when it is derived from public clients or examples rather than directly documented backend source.

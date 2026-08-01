@@ -12,7 +12,7 @@ Use this skill when the task is about RCC itself rather than a specific RCC-back
 1. Identify the active context: installed `rcc` binary, Josh's fork at `github.com/joshyorko/rcc`, upstream `github.com/robocorp/rcc` as historical/reference context, or an automation project merely using RCC.
 2. Run read-only CLI checks first when a binary is available: `rcc version`, `rcc diagnostics --quick`, `rcc docs recipes`, and `rcc docs changelog`.
 3. For source work, inspect `README.md`, `developer/toolkit.yaml`, `docs/recipes.md`, `docs/holotree.md`, `docs/troubleshooting.md`, `cmd/rcc`, `robot/`, `conda/`, `htfs/`, `remotree/`, `settings/`, and `templates/`.
-4. If a failure reaches Python task code, switch to `$rcc-robots`; if it reaches queue behavior, DocDB helpers, retry/outbox, or adapter reservation, switch to `$rcc-workitems`.
+4. If a failure reaches Python task code, switch to `$rcc-robots`; route `robot_tests/` authoring and execution to `$rcc-robot-framework` while keeping the RCC behavior under test and Go implementation here; if it reaches queue behavior, DocDB helpers, retry/outbox, or adapter reservation, switch to `$rcc-workitems`.
 
 ## Operating Rules
 

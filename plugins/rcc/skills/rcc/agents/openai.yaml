@@ -1,4 +1,4 @@
 interface:
   display_name: "RCC Router"
-  short_description: "Routes RCC-family work to focused RCC core, robot, work item, Action Server, or CI maintenance skills."
-  default_prompt: "Use $rcc to choose the right RCC specialist skill for RCC core, robots, work items, Action Server packages, or RCC CI maintenance."
+  short_description: "Routes RCC work across core, robot projects, Robot Framework, RPA Framework, work items, Action Server, and CI maintenance."
+  default_prompt: "Use $rcc to choose the right specialist for RCC core, robot projects, Robot Framework, RPA Framework, work items, Action Server, or CI maintenance."

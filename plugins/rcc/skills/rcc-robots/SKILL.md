@@ -7,6 +7,8 @@ description: Use for RCC automation projects, robot.yaml, conda.yaml, holotree, 
 
 Use this skill for RCC-backed automation projects and runtime/environment work once the task is clearly about a `robot.yaml` project. Here, `robot` is the RCC packaging/runtime convention, not a claim that Robocorp owns the architecture or current product direction. Keep literal package/API names such as `robocorp.tasks`, `robocorp.workitems`, `robocorp-browser`, and `ROBOCORP_HOME` when the project uses them. Use `$rcc-core` for RCC source, installation, endpoint, holotree/cache, or template catalog work before a task starts.
 
+Retain ownership of `robot.yaml`, `conda.yaml`, holotree, freeze files, task runtime, and artifacts. Route `.robot` suite mechanics to `$rcc-robot-framework` and `RPA.*` library selection to `$rcc-rpaframework`.
+
 ## First Inspection
 
 1. Locate the robot root by finding `robot.yaml`; inspect nearby `conda.yaml`, `devdata/*.json`, `.gitignore`, freeze files, and output/artifacts policy.
