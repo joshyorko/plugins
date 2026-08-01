@@ -43,7 +43,7 @@ Create reviewed ZIP
 Extract reviewed ZIP
     @{members}=    List Archive    ${CURDIR}${/}received.zip
     FOR    ${member}    IN    @{members}
-        Should Not Match Regexp    ${member}[name]    ^(?:/|[A-Za-z]:[\\/]|.*[\\/]\.\.(?:[\\/]|$)|\.\.(?:[\\/]|$))
+        Should Not Match Regexp    ${member}[filename]    ^(?:/|[A-Za-z]:[\\/]|.*[\\/]\.\.(?:[\\/]|$)|\.\.(?:[\\/]|$))
     END
     Extract Archive    ${CURDIR}${/}received.zip    %{ROBOT_ARTIFACTS}${/}extracted
 ```
