@@ -1,7 +1,7 @@
 {
   "name": "rcc",
   "version": "0.1.0",
-  "description": "Focused RCC-family skills for RCC itself, robots, holotree environments, work items, Action Server packages, and CI maintenance workflows.",
+  "description": "RCC-family skills for RCC core, Robot Framework acceptance tests, RPA Framework automation, robot projects, work items, Action Server, and CI maintenance.",
   "author": {
     "name": "Josh Yorko",
     "email": "joshua.yorko@gmail.com",
@@ -14,6 +14,9 @@
     "rcc",
     "robocorp",
     "robot-framework",
+    "robot-tests",
+    "rpaframework",
+    "rpa-framework",
     "automation",
     "holotree",
     "workitems",
@@ -25,8 +28,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "RCC Automation",
-    "shortDescription": "Focused RCC skills for RCC core, robots, work items, action packages, and CI maintenance.",
-    "longDescription": "RCC-family workflows split into focused skills for RCC CLI/source orientation, robot scaffolding and holotree environments, work item adapters, ordinary Action Server packages, and RCC-powered CI maintenance.",
+    "shortDescription": "RCC skills for RCC core, robot projects, Robot Framework acceptance tests, RPA Framework automation, work items, Action Server, and CI maintenance.",
+    "longDescription": "RCC-family workflows split across focused skills for RCC core, robot projects and environments, Robot Framework suites and RCC acceptance tests, RPA Framework automation, work items, Action Server packages, and RCC-powered CI maintenance.",
     "developerName": "Josh Yorko",
     "category": "Developer Tools",
     "capabilities": [
@@ -37,12 +40,9 @@
     "privacyPolicyURL": "https://github.com/joshyorko/plugins",
     "termsOfServiceURL": "https://github.com/joshyorko/plugins",
     "defaultPrompt": [
-      "Choose the right RCC specialist skill for this task.",
-      "Orient me in RCC source, holotree, caches, endpoints, or templates.",
-      "Debug this robot.yaml or conda.yaml setup.",
-      "Design a local work item queue or adapter flow.",
-      "Validate an Action Server package.",
-      "Set up RCC-powered CI maintenance safely."
+      "Maintain RCC Robot Framework acceptance tests.",
+      "Build an RCC automation with RPA Framework.",
+      "Debug an RCC robot environment or task."
     ],
     "brandColor": "#1D4ED8",
     "composerIcon": "./assets/rcc-logo.svg",
