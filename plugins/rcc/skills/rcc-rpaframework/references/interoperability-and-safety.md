@@ -19,6 +19,6 @@ Local mock secrets prove lookup shape only. They do not prove hosted adapter sel
 
 `RPA.Archive` handles archive operations, but untrusted extraction has traversal risk. Enumerate archive members first, reject absolute paths and `..` components, resolve each output under the intended artifact directory, and verify current release notes/API behavior before relying on any library protection.
 
-Treat Browser Playwright snippets as version-sensitive. Confirm the current documentation and project dependency configuration. Run `rfbrowser init` only for a Robot Framework Browser project that needs its browser engines; it is not needed for unrelated RCC robots, Selenium projects, or generic Playwright installations.
+Treat Browser Playwright snippets as version-sensitive. Confirm the current documentation and declare `robotframework-browser` plus its required Node.js runtime in the RCC project environment alongside `rpaframework`. Run `rfbrowser init` inside that environment only for the Robot Framework Browser project that needs its browser engines; it is not needed for unrelated RCC robots, Selenium projects, or generic Playwright installations.
 
 Desktop and OCR libraries require more than Python dependencies: validate supported OS, an interactive display/session, native automation packages, OCR engines/models, permissions, and the CI runner’s capabilities before making them part of an RCC robot.

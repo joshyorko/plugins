@@ -286,10 +286,52 @@ Use `RPA.Tables`, `RPA.JSON`, `RPA.Archive`, and `RPA.Browser.Playwright`; `RPA.
 | Rubric | Verdict | Response fragment |
 | --- | --- | --- |
 | Correct library selection | PASS | Uses Tables, JSON, Archive, FileSystem, and Browser Playwright appropriately. |
-| RCC environment boundary | PASS | Shows RCC config and no host install. |
+| RCC environment boundary | FAIL | The RCC config omits the project-managed `robotframework-browser` and Node.js dependencies required by the imported Browser library. |
 | Current-version verification | PASS | Explicitly makes no version claim or stale pin. |
 | Archive safety | PASS | Copies known files into a bounded staging directory and does not extract untrusted input. |
-| Browser initialization | PASS | Scopes `rfbrowser init` to documented Browser-project setup. |
+| Browser initialization | FAIL | It scopes `rfbrowser init` correctly but does not provide a runnable RCC-managed initialization path or declare its engine-install prerequisites. |
+| `RPA_*`/`RC_*` separation | PASS | No incompatible environment stacks are mixed. |
+| Hosted-adapter framing | PASS | No adapter is involved. |
+| Migration restraint | PASS | No migration is proposed. |
+
+### Forward 1 final-review correction
+
+This is an honest rescore, not a fresh-context rerun. The stored rerun remains useful for its library choices and use of `RPA.FileSystem` keywords, but its environment and browser-initialization rows were over-scored. A corrected project contract adds the missing dependencies and an explicit, project-scoped engine setup task:
+
+```yaml
+# conda.yaml
+channels:
+  - conda-forge
+dependencies:
+  - python
+  - nodejs
+  - pip
+  - pip:
+      - rpaframework
+      - robotframework-browser
+```
+
+```yaml
+# robot.yaml (additional one-time setup task for this Browser project)
+tasks:
+  Initialize Browser Engines:
+    shell: rfbrowser init
+  Prepare and upload submission:
+    shell: robot --outputdir output tasks.robot
+
+condaConfigFile: conda.yaml
+artifactsDir: output
+```
+
+Run `rcc run -t "Initialize Browser Engines"` when provisioning this Robot Framework Browser project. It installs browser engines inside the RCC-managed environment and is not a setup step for unrelated RCC, Selenium, or generic Playwright projects. The project freeze should retain the tested Python, Node.js, `rpaframework`, `robotframework-browser`, and browser-engine resolution; this correction makes no current-version claim.
+
+| Rubric | Verdict | Evidence-backed correction |
+| --- | --- | --- |
+| Correct library selection | PASS | The response uses the task-owning RPA libraries, and `RPA.FileSystem` keywords are actually used for staging. |
+| RCC environment boundary | PASS | Both Python packages and Node.js are declared in `conda.yaml`, with no host installation. |
+| Current-version verification | PASS | The correction explicitly makes no current-version claim or copied pin. |
+| Archive safety | PASS | Only known generated files are archived; no untrusted archive is extracted. |
+| Browser initialization | PASS | The setup task runs `rfbrowser init` through this RCC-managed Robot Framework Browser project only. |
 | `RPA_*`/`RC_*` separation | PASS | No incompatible environment stacks are mixed. |
 | Hosted-adapter framing | PASS | No adapter is involved. |
 | Migration restraint | PASS | No migration is proposed. |

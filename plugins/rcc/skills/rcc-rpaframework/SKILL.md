@@ -23,7 +23,7 @@ For an implementation pattern, read [references/task-recipes.md](references/task
 
 - Resolve Python and browser dependencies through the RCC project, then run under RCC. Do not install RPA Framework or browser binaries globally.
 - Use `RPA.Tables` for tabular CSV work, `RPA.JSON` for document/schema work, and `RPA.Archive` only with explicit member/path validation. Never extract an untrusted archive without rejecting absolute, `..`, or destination-escaping paths.
-- Prefer `RPA.Browser.Playwright` for new browser work when its project requirements fit. Initialize browser engines with `rfbrowser init` only in a Robot Framework Browser project; it is not a generic RCC or Selenium setup step. Treat old Browser Playwright examples as version-sensitive.
+- Prefer `RPA.Browser.Playwright` for new browser work when its project requirements fit. Declare project-managed `robotframework-browser` and its required Node.js runtime alongside `rpaframework`; run `rfbrowser init` inside that RCC environment only for the Robot Framework Browser project that needs its engines. It is not a generic RCC or Selenium setup step. Treat old Browser Playwright examples as version-sensitive.
 - Use `RPA.RobotLogListener` before calls that receive secrets, and avoid logging secret values, headers, credentials, or vault payloads.
 - Keep desktop/OCR automation platform-specific: inspect native dependencies, display/session access, OCR engines, and CI capability before selecting it.
 - Keep artifacts bounded to `ROBOT_ARTIFACTS` (or the configured `artifactsDir`) and do not upload a directory or archive until its contents are reviewed.
