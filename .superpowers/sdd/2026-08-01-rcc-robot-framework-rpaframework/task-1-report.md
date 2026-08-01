@@ -63,7 +63,7 @@ The first forward hash run failed only RCC state isolation and safe parallelism;
 
 ## Commit SHA(s)
 
-Recorded after commit.
+`8697fe3902081433075dc941444dbe1a9025ad1c` (`feat: add RCC Robot Framework skill`)
 
 ## Self-review findings
 
