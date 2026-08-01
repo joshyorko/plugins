@@ -15,11 +15,12 @@ description: Use when authoring, reviewing, running, or debugging Robot Framewor
 
 - Treat exit status, stdout, and stderr as three separate contracts. Capture all three; assert the exact expected nonzero code, select the stream deliberately, and keep JSON stdout free of diagnostic text.
 - Parse JSON structurally with the suite helper or Python library; do not validate JSON by substring matching. Assert object/list shape and the relevant fields.
-- Isolate mutable RCC state. Acceptance tests may mutate `ROBOCORP_HOME`, holotree spaces, and `tmp/`; each parallel worker needs its own home and temporary/output root. Pabot is unsafe until that isolation is proven. Serialize shared setup or guard it with PabotLib locks.
+- Isolate mutable RCC state. Acceptance tests may mutate `ROBOCORP_HOME`, holotree spaces, and `tmp/`. The current RCC acceptance suite must run serially. Use Pabot only after the suite derives each worker's home, temporary roots, and fixtures from a worker identity, or after CI provisions truly isolated copies with concrete, defined commands. PabotLib locks do not make shared RCC state safe.
 - Use `Step` for commands that need an expected result and stream assertions. `Fire And Forget` captures/logs streams but does not assert an exit code, so limit it to intentional best-effort cleanup/setup.
 - Review golden-file diffs rather than blindly accepting them. Normalize CRLF/LF before comparison and make adversarial fixtures through Python helpers when shell quoting would hide the case being tested.
 - Use `robot --dryrun` for syntax/control-flow checking and focused suite/test/tag selection before a full run. Keep `--outputdir` outside committed fixtures.
 - In an implementation/review answer, name the exact source files and source revision used, the focused command, the exit-code/stdout/stderr and structural-JSON contracts, and the state-isolation/parallel-safety decision—even when the focused run is serial or JSON is not the immediate change.
+- Give runnable commands only for prerequisites that exist. If parallel isolation is absent, give the exact serial initial/rerun/merge commands and list Pabot enablement as future work; do not invent a listener, hook, wrapper, or executable helper.
 - Route RCC CLI, holotree, cache, endpoint, or source failures to `$rcc-core`; route `robot.yaml`, `conda.yaml`, environment, package, and runtime project failures to `$rcc-robots`.
 
 ## Boundary With Other RCC Skills

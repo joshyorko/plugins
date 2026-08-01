@@ -72,3 +72,38 @@ Reviewed the canonical files, metadata shape, source links, required references,
 ## Concerns
 
 None. `.serena/` was pre-existing/untracked and was neither edited, staged, nor committed.
+
+## Fix Round 1
+
+Status: DONE
+
+Addressed the review findings by rescoring the prior undefined-listener response as failing RCC state isolation, safe parallelism, and focused-command evidence. Updated the skill and CI reference to require serial execution for the unchanged shared-state suite, and to permit Pabot only after worker-scoped suite paths or concretely provisioned isolated copies exist. Undefined listeners, hooks, wrappers, and helpers may not be presented as runnable prerequisites.
+
+Ran a fresh forward CI evaluation. Its first response safely rejected current Pabot concurrency and supplied serial commands, but failed the stdout/stderr and structural-JSON rubric rows. Added the smallest required **Acceptance contracts** answer slot and reran the scenario in a fresh context. The rerun passed all eight rows using isolated GitHub matrix checkouts, one Pabot process per checkout, separate results, and no undefined helper. Verbatim responses and evidence are recorded in `docs/superpowers/evals/2026-08-01-rcc-robot-framework.md`.
+
+Files changed:
+
+- `plugins/rcc/skills/rcc-robot-framework/SKILL.md`
+- `plugins/rcc/skills/rcc-robot-framework/references/results-and-ci.md`
+- `docs/superpowers/evals/2026-08-01-rcc-robot-framework.md`
+- `.superpowers/sdd/2026-08-01-rcc-robot-framework-rpaframework/task-1-report.md`
+
+Validation:
+
+```text
+$ python3 /home/vscode/.codex/skills/.system/skill-creator/scripts/quick_validate.py plugins/rcc/skills/rcc-robot-framework
+Skill is valid!
+
+$ bin/check
+..............................
+----------------------------------------------------------------------
+Ran 30 tests in 4.588s
+
+OK
+repo structure validated
+
+$ git diff --check
+(no output; passed)
+```
+
+The unstaged `.gitignore` modification was removed. `.serena/` remains untouched and untracked; neither `.gitignore` nor `.serena/` is part of this fix.

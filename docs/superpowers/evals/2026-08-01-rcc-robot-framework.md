@@ -357,7 +357,291 @@ No test assertion contract changes: `Step` must continue checking the exact exit
 | exit-code contract | PASS | "`Step` must continue checking the exact exit code" and `exit "$first_status"`. |
 | stdout/stderr separation | PASS | "retaining separate stdout/stderr" |
 | JSON structural assertion | PASS | "structurally checked through `Must Be Json Response`/`Parse JSON`" |
-| RCC state isolation | PASS | "separate checkout/working directory" and "own `tmp/robocorp`" |
-| safe parallelism | PASS | "run serially or use a PabotLib lock" and no sharing homes/holotrees. |
-| focused command | PASS | `pabot --processes 4` plus the focused dry run, rerun, and merge commands. |
+| RCC state isolation | FAIL | The proposed isolation depends on an undefined "Pabot worker-start hook" and does not define how worker copies are provisioned. |
+| safe parallelism | FAIL | `--listener ci/pabot_worker_cwd.py` references a helper that does not exist or appear in the response. |
+| focused command | FAIL | The Pabot commands are not runnable without the undefined `ci/pabot_worker_cwd.py` prerequisite. |
 | source grounding | PASS | pinned commit and links to `robot_tests/__init__.robot` and `resources.robot`. |
+
+Correction after review: this rerun did not pass all rows. The unchanged shared-state suite must run serially. Pabot is permitted only after suite code derives all mutable paths from a worker identity or CI provisions truly isolated copies with defined, runnable commands.
+
+## Fix Round 1 forward CI (first run)
+
+Prompt:
+
+```text
+Use $rcc-robot-framework at plugins/rcc/skills/rcc-robot-framework/SKILL.md.
+
+Design a GitHub Actions job that reruns failed tests and uses Pabot to parallelize joshyorko/rcc/robot_tests. Preserve the repository's existing ROBOCORP_HOME and holotree behavior. Give the exact commands and isolation rules.
+```
+
+Response:
+
+````text
+No safe Pabot job exists for `joshyorko/rcc` at commit `d5942d90994d7bd9034aeed6b88cc60fd7a3e330`. `robot_tests/resources.robot` hard-codes shared `tmp/` paths and `ROBOCORP_HOME=tmp/robocorp`, while setup revokes and deletes holotree state. Concurrent Pabot workers would race and corrupt one another. PabotLib locks do not fix this.
+
+Use this serial rerun job now:
+
+```yaml
+robot:
+  name: Robot Tests (${{ matrix.os }})
+  runs-on: ${{ matrix.os }}
+  strategy:
+    fail-fast: false
+    matrix:
+      os: [ubuntu-latest, macos-latest, windows-latest]
+
+  steps:
+    - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+    - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+      with:
+        go-version: "1.26.5"
+
+    - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      with:
+        python-version: "3.10"
+
+    - name: Install and build
+      shell: bash
+      run: |
+        python -m pip install invoke==2.2.0
+        inv robotsetup
+        inv assets
+        inv local
+
+    - name: Initial Robot run
+      id: initial
+      continue-on-error: true
+      shell: bash
+      run: |
+        python -m robot \
+          -L DEBUG \
+          --outputdir tmp/robot-initial \
+          --xunit xunit.xml \
+          robot_tests
+
+    - name: Rerun failed tests
+      id: rerun
+      if: steps.initial.outcome == 'failure'
+      continue-on-error: true
+      shell: bash
+      run: |
+        python -m robot \
+          -L DEBUG \
+          --rerunfailed tmp/robot-initial/output.xml \
+          --outputdir tmp/robot-rerun \
+          --xunit xunit.xml \
+          robot_tests
+
+    - name: Merge initial and rerun results
+      if: steps.initial.outcome == 'failure'
+      shell: bash
+      run: |
+        python -m robot.rebot \
+          --merge \
+          --output tmp/robot-final/output.xml \
+          --log tmp/robot-final/log.html \
+          --report tmp/robot-final/report.html \
+          --xunit tmp/robot-final/xunit.xml \
+          tmp/robot-initial/output.xml \
+          tmp/robot-rerun/output.xml
+
+    - name: Preserve successful initial results
+      if: steps.initial.outcome == 'success'
+      shell: bash
+      run: |
+        mkdir -p tmp/robot-final
+        cp tmp/robot-initial/output.xml tmp/robot-final/output.xml
+        cp tmp/robot-initial/log.html tmp/robot-final/log.html
+        cp tmp/robot-initial/report.html tmp/robot-final/report.html
+        cp tmp/robot-initial/xunit.xml tmp/robot-final/xunit.xml
+
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: always()
+      with:
+        name: ${{ matrix.os }}-test-reports
+        path: |
+          tmp/robot-initial/
+          tmp/robot-rerun/
+          tmp/robot-final/
+```
+
+The merge command is the final test gate: it exits nonzero if failures remain, while a clean rerun makes the job pass.
+
+Pabot can be enabled only after all mutable state is worker-scoped. The required isolation rules are:
+
+- Derive a stable worker root from Pabot’s real worker identity, such as `${PABOTEXECUTIONPOOLID}`.
+- Set each worker’s `ROBOCORP_HOME` to a unique path such as `tmp/pabot/${PABOTEXECUTIONPOOLID}/robocorp`.
+- Move every mutable fixture and cleanup target—including `tmp/fluffy`, `tmp/nodogs`, archives, traversal bundles, and suite-generated files—under that worker root.
+- Keep holotree initialization, revoke, delete, caches, and spaces inside the worker-specific `ROBOCORP_HOME`.
+- Never delete another worker’s root.
+- Keep `build/rcc` read-only during execution.
+- Give the initial run, rerun, and merged results separate output directories.
+- Preserve `supporting.py`’s RCC activation-variable scrubbing and Windows executable normalization.
+
+Only after those repository changes exist is this Pabot sequence valid:
+
+```bash
+python -m pabot -L DEBUG --processes 4 --outputdir tmp/robot-initial robot_tests
+
+python -m pabot -L DEBUG --processes 4 \
+  --rerunfailed tmp/robot-initial/output.xml \
+  --outputdir tmp/robot-rerun \
+  robot_tests
+
+python -m robot.rebot --merge \
+  --output tmp/robot-final/output.xml \
+  --log tmp/robot-final/log.html \
+  --report tmp/robot-final/report.html \
+  --xunit tmp/robot-final/xunit.xml \
+  tmp/robot-initial/output.xml \
+  tmp/robot-rerun/output.xml
+```
+
+Until that isolation refactor lands, replacing the serial commands with Pabot would not preserve the repository’s existing `ROBOCORP_HOME` and holotree behavior.
+````
+
+| Rubric | Verdict | Response fragment |
+| --- | --- | --- |
+| correct owner/skill | PASS | "No safe Pabot job exists for `joshyorko/rcc`" |
+| exit-code contract | PASS | "The merge command is the final test gate: it exits nonzero if failures remain" |
+| stdout/stderr separation | FAIL | No explicit stdout/stderr assertion contract is stated. |
+| JSON structural assertion | FAIL | No explicit structural JSON assertion contract is stated. |
+| RCC state isolation | PASS | "Pabot can be enabled only after all mutable state is worker-scoped" plus concrete path rules. |
+| safe parallelism | PASS | "Only after those repository changes exist is this Pabot sequence valid" |
+| focused command | PASS | The response gives runnable serial initial/rerun/merge commands and labels Pabot commands conditional. |
+| source grounding | PASS | pinned commit plus `robot_tests/resources.robot` and `supporting.py`. |
+
+Small guidance change: require an explicit **Acceptance contracts** slot in every RCC CI/Pabot answer.
+
+## Fix Round 1 forward CI (rerun)
+
+Prompt:
+
+```text
+Use $rcc-robot-framework at plugins/rcc/skills/rcc-robot-framework/SKILL.md.
+
+Design a GitHub Actions job that reruns failed tests and uses Pabot to parallelize joshyorko/rcc/robot_tests. Preserve the repository's existing ROBOCORP_HOME and holotree behavior. Give the exact commands and isolation rules.
+```
+
+Response:
+
+````text
+At pinned source revision `d5942d90994d7bd9034aeed6b88cc60fd7a3e330`, direct Pabot worker parallelism is unsafe: `robot_tests/__init__.robot` runs `Prepare Local`, which shares `tmp/robocorp`, other `tmp/` fixtures, and holotree state. Use Pabot sharding across isolated GitHub-hosted matrix jobs, with one Pabot process per checkout:
+
+```yaml
+robot:
+  name: Robot Tests (${{ matrix.os }}, shard ${{ matrix.shard }}/${{ matrix.shards }})
+  runs-on: ${{ matrix.os }}
+  if: github.event_name == 'push' || github.event_name == 'pull_request'
+  strategy:
+    fail-fast: false
+    matrix:
+      os: [ubuntu-latest, macos-latest, windows-latest]
+      shard: [1, 2, 3]
+      shards: [3]
+
+  steps:
+    - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+    - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+      with:
+        go-version: "1.26.5"
+
+    - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      with:
+        python-version: "3.10"
+
+    - name: Install test tooling
+      run: |
+        python -m pip install invoke==2.2.0
+        inv robotsetup
+        python -m pip install robotframework-pabot==2.18.0
+
+    - name: Build local RCC
+      run: |
+        inv assets
+        inv local
+
+    - name: Show commit info
+      run: inv what
+
+    - name: Run shard and rerun failures
+      shell: bash
+      env:
+        SHARD: ${{ matrix.shard }}
+        SHARDS: ${{ matrix.shards }}
+      run: |
+        initial_rc=0
+        python -m pabot.pabot \
+          --processes 1 \
+          --shard "${SHARD}/${SHARDS}" \
+          --loglevel DEBUG \
+          --outputdir tmp/output/initial \
+          robot_tests || initial_rc=$?
+
+        if [ "$initial_rc" -eq 0 ]; then
+          python -m robot.rebot \
+            --outputdir tmp/output/final \
+            --output output.xml \
+            --log log.html \
+            --report report.html \
+            --xunit xunit.xml \
+            tmp/output/initial/output.xml
+          exit $?
+        fi
+
+        rerun_rc=0
+        python -m robot \
+          --rerunfailed tmp/output/initial/output.xml \
+          --loglevel DEBUG \
+          --outputdir tmp/output/rerun \
+          robot_tests || rerun_rc=$?
+
+        merge_rc=0
+        python -m robot.rebot \
+          --merge \
+          --outputdir tmp/output/final \
+          --output output.xml \
+          --log log.html \
+          --report report.html \
+          --xunit xunit.xml \
+          tmp/output/initial/output.xml \
+          tmp/output/rerun/output.xml || merge_rc=$?
+
+        exit "$merge_rc"
+
+    - name: Upload Robot reports
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: ${{ matrix.os }}-robot-shard-${{ matrix.shard }}
+        path: tmp/output/
+```
+
+Isolation rules:
+
+- Each shard must run on its own fresh GitHub-hosted runner and checkout.
+- Keep `--processes 1`; do not run multiple Pabot workers inside one checkout.
+- Do not set a job-level `ROBOCORP_HOME`, `RCC_HOLOTREE_SPACE_ROOT`, or shared cache path.
+- Keep `robot_tests/__init__.robot`, `resources.robot`, and `supporting.py` unchanged so each isolated checkout still creates `ROBOCORP_HOME=tmp/robocorp`, scrubs activation variables, and performs `ht init --revoke`.
+- Never share `tmp/`, `tmp/robocorp`, holotree state, fixtures, or cleanup targets between shards.
+- Do not use PabotLib locks as a substitute for isolation.
+- The rerun gets its own output directory; only `rebot --merge` combines completed initial and rerun results.
+- The merged result determines the job status, while `if: always()` preserves all artifacts.
+
+Acceptance contracts: `Step` still asserts the exact exit code, stdout and stderr remain separate, and JSON stdout is parsed structurally with `Must Be Json Response`/`Parse JSON`, never substring matching.
+````
+
+| Rubric | Verdict | Response fragment |
+| --- | --- | --- |
+| correct owner/skill | PASS | "direct Pabot worker parallelism is unsafe" for `robot_tests/__init__.robot`. |
+| exit-code contract | PASS | "`Step` still asserts the exact exit code" and "merged result determines the job status". |
+| stdout/stderr separation | PASS | "stdout and stderr remain separate" |
+| JSON structural assertion | PASS | "parsed structurally with `Must Be Json Response`/`Parse JSON`" |
+| RCC state isolation | PASS | "own fresh GitHub-hosted runner and checkout" and no shared RCC/temp state. |
+| safe parallelism | PASS | "Keep `--processes 1`; do not run multiple Pabot workers inside one checkout." |
+| focused command | PASS | Exact conditional Pabot shard, serial rerun, merge, and artifact commands are provided without undefined helpers. |
+| source grounding | PASS | pinned revision plus `robot_tests/__init__.robot`, `resources.robot`, and `supporting.py`. |
+
+Fix Round 1 conclusion: all rows pass with current-suite safety stated truthfully. Parallelism uses isolated matrix checkouts with one Pabot process per checkout; the unchanged suite is never concurrently executed inside shared mutable state.

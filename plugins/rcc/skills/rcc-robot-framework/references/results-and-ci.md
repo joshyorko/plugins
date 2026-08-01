@@ -6,6 +6,10 @@ Robot’s `output.xml` is the result source; `log.html` and `report.html` are hu
 
 For focused feedback, run one suite/file/test/tag with its own `--outputdir`, retain that `output.xml`, and upload output XML, log, report, and xUnit as CI artifacts. A rerun is a second pass after the initial output is complete, never a concurrent rewrite of its result directory.
 
-Pabot can split execution by suite or test. Use PabotLib locks around genuinely shared resources, but locks do not fix shared RCC process state. RCC acceptance suites may mutate `ROBOCORP_HOME`, holotree, and `tmp/`; Pabot is unsafe until every worker receives an isolated `ROBOCORP_HOME` and temporary/output root. Preserve the project’s intended holotree behavior within each worker, never by allowing workers to share a home. Run cleanup/setup serially or under a lock when it cannot be isolated.
+Pabot can split execution by suite or test, but the current RCC acceptance suite must run serially: its root setup uses shared `tmp/` paths, sets `ROBOCORP_HOME=tmp/robocorp`, and mutates holotree. Pabot becomes safe only after the suite derives `ROBOCORP_HOME`, temporary roots, fixtures, and cleanup targets from a real worker identity, or CI executes truly isolated repository copies provisioned by concrete commands. PabotLib locks can serialize genuinely shared setup but do not make a shared RCC home, holotree, or `tmp/` safe.
+
+When those prerequisites do not exist, provide runnable serial initial, `--rerunfailed`, and `rebot --merge` commands. Describe Pabot as blocked future work with the required suite or CI changes. Do not claim an undefined listener, hook, wrapper, or executable helper makes a command runnable.
+
+Every RCC CI/Pabot answer must include an **Acceptance contracts** statement: `Step` still asserts the exact exit code, stdout and stderr remain separate, and JSON stdout is parsed structurally with `Must Be Json Response`/`Parse JSON` rather than substring matching.
 
 Treat the official GitHub Actions sample as conceptual: its package/action pins and `continue-on-error` behavior may be stale or mask failures. Pin and validate dependencies in the target repository, propagate the first-run failure status after artifacts are collected, and merge rerun results only after a successful rerun/merge policy is explicit.
