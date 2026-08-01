@@ -1,7 +1,7 @@
 {
   "name": "rcc",
   "version": "0.1.0",
-  "description": "Focused RCC-family skills for RCC itself, robots, holotree environments, work items, Action Server packages, and CI maintenance workflows.",
+  "description": "RCC-family skills for RCC core, Robot Framework acceptance tests, RPA Framework automation, robot projects, work items, Action Server, and CI maintenance.",
   "author": {
     "name": "Josh Yorko",
     "email": "joshua.yorko@gmail.com",
@@ -14,6 +14,9 @@
     "rcc",
     "robocorp",
     "robot-framework",
+    "robot-tests",
+    "rpaframework",
+    "rpa-framework",
     "automation",
     "holotree",
     "workitems",
