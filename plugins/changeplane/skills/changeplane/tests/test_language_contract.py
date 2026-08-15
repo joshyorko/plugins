@@ -123,6 +123,10 @@ class ChangeplaneLanguageContractTests(unittest.TestCase):
             self.assertTrue(case["errors"], case["name"])
             self.assertEqual(case["errors"], validate_case(case), case["name"])
 
+    def test_adversarial_fixtures_execute_each_approved_predicate_family(self):
+        for case in FIXTURES["adversarial"]:
+            self.assertEqual(case["errors"], validate_case(case), case["name"])
+
     def test_assumption_invalidation_and_exact_subject_movement_are_explicit(self):
         self.assertIn("satisfaction", REFERENCE)
         self.assertIn("invalidat", REFERENCE)
