@@ -2,12 +2,19 @@
 """Executable acceptance checks for the canonical Changeplane Language skill."""
 
 from pathlib import Path
+import json
+import sys
 import unittest
 
 
 SKILL_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(SKILL_ROOT / "references"))
+from language_contract_schema import validate_case  # noqa: E402
 SKILL = (SKILL_ROOT / "SKILL.md").read_text()
 REFERENCE = (SKILL_ROOT / "references" / "language-contract.md").read_text()
+FIXTURES = json.loads(
+    (SKILL_ROOT / "tests" / "fixtures" / "semantic_cases.json").read_text()
+)
 
 
 class ChangeplaneLanguageContractTests(unittest.TestCase):
@@ -93,6 +100,27 @@ class ChangeplaneLanguageContractTests(unittest.TestCase):
             self.assertIn(term, REFERENCE)
         self.assertNotIn("def execute_", REFERENCE)
         self.assertNotIn("class Engine", REFERENCE)
+
+    def test_semantic_fixtures_validate_typed_links_and_shapes(self):
+        for case in FIXTURES["valid"]:
+            self.assertEqual([], validate_case(case), case["name"])
+
+    def test_semantic_fixtures_reject_unsafe_or_ambiguous_cases(self):
+        for case in FIXTURES["invalid"]:
+            self.assertTrue(validate_case(case), case["name"])
+
+    def test_assumption_invalidation_and_exact_subject_movement_are_explicit(self):
+        self.assertIn("satisfaction", REFERENCE)
+        self.assertIn("invalidat", REFERENCE)
+        self.assertIn("base movement", REFERENCE)
+        self.assertIn("read-only repair loop", REFERENCE)
+
+    def test_transition_matrix_constrains_unknown_block_and_terminal_states(self):
+        self.assertIn("Transition matrix", REFERENCE)
+        self.assertIn("UNKNOWN -> READY", REFERENCE)
+        self.assertIn("BLOCK -> READY", REFERENCE)
+        self.assertIn("CONVERGED -> READY", REFERENCE)
+        self.assertIn("DRAINING -> QUIESCENT", REFERENCE)
 
 
 if __name__ == "__main__":

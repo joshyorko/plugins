@@ -74,6 +74,53 @@ disjoint claims, effective capacity, cancellation, and priority policy; it
 does not infer readiness from branch or PR existence. Conflicting or stale
 evidence is UNKNOWN/BLOCK and stops the lane.
 
+### Assumptions and exact subjects
+
+An `Assumption` has an immutable identity, evidence references, and one of
+`SATISFIED`, `UNSATISFIED`, `UNKNOWN`, or `INVALIDATED` satisfaction states.
+Missing, stale, or contradictory evidence makes it `UNKNOWN`; a disproved
+predicate makes it `INVALIDATED`. Only `SATISFIED` assumptions admit or
+schedule work. Invalidation cancels pending admission, releases scheduling
+claims, and requires fresh reconciliation; it never starts a repair loop.
+
+An assumption about the exact candidate, approved base, model, plan, or
+repository subject is invalidated by movement of that subject (base movement
+included). Unrelated head
+movement does not invalidate it automatically, but must still be re-observed
+before admission. Any repair candidate invalidates predecessor acceptance.
+
+## Machine-checkable language shapes
+
+The focused fixtures in `tests/fixtures/semantic_cases.json` exercise this
+compact vocabulary without defining engine APIs:
+
+* a typed link is `{source, target, relation, generation, provenance}`; both
+  endpoints are known types and provenance has an exact digest;
+* an envelope/request names `{action, subject, actor, claims}` and a grant
+  must match all four fields; absent or mismatched grants are default-deny;
+* evidence is `{provenance, disposition}`, never one field standing in for
+  the other; provenance includes the observed head and source digest;
+* an assumption has `{identity, evidence, state}` and subject movement may
+  invalidate it; a non-satisfied assumption cannot be scheduled;
+* receipts record the request/grant identities, result, predicate evidence,
+  and next state; prose cannot supply omitted fields;
+* plans contain outcomes, predicates, dependencies, assumptions, claims, and
+  admission conditions; checkpoints contain the accepted generation, claims,
+  receipts, and replay-safe position.
+
+## Transition matrix
+
+The admissible transitions are: `WAITING -> READY|UNKNOWN|BLOCK`,
+`UNKNOWN -> WAITING|BLOCK`, `BLOCK -> WAITING|UNKNOWN`,
+`READY -> PROGRESSING|WAITING|BLOCK|UNKNOWN`,
+`PROGRESSING -> CONVERGED|WAITING|BLOCK|UNKNOWN|CANCELLED`, and
+`DRAINING -> QUIESCENT|CANCELLED`. `UNKNOWN` and `BLOCK` deny admission;
+`UNKNOWN -> READY` and `BLOCK -> READY` are forbidden without fresh
+reconciliation; read-only investigation may reduce them, but no read-only repair loop is
+allowed. `CONVERGED -> READY` is forbidden, as are reopening transitions from
+`REJECTED`, `CANCELLED`, or `QUIESCENT`. Terminal `CONVERGED`, `REJECTED`, `CANCELLED`, and `QUIESCENT` states
+cannot reopen or authorize work; a new plan generation is required.
+
 ## Envelopes, receipts, and harnesses
 
 An `AgentEnvelope` contains the exact outcome and plan generation, role and
