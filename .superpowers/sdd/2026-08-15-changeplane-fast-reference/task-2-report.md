@@ -26,8 +26,8 @@
 
 ## Commit and push
 
-- Pending commit: `feat(changeplane): add deterministic engine`
-- Pending push: `experiment/changeplane-fast-reference`
+- Implementation commit: `a38ccbcd19f6e0a078e6e5d09af887e5a61b6a53` (`feat(changeplane): add deterministic engine`)
+- Push target: `origin experiment/changeplane-fast-reference`
 
 ## Self-review and concerns
 
