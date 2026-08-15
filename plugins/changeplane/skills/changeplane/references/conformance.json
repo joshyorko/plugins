@@ -13,12 +13,30 @@
     "ActionRequest": {"required": ["id", "action", "actor", "subject", "model_generation", "plan_generation", "observed_head", "assumptions"]},
     "ActionReceipt": {"required": ["id", "action", "actor", "subject", "model_generation", "plan_generation", "observed_head", "candidate", "authority", "idempotency_key", "result", "evidence"]},
     "ResourceClaim": {"required": ["id", "subject", "resource", "mode"]},
-    "AgentEnvelope": {"required": ["id", "outcome", "objective", "model_generation", "plan_generation", "observed_head", "claims", "authority", "acceptance", "budget", "stopping_conditions", "receipt_schema"]},
+    "AgentEnvelope": {"required": ["id", "outcome", "objective", "subject", "candidate", "assumptions", "model_generation", "plan_generation", "observed_head", "claims", "authority", "acceptance", "budget", "stopping_conditions", "receipt_schema"]},
     "AdmissionDecision": {"required": ["outcome", "decision", "reason_code"]},
     "Convergence": {"required": ["model_generation", "plan_generation", "mandatory_outcomes", "satisfied"]},
     "Quiescence": {"required": ["model_generation", "plan_generation", "safe_authorized_transition"]}
   },
   "exact_bindings": ["model_generation", "plan_generation", "observed_head", "candidate", "subject", "assumptions"],
+  "binding_rules": {
+    "AgentEnvelope": {
+      "authority.subject": "subject",
+      "candidate.outcome": "outcome",
+      "acceptance.assumptions": "assumptions"
+    }
+  },
+  "transition_semantics": {
+    "AdmissionDecision": {
+      "permitted_decisions": ["ADMIT", "WAIT", "DENY"]
+    },
+    "Convergence": {
+      "satisfied_when": "every mandatory outcome has valid evidence bound to the exact model_generation and plan_generation"
+    },
+    "Quiescence": {
+      "satisfied_when": "no safe and authorized autonomous transition can reduce known drift for the exact model_generation and plan_generation"
+    }
+  },
   "authority": {"default": "DENY", "subject_scoped": true, "hostile_input_can_grant": false},
   "reason_codes": [
     {"code": "AUTHORITY_DENIED", "case_id": "authority-default-deny"},

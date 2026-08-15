@@ -20,9 +20,13 @@ Admission returns a stable decision and either no reason or exactly one code fro
 
 ## Envelopes and receipts
 
-An `AgentEnvelope` carries the exact objective or transition, model and plan generations, observed head, mutable branch or worktree where applicable, resource claims, authority, acceptance, evidence inputs, budget, stopping conditions, and receipt schema.
+An `AgentEnvelope` carries the selected `outcome`, exact objective or transition, `subject`, `candidate`, `assumptions`, model and plan generations, observed head, mutable branch or worktree where applicable, resource claims, authority, acceptance, evidence inputs, budget, stopping conditions, and receipt schema. The candidate MUST implement the selected `outcome`; the authority subject MUST equal the envelope `subject`; and acceptance assumptions MUST equal the envelope `assumptions`.
 
 An `ActionReceipt` records the action, actor, subject, model generation, plan generation, repository head or candidate, authority, idempotency identity, result, evidence, timestamp, and relevant executor details. After every receipt, re-fetch current reality.
+
+## Transition semantics
+
+An `AdmissionDecision` is exactly `ADMIT`, `WAIT`, or `DENY`. `Convergence.satisfied` is true only when every mandatory outcome has valid evidence bound to the exact model generation and plan generation. `Quiescence` is satisfied only when no safe and authorized autonomous transition can reduce known drift for the exact model generation and plan generation.
 
 ## Harness-neutral dispatch
 

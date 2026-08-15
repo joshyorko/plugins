@@ -57,6 +57,62 @@ class ChangeplaneLanguageTest(unittest.TestCase):
         for family in required_families:
             self.assertTrue(contract["record_families"][family]["required"])
 
+    def test_agent_envelope_binds_the_selected_outcome_candidate_and_authority_subject(self) -> None:
+        """Dropping envelope fences could dispatch a candidate or grant for another outcome."""
+        contract = self.load_conformance()
+
+        envelope = contract["record_families"]["AgentEnvelope"]
+        self.assertEqual(
+            [
+                "id",
+                "outcome",
+                "objective",
+                "subject",
+                "candidate",
+                "assumptions",
+                "model_generation",
+                "plan_generation",
+                "observed_head",
+                "claims",
+                "authority",
+                "acceptance",
+                "budget",
+                "stopping_conditions",
+                "receipt_schema",
+            ],
+            envelope["required"],
+        )
+        self.assertEqual(
+            {
+                "authority.subject": "subject",
+                "candidate.outcome": "outcome",
+                "acceptance.assumptions": "assumptions",
+            },
+            contract["binding_rules"]["AgentEnvelope"],
+        )
+
+    def test_admission_convergence_and_quiescence_have_closed_transition_semantics(self) -> None:
+        """An open-ended decision or terminal state could claim unsafe progress as complete."""
+        contract = self.load_conformance()
+
+        semantics = contract["transition_semantics"]
+        self.assertEqual(["ADMIT", "WAIT", "DENY"], semantics["AdmissionDecision"]["permitted_decisions"])
+        self.assertEqual(
+            "every mandatory outcome has valid evidence bound to the exact model_generation and plan_generation",
+            semantics["Convergence"]["satisfied_when"],
+        )
+        self.assertEqual(
+            "no safe and authorized autonomous transition can reduce known drift for the exact model_generation and plan_generation",
+            semantics["Quiescence"]["satisfied_when"],
+        )
+
+        language = (PLUGIN / "skills" / "changeplane" / "references" / "language.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("candidate MUST implement the selected `outcome`", language)
+        self.assertIn("authority subject MUST equal the envelope `subject`", language)
+        self.assertIn("`ADMIT`, `WAIT`, or `DENY`", language)
+
     def test_default_deny_authority_rejects_hostile_text_grants(self) -> None:
         """Changing authority to implicit or text-derived authority is a security bug."""
         contract = self.load_conformance()
