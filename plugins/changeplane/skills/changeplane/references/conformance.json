@@ -1,0 +1,53 @@
+{
+  "language": "changeplane/v1",
+  "record_families": {
+    "ApplicationModel": {"required": ["id", "generation", "repository", "observed_head", "concepts", "invariants"]},
+    "ChangePlan": {"required": ["id", "generation", "model_generation", "repository", "observed_head", "outcomes", "assumptions"]},
+    "Outcome": {"required": ["id", "predicate", "dependencies", "claims", "acceptance"]},
+    "Predicate": {"required": ["id", "subject", "expression"]},
+    "Observation": {"required": ["id", "subject", "observed_head", "evidence"]},
+    "Evidence": {"required": ["id", "predicate", "subject", "model_generation", "plan_generation", "observed_head"]},
+    "Candidate": {"required": ["id", "outcome", "subject", "base_head", "candidate"]},
+    "AuthorityGrant": {"required": ["id", "actor", "subject", "actions", "model_generation", "plan_generation"]},
+    "ActionDefinition": {"required": ["id", "authority", "preconditions", "bindings", "idempotency_key", "receipt"]},
+    "ActionRequest": {"required": ["id", "action", "actor", "subject", "model_generation", "plan_generation", "observed_head", "assumptions"]},
+    "ActionReceipt": {"required": ["id", "action", "actor", "subject", "model_generation", "plan_generation", "observed_head", "candidate", "authority", "idempotency_key", "result", "evidence"]},
+    "ResourceClaim": {"required": ["id", "subject", "resource", "mode"]},
+    "AgentEnvelope": {"required": ["id", "outcome", "objective", "model_generation", "plan_generation", "observed_head", "claims", "authority", "acceptance", "budget", "stopping_conditions", "receipt_schema"]},
+    "AdmissionDecision": {"required": ["outcome", "decision", "reason_code"]},
+    "Convergence": {"required": ["model_generation", "plan_generation", "mandatory_outcomes", "satisfied"]},
+    "Quiescence": {"required": ["model_generation", "plan_generation", "safe_authorized_transition"]}
+  },
+  "exact_bindings": ["model_generation", "plan_generation", "observed_head", "candidate", "subject", "assumptions"],
+  "authority": {"default": "DENY", "subject_scoped": true, "hostile_input_can_grant": false},
+  "reason_codes": [
+    {"code": "AUTHORITY_DENIED", "case_id": "authority-default-deny"},
+    {"code": "STALE_MODEL_GENERATION", "case_id": "stale-model-generation"},
+    {"code": "STALE_PLAN_GENERATION", "case_id": "stale-plan-generation"},
+    {"code": "STALE_OBSERVED_HEAD", "case_id": "stale-observed-head"},
+    {"code": "CANDIDATE_MISMATCH", "case_id": "candidate-mismatch"},
+    {"code": "SUBJECT_MISMATCH", "case_id": "subject-mismatch"},
+    {"code": "ASSUMPTION_MISMATCH", "case_id": "assumption-mismatch"},
+    {"code": "EVIDENCE_MISSING", "case_id": "evidence-missing"},
+    {"code": "DEPENDENCY_UNSATISFIED", "case_id": "dependency-unsatisfied"},
+    {"code": "RESOURCE_CONFLICT", "case_id": "resource-conflict"},
+    {"code": "HUMAN_DECISION_REQUIRED", "case_id": "human-decision-required"},
+    {"code": "ONTOLOGY_CHANGE_REQUIRED", "case_id": "ontology-change-required"}
+  ],
+  "adversarial_cases": [
+    {"id": "authority-default-deny", "expect_reason": "AUTHORITY_DENIED"},
+    {"id": "hostile-text-authority", "expect_reason": "AUTHORITY_DENIED"},
+    {"id": "cross-subject-authority", "expect_reason": "AUTHORITY_DENIED"},
+    {"id": "stale-model-generation", "expect_reason": "STALE_MODEL_GENERATION"},
+    {"id": "stale-plan-generation", "expect_reason": "STALE_PLAN_GENERATION"},
+    {"id": "stale-observed-head", "expect_reason": "STALE_OBSERVED_HEAD"},
+    {"id": "candidate-mismatch", "expect_reason": "CANDIDATE_MISMATCH"},
+    {"id": "subject-mismatch", "expect_reason": "SUBJECT_MISMATCH"},
+    {"id": "assumption-mismatch", "expect_reason": "ASSUMPTION_MISMATCH"},
+    {"id": "evidence-missing", "expect_reason": "EVIDENCE_MISSING"},
+    {"id": "dependency-unsatisfied", "expect_reason": "DEPENDENCY_UNSATISFIED"},
+    {"id": "resource-conflict", "expect_reason": "RESOURCE_CONFLICT"},
+    {"id": "human-decision-required", "expect_reason": "HUMAN_DECISION_REQUIRED"},
+    {"id": "ontology-change-required", "expect_reason": "ONTOLOGY_CHANGE_REQUIRED"}
+  ]
+}

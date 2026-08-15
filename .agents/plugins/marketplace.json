@@ -5,6 +5,45 @@
   },
   "plugins": [
     {
+      "name": "changeplane",
+      "description": "Repository-neutral governed change admission, evidence reconciliation, and read-only control-room workflows.",
+      "tags": [
+        "changeplane",
+        "governance",
+        "planning",
+        "evidence",
+        "mcp",
+        "orchestration",
+        "developer-tools"
+      ],
+      "interface": {
+        "displayName": "Changeplane",
+        "shortDescription": "Govern repository change with exact evidence and explicit authority.",
+        "longDescription": "Repository-neutral Changeplane language for governed work admission, evidence reconciliation, bounded agent envelopes, and read-only control-room decisions.",
+        "developerName": "Josh Yorko",
+        "category": "Developer Tools",
+        "capabilities": [
+          "Read"
+        ],
+        "websiteURL": "https://github.com/joshyorko/plugins",
+        "privacyPolicyURL": "https://github.com/joshyorko/plugins",
+        "termsOfServiceURL": "https://github.com/joshyorko/plugins",
+        "defaultPrompt": [
+          "Use $changeplane to assess governed repository work without executing it."
+        ],
+        "brandColor": "#1D4ED8"
+      },
+      "source": {
+        "source": "local",
+        "path": "./plugins/changeplane"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
       "name": "37signals",
       "description": "Compact 37signals-inspired Rails, Hotwire, product refresh, shaping, communication, and DHH judgment skills with source-grounded recipes.",
       "tags": [

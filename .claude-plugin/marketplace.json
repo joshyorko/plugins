@@ -8,6 +8,21 @@
   },
   "plugins": [
     {
+      "name": "changeplane",
+      "source": "./plugins/changeplane",
+      "description": "Repository-neutral governed change admission, evidence reconciliation, and read-only control-room workflows.",
+      "category": "development",
+      "tags": [
+        "changeplane",
+        "governance",
+        "planning",
+        "evidence",
+        "mcp",
+        "orchestration",
+        "developer-tools"
+      ]
+    },
+    {
       "name": "37signals",
       "source": "./plugins/37signals",
       "description": "Compact 37signals-inspired Rails, Hotwire, product refresh, shaping, communication, and DHH judgment skills with source-grounded recipes.",
