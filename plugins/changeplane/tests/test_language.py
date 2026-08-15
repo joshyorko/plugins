@@ -86,6 +86,7 @@ class ChangeplaneLanguageTest(unittest.TestCase):
             {
                 "authority.subject": "subject",
                 "candidate.outcome": "outcome",
+                "candidate.subject": "subject",
                 "acceptance.assumptions": "assumptions",
             },
             contract["binding_rules"]["AgentEnvelope"],
@@ -96,22 +97,44 @@ class ChangeplaneLanguageTest(unittest.TestCase):
         contract = self.load_conformance()
 
         semantics = contract["transition_semantics"]
+        self.assertEqual(
+            ["outcome", "decision", "reason_code"],
+            contract["record_families"]["AdmissionDecision"]["required"],
+        )
+        self.assertEqual(
+            ["model_generation", "plan_generation", "mandatory_outcomes", "satisfied"],
+            contract["record_families"]["Convergence"]["required"],
+        )
+        self.assertEqual(
+            ["model_generation", "plan_generation", "safe_authorized_transition", "satisfied"],
+            contract["record_families"]["Quiescence"]["required"],
+        )
         self.assertEqual(["ADMIT", "WAIT", "DENY"], semantics["AdmissionDecision"]["permitted_decisions"])
         self.assertEqual(
             "every mandatory outcome has valid evidence bound to the exact model_generation and plan_generation",
             semantics["Convergence"]["satisfied_when"],
         )
         self.assertEqual(
-            "no safe and authorized autonomous transition can reduce known drift for the exact model_generation and plan_generation",
+            "safe_authorized_transition is false or null and no safe and authorized autonomous transition can reduce known drift for the exact model_generation and plan_generation",
             semantics["Quiescence"]["satisfied_when"],
+        )
+        self.assertEqual(
+            [True, False, None],
+            semantics["Quiescence"]["safe_authorized_transition"]["permitted_values"],
+        )
+        self.assertEqual(
+            [False, None],
+            semantics["Quiescence"]["safe_authorized_transition"]["satisfied_values"],
         )
 
         language = (PLUGIN / "skills" / "changeplane" / "references" / "language.md").read_text(
             encoding="utf-8"
         )
         self.assertIn("candidate MUST implement the selected `outcome`", language)
+        self.assertIn("candidate subject MUST equal the envelope `subject`", language)
         self.assertIn("authority subject MUST equal the envelope `subject`", language)
         self.assertIn("`ADMIT`, `WAIT`, or `DENY`", language)
+        self.assertIn("`safe_authorized_transition` is `false` or `null`", language)
 
     def test_default_deny_authority_rejects_hostile_text_grants(self) -> None:
         """Changing authority to implicit or text-derived authority is a security bug."""
