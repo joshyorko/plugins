@@ -122,6 +122,50 @@ class ChangeplaneLanguageContractTests(unittest.TestCase):
         case["quiescence"]["checkpoint"] = "other-checkpoint"
         self.assertEqual(["quiescence binding"], validate_case(case))
 
+    def test_direct_probe_rejects_foreign_dependency_proof_owner(self):
+        case = self.admitted_case()
+        case["plan"]["dependencies"] = ["outcome-2"]
+        case["acceptedDependencies"] = [{
+            "outcome": "outcome-2", "owner": "other-worker", "candidate": "candidate-1",
+            "plan": "plan-1", "passed": True, "evidence": ["evidence-1"],
+        }]
+        self.assertEqual(["dependency proof owner"], validate_case(case))
+
+    def test_direct_probe_rejects_duplicate_dependency_proofs(self):
+        case = self.admitted_case()
+        case["plan"]["dependencies"] = ["outcome-2"]
+        proof = {"outcome": "outcome-2", "owner": "worker", "candidate": "candidate-1",
+                 "plan": "plan-1", "passed": True, "evidence": ["evidence-1"]}
+        case["acceptedDependencies"] = [proof, deepcopy(proof)]
+        self.assertEqual(["dependency proof uniqueness"], validate_case(case))
+
+    def test_direct_probe_rejects_foreign_predicate_subject_and_evidence(self):
+        case = self.admitted_case()
+        case["predicate"].update({"subject": "other-outcome", "candidate": "other-candidate", "generation": "other-generation"})
+        case["evidence"].update({"subject": "other-outcome", "candidate": "other-candidate", "generation": "other-generation"})
+        self.assertEqual(["evidence subject binding", "predicate subject binding"], validate_case(case))
+
+    def test_direct_probe_rejects_checkpoint_without_subject(self):
+        case = self.admitted_case()
+        del case["checkpoint"]["subject"]
+        self.assertEqual(["checkpoint shape"], validate_case(case))
+
+    def test_direct_probe_rejects_fabricated_quiescence_drain(self):
+        case = self.admitted_case()
+        case["quiescence"]["drain"] = "fabricated-drain"
+        self.assertEqual(["quiescence binding"], validate_case(case))
+
+    def test_direct_probe_requires_complete_normative_record_families(self):
+        case = self.admitted_case()
+        for field in ("candidate", "generation"):
+            case["predicate"].pop(field, None)
+        case["drain"].pop("identity", None)
+        self.assertEqual(["predicate shape", "quiescence binding", "drain shape"], validate_case(case))
+
+    def test_direct_probe_requires_non_weakening_engine_handoff(self):
+        self.assertIn("must deterministically enforce every Language invariant", REFERENCE)
+        self.assertIn("without redefining, omitting, weakening, skipping, or marking any semantic optional", REFERENCE)
+
     def test_skill_has_discoverable_frontmatter_and_contract_sections(self):
         self.assertTrue(SKILL.startswith("---\nname: changeplane\n"))
         self.assertIn("description: Use when", SKILL)

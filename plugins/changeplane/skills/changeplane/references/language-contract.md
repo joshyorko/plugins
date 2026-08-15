@@ -170,9 +170,19 @@ checkpoint records the last accepted generation, receipts, claims, and
 replay-safe position. Drain stops new admission, allows already-authorized
 work to finish or be cancelled, and records all terminal receipts.
 
-`Quiescence` requires no READY or running dispatch, no unresolved blocker or
-claim, and complete receipts for the checkpoint. It is a terminal observation,
-not permission to mutate.
+`Subject` binds repository, base, candidate, model, plan, and materialization;
+`Generation` is a content-addressed plan generation. `DependencyProof` binds
+one unique dependency outcome to its owner, candidate, plan generation, and
+fresh passing evidence. `Predicate` and `Evidence` bind the exact subject,
+candidate, generation, freshness, and result. `Replay` binds checkpoint,
+position, state, and side-effect prohibition. `Drain` has an identity, exact
+checkpoint, stopped state, pending work, and recorded receipts. `Quiescence`
+binds the exact completed Drain and Checkpoint and requires zero residual state.
+Missing, foreign, duplicate, stale, failed, fabricated, or mismatched records
+are rejected by stable normative reasons.
+
+CP-ENGINE must deterministically enforce every Language invariant and conformance case without redefining, omitting, weakening, skipping, or marking any semantic optional or `N/A`. CP-ENGINE may not substitute runtime behavior
+for a normative Language requirement.
 
 ## States and terminal semantics
 

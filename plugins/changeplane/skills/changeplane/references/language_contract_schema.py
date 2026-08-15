@@ -48,6 +48,7 @@ def validate_case(case):
         provenance = evidence.get("provenance") if isinstance(evidence, dict) else None
         if (_missing(evidence, {"identity", "provenance", "disposition", "fresh"}) or not _identity(evidence.get("identity")) or _missing(provenance, {"source", "observedHead", "digest"}) or not _identity(provenance.get("digest")) or not isinstance(evidence.get("fresh"), bool)): _add(errors, "evidence shape")
         if evidence.get("disposition") not in {"CREATE_NEW", "REUSE", "REJECT", "SUPERSEDE"}: _add(errors, "disposition")
+        if case.get("subject") and evidence.get("subject") is not None and (evidence.get("subject") != case.get("request", {}).get("subject") or evidence.get("candidate") != case.get("subject", {}).get("candidate") or evidence.get("generation") != case.get("plan", {}).get("generation")): _add(errors, "evidence subject binding")
     envelope = case.get("envelope")
     if envelope is not None and _missing(envelope, {"identity", "outcome", "plan", "role", "executor", "objective", "inputs", "allowed", "forbidden", "claims", "evidence", "receipt"}): _add(errors, "envelope shape")
     request, grant = case.get("request"), case.get("grant")
@@ -64,7 +65,8 @@ def validate_case(case):
     receipt = case.get("receipt")
     if receipt is not None and (_missing(receipt, {"identity", "request", "subject", "grant", "started", "ended", "result", "evidence", "predicates", "sideEffects", "next"}) or not _identity(receipt.get("identity")) or (request is not None and (receipt.get("request") != request.get("identity") or receipt.get("subject") != request.get("subject"))) or (grant is not None and receipt.get("grant") != grant.get("identity")) or (receipt.get("result") == "SUCCEEDED" and not receipt.get("evidence"))): _add(errors, "receipt binding/completeness")
     predicate = case.get("predicate")
-    if predicate is not None and (_missing(predicate, {"identity", "subject", "evidence", "result"}) or not isinstance(predicate.get("result"), bool)): _add(errors, "predicate shape")
+    if predicate is not None and (_missing(predicate, {"identity", "subject", "candidate", "generation", "evidence", "result"}) or not isinstance(predicate.get("result"), bool)): _add(errors, "predicate shape")
+    if predicate is not None and case.get("subject") and not _missing(predicate, {"subject", "candidate", "generation"}) and (predicate.get("subject") != case.get("request", {}).get("subject") or predicate.get("candidate") != case.get("subject", {}).get("candidate") or predicate.get("generation") != case.get("plan", {}).get("generation")): _add(errors, "predicate subject binding")
     plan = case.get("plan")
     if plan is not None and (_missing(plan, {"identity", "generation", "outcomes", "predicates", "dependencies", "assumptions", "claims", "admission"}) or not _identity(plan.get("identity")) or not plan.get("generation", "").startswith("sha256:")): _add(errors, "plan shape")
     if plan is not None and "generation" in plan: _check_exact_identity(errors, plan.get("generation"))
@@ -75,8 +77,6 @@ def validate_case(case):
             _add(errors, "exact subject binding")
         scope = (case["assumption"].get("scope") if isinstance(case.get("assumption"), dict) else {})
         if any(scope.get(field) != subject.get(field) for field in ("repository", "base", "candidate", "model", "plan")):
-            _add(errors, "exact subject binding")
-        if isinstance(case.get("evidence"), dict) and case["evidence"].get("subject") not in (None, subject):
             _add(errors, "exact subject binding")
     movement = case.get("movement")
     if movement is not None and (
@@ -102,6 +102,9 @@ def validate_case(case):
             _add(errors, "admission grant/claim")
         accepted = case.get("acceptedDependencies", [])
         accepted_by_outcome = {item.get("outcome"): item for item in accepted if isinstance(item, dict)}
+        if len(accepted_by_outcome) != len([item for item in accepted if isinstance(item, dict)]): _add(errors, "dependency proof uniqueness")
+        owner = case.get("request", {}).get("actor") if isinstance(case.get("request"), dict) else None
+        if any(item.get("owner") != owner for item in accepted if isinstance(item, dict)): _add(errors, "dependency proof owner")
         for dependency in plan.get("dependencies", []):
             proof = accepted_by_outcome.get(dependency)
             if not isinstance(proof, dict) or proof.get("plan") != plan.get("identity") or proof.get("candidate") != case.get("subject", {}).get("candidate") or proof.get("passed") is not True or not _bound_evidence(case, proof.get("evidence", [])):
@@ -136,15 +139,16 @@ def validate_case(case):
     if case.get("admission") in {"UNKNOWN", "BLOCK"} and case.get("scheduled"): _add(errors, "admission consistency")
     if case.get("admission") == "READY" and case.get("scheduled") is False: _add(errors, "admission consistency")
     checkpoint = case.get("checkpoint")
-    if checkpoint is not None and (_missing(checkpoint, {"generation", "claims", "receipts", "position", "state", "evidence", "pending"}) or not checkpoint.get("generation", "").startswith("sha256:")): _add(errors, "checkpoint shape")
+    if checkpoint is not None and (_missing(checkpoint, {"generation", "subject", "claims", "receipts", "position", "state", "evidence", "pending"}) or not checkpoint.get("generation", "").startswith("sha256:")): _add(errors, "checkpoint shape")
     if checkpoint is not None and (not isinstance(checkpoint.get("generation"), str) or len(checkpoint["generation"]) != 71 or not _identity(checkpoint["generation"])): _add(errors, "checkpoint identity")
-    if checkpoint is not None and plan is not None and (checkpoint.get("generation") != plan.get("generation") or checkpoint.get("subject") != case.get("subject", {}).get("candidate") or checkpoint.get("receipts") != ([receipt.get("identity")] if isinstance(receipt, dict) else []) or checkpoint.get("evidence") != ([evidence.get("identity")] if isinstance(evidence, dict) else [])): _add(errors, "checkpoint binding")
+    if checkpoint is not None and plan is not None and "subject" in checkpoint and (checkpoint.get("generation") != plan.get("generation") or checkpoint.get("subject") != case.get("subject", {}).get("candidate") or checkpoint.get("receipts") != ([receipt.get("identity")] if isinstance(receipt, dict) else []) or checkpoint.get("evidence") != ([evidence.get("identity")] if isinstance(evidence, dict) else [])): _add(errors, "checkpoint binding")
     if receipt is not None and (not receipt.get("predicates") or predicate is None or (isinstance(plan, dict) and set(receipt.get("predicates", [])) != set(plan.get("predicates", []))) or not set(receipt.get("predicates", [])).issubset({predicate.get("identity")}) or not _bound_evidence(case, predicate.get("evidence", [])) or predicate.get("result") is not True): _add(errors, "receipt predicates")
     if predicate is not None and (not predicate.get("evidence") or not _bound_evidence(case, predicate.get("evidence", []))): _add(errors, "predicate evidence")
     quiescence = case.get("quiescence")
     if quiescence is not None and (any(quiescence.get(field, 1) != 0 for field in ("ready", "running", "blockers", "claims")) or not quiescence.get("completeReceipts") or (checkpoint and checkpoint.get("pending"))): _add(errors, "quiescence")
-    if quiescence is not None and (checkpoint is None or quiescence.get("checkpoint") != checkpoint.get("generation") or not quiescence.get("drain")): _add(errors, "quiescence binding")
     drain = case.get("drain")
+    if quiescence is not None and (checkpoint is None or quiescence.get("checkpoint") != checkpoint.get("generation") or not isinstance(drain, dict) or quiescence.get("drain") != drain.get("identity")): _add(errors, "quiescence binding")
+    if drain is not None and _missing(drain, {"identity", "checkpoint", "stopped", "pending", "receipts"}): _add(errors, "drain shape")
     if drain is not None and (not drain.get("stopped") or drain.get("pending") or not drain.get("receipts")): _add(errors, "drain completion")
     if drain is not None and any(drain.get(field, 0) for field in ("activeWriters", "activeWork", "pendingEvents", "unrecordedReceipts")): _add(errors, "drain completion")
     if drain is not None and checkpoint is not None and (drain.get("checkpoint") != checkpoint.get("generation") or drain.get("receipts") != checkpoint.get("receipts")): _add(errors, "drain receipts")
