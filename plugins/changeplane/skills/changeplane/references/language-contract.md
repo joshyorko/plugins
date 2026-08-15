@@ -108,6 +108,16 @@ compact vocabulary without defining engine APIs:
   admission conditions; checkpoints contain the accepted generation, claims,
   receipts, and replay-safe position.
 
+An admitted record may additionally carry one exact subject containing
+repository, base, candidate, model, plan, and materialization identities;
+all scoped records must match it. Movement records name old, new, and
+predecessor identities and invalidate acceptance, admission, scheduling, and
+claims until fresh reconciliation. READY dependencies must be accepted and
+claims must be inside the plan/envelope with one owner each. Receipts name
+only passing predicates with their evidence; checkpoints use a full exact
+generation. Drain requires no active writers, work, pending events, or
+unrecorded receipts, and quiescence binds that completed checkpoint and drain.
+
 The executable seam requires these exact record fields. Non-empty local IDs are
 accepted for declarative references; every `sha256:` identity is exactly
 `sha256:` plus 64 lowercase hexadecimal characters. A link endpoint is

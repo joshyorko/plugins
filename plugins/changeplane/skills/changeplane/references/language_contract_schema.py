@@ -64,12 +64,45 @@ def validate_case(case):
     plan = case.get("plan")
     if plan is not None and (_missing(plan, {"identity", "generation", "outcomes", "predicates", "dependencies", "assumptions", "claims", "admission"}) or not _identity(plan.get("identity")) or not plan.get("generation", "").startswith("sha256:")): _add(errors, "plan shape")
     if plan is not None and "generation" in plan: _check_exact_identity(errors, plan.get("generation"))
+    subject = case.get("subject")
+    if subject is not None:
+        fields = {"repository", "base", "candidate", "model", "plan", "materialization"}
+        if _missing(subject, fields) or not all(_identity(subject.get(field)) for field in fields):
+            _add(errors, "exact subject binding")
+        scope = (case["assumption"].get("scope") if isinstance(case.get("assumption"), dict) else {})
+        if any(scope.get(field) != subject.get(field) for field in ("repository", "base", "candidate", "model", "plan")):
+            _add(errors, "exact subject binding")
+        if isinstance(case.get("evidence"), dict) and case["evidence"].get("subject") not in (None, subject):
+            _add(errors, "exact subject binding")
+    movement = case.get("movement")
+    if movement is not None and (
+        _missing(movement, {"old", "new", "predecessor"})
+        or not all(_identity(movement.get(field)) for field in ("old", "new", "predecessor"))
+        or movement.get("old") != movement.get("predecessor")
+        or case.get("acceptanceValid")
+        or case.get("admission") == "READY"
+        or case.get("scheduled")
+        or case.get("claims")
+    ):
+        _add(errors, "movement effects")
     assumption = case.get("assumption")
     if assumption is not None:
         scope = assumption.get("scope") if isinstance(assumption, dict) else None
         if (_missing(assumption, {"identity", "subject", "scope", "evidence", "state", "fresh", "movement", "acceptanceValid", "reconcile"}) or not _identity(assumption.get("identity")) or _missing(scope, {"repository", "base", "candidate", "model", "plan"}) or not all(_identity(scope.get(field)) for field in ("repository", "base", "candidate", "model", "plan")) or not assumption.get("evidence") or not isinstance(assumption.get("fresh"), bool) or assumption.get("movement") not in MOVEMENTS): _add(errors, "assumption identity/evidence/freshness")
         if assumption.get("movement") != "NONE" and (assumption.get("state") != "INVALIDATED" or assumption.get("acceptanceValid") or case.get("admission") == "READY" or case.get("scheduled") or case.get("claims") or not assumption.get("admissionCancelled") or not assumption.get("claimsReleased") or assumption.get("reconcile") != "fresh"): _add(errors, "assumption movement effects")
-        if case.get("admission") == "READY" and (assumption.get("state") != "SATISFIED" or not assumption.get("fresh") or assumption.get("reconcile") != "fresh"): _add(errors, "assumption admission")
+    if case.get("admission") == "READY" and (assumption.get("state") != "SATISFIED" or not assumption.get("fresh") or assumption.get("reconcile") != "fresh"): _add(errors, "assumption admission")
+    if case.get("admission") == "READY" and plan is not None:
+        if plan.get("dependencies") and not set(plan["dependencies"]).issubset(set(case.get("acceptedDependencies", []))):
+            _add(errors, "admission dependencies")
+        if isinstance(case.get("envelope"), dict) and not set(case["envelope"].get("claims", [])).issubset(set(plan.get("claims", []))):
+            _add(errors, "claim confinement")
+    claims = case.get("claims")
+    if claims is not None and any(isinstance(claim, dict) for claim in claims):
+        claim_names = [claim.get("claim") for claim in claims if isinstance(claim, dict)]
+        if len(claim_names) != len(set(claim_names)) or any(not claim.get("owner") for claim in claims if isinstance(claim, dict)):
+            _add(errors, "claim ownership")
+        if len(claim_names) != len(claims):
+            _add(errors, "claim ownership")
     transition = case.get("transition")
     if transition:
         if transition[1] not in ALLOWED.get(transition[0], set()): _add(errors, "transition")
@@ -80,10 +113,14 @@ def validate_case(case):
     if case.get("admission") == "READY" and case.get("scheduled") is False: _add(errors, "admission consistency")
     checkpoint = case.get("checkpoint")
     if checkpoint is not None and (_missing(checkpoint, {"generation", "claims", "receipts", "position", "state", "evidence", "pending"}) or not checkpoint.get("generation", "").startswith("sha256:")): _add(errors, "checkpoint shape")
+    if checkpoint is not None and (not isinstance(checkpoint.get("generation"), str) or len(checkpoint["generation"]) != 71 or not _identity(checkpoint["generation"])): _add(errors, "checkpoint identity")
+    if receipt is not None and receipt.get("predicates") and predicate is not None and not set(receipt["predicates"]).issubset({predicate.get("identity")}): _add(errors, "receipt predicates")
     quiescence = case.get("quiescence")
     if quiescence is not None and (any(quiescence.get(field, 1) != 0 for field in ("ready", "running", "blockers", "claims")) or not quiescence.get("completeReceipts") or (checkpoint and checkpoint.get("pending"))): _add(errors, "quiescence")
+    if quiescence is not None and quiescence.get("checkpoint") is not None and (checkpoint is None or quiescence["checkpoint"] != checkpoint.get("generation")): _add(errors, "quiescence binding")
     drain = case.get("drain")
     if drain is not None and (not drain.get("stopped") or drain.get("pending") or not drain.get("receipts")): _add(errors, "drain completion")
+    if drain is not None and any(drain.get(field, 0) for field in ("activeWriters", "activeWork", "pendingEvents", "unrecordedReceipts")): _add(errors, "drain completion")
     replay = case.get("replay")
     if replay is not None and (not replay.get("position") or replay.get("sideEffects") is not False): _add(errors, "replay safety")
     return errors

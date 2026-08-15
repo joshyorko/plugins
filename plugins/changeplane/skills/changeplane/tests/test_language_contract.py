@@ -2,6 +2,7 @@
 """Executable acceptance checks for the canonical Changeplane Language skill."""
 
 from pathlib import Path
+from copy import deepcopy
 import json
 import sys
 import unittest
@@ -18,6 +19,48 @@ FIXTURES = json.loads(
 
 
 class ChangeplaneLanguageContractTests(unittest.TestCase):
+    def admitted_case(self):
+        return deepcopy(FIXTURES["valid"][0])
+
+    def test_direct_probe_rejects_cross_bound_subject_and_movement(self):
+        case = self.admitted_case()
+        case["subject"] = {
+            "repository": "repo-1", "base": "base-1", "candidate": "candidate-1",
+            "model": "model-1", "plan": "plan-1", "materialization": "materialization-1",
+        }
+        case["assumption"]["scope"]["base"] = "other-base"
+        case["movement"] = {"old": "candidate-1", "new": "candidate-2", "predecessor": "candidate-1"}
+        self.assertEqual(
+            ["exact subject binding", "movement effects"], validate_case(case)
+        )
+
+    def test_direct_probe_rejects_unadmitted_dependencies_and_claims(self):
+        case = self.admitted_case()
+        case["plan"]["dependencies"] = ["unaccepted-outcome"]
+        case["envelope"]["claims"] = ["foreign:path"]
+        case["claims"] = [{"claim": "paths:x", "owner": "worker"}, {"claim": "paths:x", "owner": "other"}]
+        self.assertEqual(
+            ["admission dependencies", "claim confinement", "claim ownership"],
+            validate_case(case),
+        )
+
+    def test_direct_probe_rejects_unproven_predicates_and_incomplete_checkpoint(self):
+        case = self.admitted_case()
+        case["receipt"]["predicates"] = ["missing-predicate"]
+        case["checkpoint"]["generation"] = "sha256:plan"
+        self.assertEqual(
+            ["checkpoint identity", "receipt predicates"], validate_case(case)
+        )
+
+    def test_direct_probe_rejects_active_drain_and_unbound_quiescence(self):
+        case = self.admitted_case()
+        case["drain"]["activeWriters"] = 1
+        case["drain"]["activeWork"] = 1
+        case["quiescence"]["checkpoint"] = "other-checkpoint"
+        self.assertEqual(
+            ["quiescence binding", "drain completion"], validate_case(case)
+        )
+
     def test_skill_has_discoverable_frontmatter_and_contract_sections(self):
         self.assertTrue(SKILL.startswith("---\nname: changeplane\n"))
         self.assertIn("description: Use when", SKILL)
