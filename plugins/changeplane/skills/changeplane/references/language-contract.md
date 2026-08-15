@@ -108,6 +108,24 @@ compact vocabulary without defining engine APIs:
   admission conditions; checkpoints contain the accepted generation, claims,
   receipts, and replay-safe position.
 
+The executable seam requires these exact record fields. A link endpoint is
+`Type:identity`, where both types are known; its provenance requires `source`,
+`observedHead`, and a `sha256:` digest. An envelope requires identity,
+outcome, plan, role, executor, objective, inputs, allowed and forbidden
+actions, claims, evidence references, and receipt fields. An ActionRequest
+requires identity, action, subject, actor, outcome, claims, inputs,
+preconditions, and idempotency; its grant repeats request, action, subject,
+actor, and claims and adds issuer, policy, validity expiry, and revocation.
+An ActionReceipt requires identity, request, subject, grant, start/end,
+result, evidence, predicates, side-effects, and next state; a successful
+receipt without evidence is rejected. Plans require identity, content-
+addressed generation, outcomes, predicates, dependencies, assumptions,
+claims, and admission conditions. Checkpoints require generation, claims,
+receipts, position, state, evidence, and pending events. Invalid records are
+reported by stable reasons such as `typed link endpoint`, `envelope shape`,
+`assumption admission`, `grant binding`, `receipt binding/completeness`,
+`checkpoint shape`, `fresh reconciliation`, and `quiescence`.
+
 ## Transition matrix
 
 The admissible transitions are: `WAITING -> READY|UNKNOWN|BLOCK`,

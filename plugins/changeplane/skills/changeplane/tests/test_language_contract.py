@@ -107,7 +107,21 @@ class ChangeplaneLanguageContractTests(unittest.TestCase):
 
     def test_semantic_fixtures_reject_unsafe_or_ambiguous_cases(self):
         for case in FIXTURES["invalid"]:
-            self.assertTrue(validate_case(case), case["name"])
+            self.assertEqual(case["errors"], validate_case(case), case["name"])
+
+    def test_valid_fixture_exercises_every_record_family(self):
+        families = FIXTURES["valid"][0]["families"]
+        self.assertEqual(
+            {"links", "envelope", "request", "grant", "receipt", "evidence",
+             "predicate", "plan", "assumption", "admission", "checkpoint",
+             "replay", "drain", "quiescence", "lifecycle"},
+            set(families),
+        )
+
+    def test_invalid_fixtures_report_specific_machine_reasons(self):
+        for case in FIXTURES["invalid"]:
+            self.assertTrue(case["errors"], case["name"])
+            self.assertEqual(case["errors"], validate_case(case), case["name"])
 
     def test_assumption_invalidation_and_exact_subject_movement_are_explicit(self):
         self.assertIn("satisfaction", REFERENCE)
