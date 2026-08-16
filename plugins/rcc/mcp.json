@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "rcc-dagger": {
+      "type": "stdio",
+      "command": "./skills/rcc/scripts/rcc-dagger-mcp"
+    }
+  }
+}

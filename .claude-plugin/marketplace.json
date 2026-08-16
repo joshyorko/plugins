@@ -30,7 +30,7 @@
     {
       "name": "fizzy",
       "source": "./plugins/fizzy",
-      "description": "Fizzy workflows for boards, cards, comments, setup, self-hosted management, and MCP connector access.",
+      "description": "Fizzy workflows for boards, cards, comments, setup, self-hosted management, and bundled MCP connector access.",
       "category": "productivity",
       "tags": [
         "fizzy",
@@ -44,7 +44,7 @@
     {
       "name": "rcc",
       "source": "./plugins/rcc",
-      "description": "RCC-family skills for RCC core, Robot Framework acceptance tests, RPA Framework automation, robot projects, work items, Action Server, and CI maintenance.",
+      "description": "RCC-family automation skills with a bundled, user-toggleable Dagger MCP server for RCC core, Robot Framework, RPA Framework, robots, work items, Action Server, and CI.",
       "category": "development",
       "tags": [
         "rcc",
@@ -58,6 +58,7 @@
         "workitems",
         "action-server",
         "actions",
+        "dagger",
         "mcp",
         "ci",
         "developer-tools"

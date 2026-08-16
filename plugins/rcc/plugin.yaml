@@ -1,6 +1,6 @@
 {
   "name": "rcc",
-  "version": "0.1.0",
-  "description": "RCC-family skills for RCC core, Robot Framework acceptance tests, RPA Framework automation, robot projects, work items, Action Server, and CI maintenance.",
+  "version": "0.1.1",
+  "description": "RCC-family skills plus an optional Dagger MCP server for RCC core, Robot Framework, RPA Framework, robots, work items, Action Server, and CI.",
   "kind": "standalone"
 }

@@ -6,7 +6,9 @@ Do not manually author skill content under `skills/` or `.agents/skills/`. Those
 
 ## Required Files
 
+- Every plugin must include the portable Agent Plugins manifest at `plugins/<plugin>/plugin.json`.
 - Every plugin must include `plugins/<plugin>/.codex-plugin/plugin.json`.
+- Plugins that bundle MCP servers must include portable `plugins/<plugin>/mcp.json`; Codex compatibility remains isolated in `.mcp.json` and the `.codex-plugin/plugin.json` `mcpServers` pointer.
 - Hermes compatibility shims are generated to `plugins/<plugin>/plugin.yaml` and `plugins/<plugin>/__init__.py`.
 - Claude compatibility manifests are generated to `plugins/<plugin>/.claude-plugin/plugin.json`.
 - Marketplace metadata is authored in `marketplaces/catalog.json` and generated to:
@@ -28,6 +30,7 @@ python3 scripts/build_hermes_plugins.py
 4. Validate the repo:
 
 ```bash
+python3 -m pip install -r requirements-dev.txt
 bin/check
 ```
 

@@ -119,9 +119,9 @@ def main() -> int:
 
     for plugin in catalog["plugins"]:
         plugin_root = ROOT / "plugins" / plugin["name"]
-        codex_manifest = load_json(plugin_root / ".codex-plugin" / "plugin.json")
+        portable_manifest = load_json(plugin_root / "plugin.json")
         claude_manifest = build_claude_plugin_manifest(
-            codex_manifest,
+            portable_manifest,
             plugin.get("claude_name", plugin["name"]),
         )
         changed |= write_if_changed(
