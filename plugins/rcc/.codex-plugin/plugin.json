@@ -1,7 +1,7 @@
 {
   "name": "rcc",
-  "version": "0.1.0",
-  "description": "RCC-family skills for RCC core, Robot Framework acceptance tests, RPA Framework automation, robot projects, work items, Action Server, and CI maintenance.",
+  "version": "0.1.1",
+  "description": "RCC-family skills plus an optional Dagger MCP server for RCC core, Robot Framework, RPA Framework, robots, work items, Action Server, and CI.",
   "author": {
     "name": "Josh Yorko",
     "email": "joshua.yorko@gmail.com",
@@ -22,14 +22,16 @@
     "workitems",
     "action-server",
     "actions",
+    "dagger",
     "mcp",
     "ci"
   ],
   "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
   "interface": {
-    "displayName": "RCC Automation",
-    "shortDescription": "RCC skills for RCC core, robot projects, Robot Framework acceptance tests, RPA Framework automation, work items, Action Server, and CI maintenance.",
-    "longDescription": "RCC-family workflows split across focused skills for RCC core, robot projects and environments, Robot Framework suites and RCC acceptance tests, RPA Framework automation, work items, Action Server packages, and RCC-powered CI maintenance.",
+    "displayName": "RCC Automation + Dagger MCP",
+    "shortDescription": "RCC automation skills with an optional, user-toggleable Dagger MCP server.",
+    "longDescription": "RCC-family workflows split across focused skills for RCC core, robot projects and environments, Robot Framework suites, RPA Framework automation, work items, Action Server packages, and CI maintenance. Includes an optional Dagger MCP server that users can enable or disable independently after installation.",
     "developerName": "Josh Yorko",
     "category": "Developer Tools",
     "capabilities": [
@@ -41,8 +43,8 @@
     "termsOfServiceURL": "https://github.com/joshyorko/plugins",
     "defaultPrompt": [
       "Maintain RCC Robot Framework acceptance tests.",
-      "Build an RCC automation with RPA Framework.",
-      "Debug an RCC robot environment or task."
+      "Build or debug an RCC automation with RPA Framework.",
+      "Use the bundled Dagger MCP server to inspect or run an RCC Dagger module."
     ],
     "brandColor": "#1D4ED8",
     "composerIcon": "./assets/rcc-logo.svg",

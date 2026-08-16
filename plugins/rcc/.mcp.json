@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "rcc-dagger": {
+      "command": "./skills/rcc/scripts/rcc-dagger-mcp"
+    }
+  }
+}

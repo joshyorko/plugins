@@ -55,7 +55,7 @@
     },
     {
       "name": "fizzy",
-      "description": "Fizzy workflows for boards, cards, comments, setup, self-hosted management, and MCP connector access.",
+      "description": "Fizzy workflows for boards, cards, comments, setup, self-hosted management, and bundled MCP connector access.",
       "tags": [
         "fizzy",
         "project-management",
@@ -97,7 +97,7 @@
     },
     {
       "name": "rcc",
-      "description": "RCC-family skills for RCC core, Robot Framework acceptance tests, RPA Framework automation, robot projects, work items, Action Server, and CI maintenance.",
+      "description": "RCC-family automation skills with a bundled, user-toggleable Dagger MCP server for RCC core, Robot Framework, RPA Framework, robots, work items, Action Server, and CI.",
       "tags": [
         "rcc",
         "robocorp",
@@ -110,14 +110,15 @@
         "workitems",
         "action-server",
         "actions",
+        "dagger",
         "mcp",
         "ci",
         "developer-tools"
       ],
       "interface": {
-        "displayName": "RCC Automation",
-        "shortDescription": "RCC skills for RCC core, robot projects, Robot Framework acceptance tests, RPA Framework automation, work items, Action Server, and CI maintenance.",
-        "longDescription": "RCC-family workflows split across focused skills for RCC core, robot projects and environments, Robot Framework suites and RCC acceptance tests, RPA Framework automation, work items, Action Server packages, and RCC-powered CI maintenance.",
+        "displayName": "RCC Automation + Dagger MCP",
+        "shortDescription": "RCC automation skills with an optional, user-toggleable Dagger MCP server.",
+        "longDescription": "RCC-family workflows split across focused skills for RCC core, robot projects and environments, Robot Framework suites, RPA Framework automation, work items, Action Server packages, and CI maintenance. Includes an optional Dagger MCP server that users can enable or disable independently after installation.",
         "developerName": "Josh Yorko",
         "category": "Developer Tools",
         "capabilities": [
@@ -129,8 +130,8 @@
         "termsOfServiceURL": "https://github.com/joshyorko/plugins",
         "defaultPrompt": [
           "Maintain RCC Robot Framework acceptance tests.",
-          "Build an RCC automation with RPA Framework.",
-          "Debug an RCC robot environment or task."
+          "Build or debug an RCC automation with RPA Framework.",
+          "Use the bundled Dagger MCP server to inspect or run an RCC Dagger module."
         ],
         "brandColor": "#1D4ED8",
         "composerIcon": "./assets/rcc-logo.svg",

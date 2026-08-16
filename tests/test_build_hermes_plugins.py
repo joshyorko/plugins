@@ -39,6 +39,17 @@ class HermesPluginBuilderTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        (plugin_root / "plugin.json").write_text(
+            json.dumps(
+                {
+                    "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+                    "name": name,
+                    "version": "0.2.0",
+                    "description": f"{name} portable description.",
+                }
+            ),
+            encoding="utf-8",
+        )
         (skill_dir / "SKILL.md").write_text(
             "---\n"
             f"name: {name}-skill\n"
@@ -49,7 +60,7 @@ class HermesPluginBuilderTest(unittest.TestCase):
         )
         return plugin_root
 
-    def test_hermes_plugin_yaml_uses_codex_manifest_metadata(self) -> None:
+    def test_hermes_plugin_yaml_uses_portable_manifest_metadata(self) -> None:
         root = Path(tempfile.mkdtemp())
         plugin_root = self.make_plugin(root, "fizzy")
         catalog_plugin = {"name": "fizzy", "description": "Catalog description"}
@@ -60,7 +71,7 @@ class HermesPluginBuilderTest(unittest.TestCase):
 
         self.assertEqual("fizzy", data["name"])
         self.assertEqual("0.2.0", data["version"])
-        self.assertEqual("fizzy Codex description.", data["description"])
+        self.assertEqual("fizzy portable description.", data["description"])
         self.assertEqual("standalone", data["kind"])
 
     def test_generated_init_compiles_and_keeps_frontmatter_separator_escaped(self) -> None:

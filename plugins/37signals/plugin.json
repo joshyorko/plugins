@@ -1,0 +1,27 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "37signals",
+  "version": "0.1.0",
+  "description": "Compact 37signals-inspired Rails, Hotwire, product refresh, shaping, communication, and DHH judgment skills with source-grounded recipes.",
+  "author": {
+    "name": "Josh Yorko",
+    "email": "joshua.yorko@gmail.com",
+    "url": "https://github.com/joshyorko"
+  },
+  "homepage": "https://github.com/joshyorko/plugins",
+  "repository": "https://github.com/joshyorko/plugins",
+  "license": "MIT",
+  "keywords": [
+    "37signals",
+    "rails",
+    "basecamp",
+    "hotwire",
+    "kamal",
+    "shape-up",
+    "scope",
+    "product-refresh",
+    "communication",
+    "product-design",
+    "dhh"
+  ]
+}

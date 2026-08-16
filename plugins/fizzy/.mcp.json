@@ -2,8 +2,7 @@
   "mcpServers": {
     "fizzy": {
       "type": "http",
-      "url": "https://fizzy.joshyorko.com/mcp/",
-      "note": "Josh's self-hosted Fizzy MCP endpoint and the only MCP endpoint this plugin is intended to use. Uses OAuth dynamic registration, PKCE, bearer tokens, and JSON-RPC over HTTP for board/card search and fetch plus card/comment write tools."
+      "url": "https://fizzy.joshyorko.com/mcp/"
     }
   }
 }

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
 from pathlib import Path
+from unittest import mock
 
 from scripts import validate_repo
 
@@ -74,6 +76,19 @@ class SkillFrontmatterTest(unittest.TestCase):
             validate_repo.validate_skill_frontmatter(skill_dir)
 
         self.assertIn("missing YAML frontmatter close", str(error.exception))
+
+    def test_rejects_nonstandard_agent_skill_frontmatter(self) -> None:
+        skill_dir = self.make_skill(
+            "vendor-skill",
+            "name: vendor-skill\n"
+            "description: Use when testing portable metadata\n"
+            "invocable: true",
+        )
+
+        with self.assertRaises(SystemExit) as error:
+            validate_repo.validate_skill_frontmatter(skill_dir)
+
+        self.assertIn("unsupported Agent Skills frontmatter", str(error.exception))
 
     def test_rejects_37signals_non_trigger_description(self) -> None:
         skill_dir = self.make_skill(
@@ -265,6 +280,197 @@ class SkillFrontmatterTest(unittest.TestCase):
             validate_repo.validate_37signals_plugin(plugin_root, skill_dirs)
 
         self.assertIn("expect_skill is not active", str(error.exception))
+
+
+class AgentPluginManifestTest(unittest.TestCase):
+    def make_plugin(self, manifest: dict) -> Path:
+        plugin_root = Path(tempfile.mkdtemp()) / "test-plugin"
+        plugin_root.mkdir()
+        (plugin_root / "plugin.json").write_text(
+            json.dumps(manifest),
+            encoding="utf-8",
+        )
+        return plugin_root
+
+    def test_rejects_missing_portable_schema(self) -> None:
+        plugin_root = self.make_plugin({"name": "test-plugin"})
+
+        with self.assertRaises(SystemExit) as error:
+            validate_repo.validate_portable_manifest(plugin_root)
+
+        self.assertIn("Agent Plugins 1.0.0 schema", str(error.exception))
+
+    def test_rejects_vendor_field_in_portable_manifest(self) -> None:
+        plugin_root = self.make_plugin(
+            {
+                "$schema": validate_repo.AGENT_PLUGIN_SCHEMA_ID,
+                "name": "test-plugin",
+                "skills": "./skills/",
+            }
+        )
+
+        with self.assertRaises(SystemExit) as error:
+            validate_repo.validate_portable_manifest(plugin_root)
+
+        self.assertIn("Additional properties are not allowed", str(error.exception))
+
+    def test_rejects_drifted_vendored_official_schema(self) -> None:
+        plugin_root = self.make_plugin(
+            {
+                "$schema": validate_repo.AGENT_PLUGIN_SCHEMA_ID,
+                "name": "test-plugin",
+            }
+        )
+        schema_path = Path(tempfile.mkdtemp()) / "plugin.schema.json"
+        schema = json.loads(validate_repo.AGENT_PLUGIN_SCHEMA_PATH.read_text())
+        schema["title"] = "Drifted schema"
+        schema_path.write_text(json.dumps(schema), encoding="utf-8")
+
+        with mock.patch.object(validate_repo, "AGENT_PLUGIN_SCHEMA_PATH", schema_path):
+            with self.assertRaises(SystemExit) as error:
+                validate_repo.validate_portable_manifest(plugin_root)
+
+        self.assertIn("does not match the published Agent Plugins 1.0.0 schema", str(error.exception))
+
+
+class AgentPluginMcpTest(unittest.TestCase):
+    def make_plugin(self, mcp: dict, codex_mcp: dict | None = None) -> Path:
+        plugin_root = Path(tempfile.mkdtemp()) / "test-plugin"
+        plugin_root.mkdir()
+        (plugin_root / "mcp.json").write_text(json.dumps(mcp), encoding="utf-8")
+        if codex_mcp is not None:
+            (plugin_root / ".mcp.json").write_text(
+                json.dumps(codex_mcp),
+                encoding="utf-8",
+            )
+        return plugin_root
+
+    def test_rejects_nonstandard_remote_transport(self) -> None:
+        plugin_root = self.make_plugin(
+            {
+                "$schema": validate_repo.AGENT_MCP_SCHEMA_ID,
+                "mcpServers": {
+                    "remote": {
+                        "type": "http",
+                        "url": "https://example.com/mcp",
+                    }
+                },
+            }
+        )
+
+        with self.assertRaises(SystemExit) as error:
+            validate_repo.validate_portable_mcp(plugin_root)
+
+        self.assertIn("not valid under any of the given schemas", str(error.exception))
+
+    def test_accepts_http_for_any_loopback_ip_literal(self) -> None:
+        plugin_root = self.make_plugin(
+            {
+                "$schema": validate_repo.AGENT_MCP_SCHEMA_ID,
+                "mcpServers": {
+                    "remote": {
+                        "type": "streamable-http",
+                        "url": "http://127.0.0.2/mcp",
+                    }
+                },
+            }
+        )
+
+        validate_repo.validate_portable_mcp(plugin_root)
+
+    def test_rejects_case_insensitive_duplicate_headers(self) -> None:
+        plugin_root = self.make_plugin(
+            {
+                "$schema": validate_repo.AGENT_MCP_SCHEMA_ID,
+                "mcpServers": {
+                    "remote": {
+                        "type": "streamable-http",
+                        "url": "https://example.com/mcp",
+                        "headers": {"X-Key": "one", "x-key": "two"},
+                    }
+                },
+            }
+        )
+
+        with self.assertRaises(SystemExit) as error:
+            validate_repo.validate_portable_mcp(plugin_root)
+
+        self.assertIn("duplicate case-insensitive HTTP header", str(error.exception))
+
+    def test_rejects_malformed_header_name(self) -> None:
+        plugin_root = self.make_plugin(
+            {
+                "$schema": validate_repo.AGENT_MCP_SCHEMA_ID,
+                "mcpServers": {
+                    "remote": {
+                        "type": "streamable-http",
+                        "url": "https://example.com/mcp",
+                        "headers": {"Bad Header": "value"},
+                    }
+                },
+            }
+        )
+
+        with self.assertRaises(SystemExit) as error:
+            validate_repo.validate_portable_mcp(plugin_root)
+
+        self.assertIn("invalid HTTP header name", str(error.exception))
+
+    def test_rejects_escaping_stdio_command(self) -> None:
+        plugin_root = self.make_plugin(
+            {
+                "$schema": validate_repo.AGENT_MCP_SCHEMA_ID,
+                "mcpServers": {
+                    "local": {
+                        "type": "stdio",
+                        "command": "../outside/server",
+                    }
+                },
+            }
+        )
+
+        with self.assertRaises(SystemExit) as error:
+            validate_repo.validate_portable_mcp(plugin_root)
+
+        self.assertIn("bare executable or start with './'", str(error.exception))
+
+    def test_rejects_codex_server_name_drift(self) -> None:
+        plugin_root = self.make_plugin(
+            {
+                "$schema": validate_repo.AGENT_MCP_SCHEMA_ID,
+                "mcpServers": {
+                    "rcc-dagger": {
+                        "type": "stdio",
+                        "command": "./bin/rcc-dagger-mcp",
+                    }
+                },
+            },
+            {"other-server": {"command": "./bin/rcc-dagger-mcp"}},
+        )
+
+        with self.assertRaises(SystemExit) as error:
+            validate_repo.validate_mcp_surfaces(plugin_root)
+
+        self.assertIn("server names must match", str(error.exception))
+
+    def test_rejects_codex_server_configuration_drift(self) -> None:
+        plugin_root = self.make_plugin(
+            {
+                "$schema": validate_repo.AGENT_MCP_SCHEMA_ID,
+                "mcpServers": {
+                    "rcc-dagger": {
+                        "type": "stdio",
+                        "command": "./bin/rcc-dagger-mcp",
+                    }
+                },
+            },
+            {"rcc-dagger": {"command": "./bin/other-server"}},
+        )
+
+        with self.assertRaises(SystemExit) as error:
+            validate_repo.validate_mcp_surfaces(plugin_root)
+
+        self.assertIn("configuration differs", str(error.exception))
 
 
 if __name__ == "__main__":

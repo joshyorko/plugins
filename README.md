@@ -1,6 +1,6 @@
 [![Bootstrap Smoke](https://github.com/joshyorko/plugins/actions/workflows/bootstrap-smoke.yml/badge.svg)](https://github.com/joshyorko/plugins/actions/workflows/bootstrap-smoke.yml)
 
-# Agent Skills
+# Agent Plugins and Skills
 
 A plugin-first skill repo for three jobs:
 
@@ -8,7 +8,7 @@ A plugin-first skill repo for three jobs:
 - `plugins/fizzy/` for self-hosted Fizzy workflows via the upstream CLI
 - `plugins/rcc/` for RCC automation, isolated environments, and robot scaffolding
 
-The canonical source of truth lives under `plugins/`. The repo exposes a generated top-level `skills/` view for humans and standalone installers, plus `.agents/skills/` for in-repo agent discovery.
+The canonical source of truth lives under `plugins/`. Each package exposes a portable Agent Plugins 1.0.0 `plugin.json`, fixed-location Agent Skills, and `mcp.json` where applicable. Client-specific Codex, Claude, and Hermes manifests remain isolated compatibility layers. The repo also exposes a generated top-level `skills/` view for humans and standalone installers, plus `.agents/skills/` for in-repo agent discovery.
 
 ## Structure
 
@@ -26,6 +26,7 @@ plugins/
 │   └── catalog.json
 ├── plugins/
 │   ├── 37signals/
+│   │   ├── plugin.json        # portable Agent Plugins 1.0.0 manifest
 │   │   ├── .codex-plugin/
 │   │   ├── .claude-plugin/
 │   │   ├── plugin.yaml        # generated Hermes compatibility
@@ -33,10 +34,16 @@ plugins/
 │   │   ├── references/
 │   │   └── skills/
 │   ├── fizzy/
+│   │   ├── plugin.json
+│   │   ├── mcp.json           # portable MCP configuration
+│   │   ├── .mcp.json          # Codex compatibility map
 │   │   ├── .codex-plugin/
 │   │   ├── .claude-plugin/
 │   │   └── skills/
 │   └── rcc/
+│       ├── plugin.json
+│       ├── mcp.json           # portable RCC Dagger MCP server
+│       ├── .mcp.json          # Codex compatibility map
 │       ├── .codex-plugin/
 │       ├── .claude-plugin/
 │       └── skills/
@@ -136,6 +143,8 @@ Primary docs:
 
 The `plugins/rcc/` distribution is split into focused RCC-family skills.
 
+The plugin also advertises `rcc-dagger` as a bundled stdio MCP server. The marketplace presents it as optional and Codex users can toggle it independently after installation. The entry remains visible even when Dagger is not installed; in that environment only the MCP server fails to start, while the RCC skills remain available.
+
 - [`rcc`](plugins/rcc/skills/rcc/SKILL.md) — router for choosing the right RCC specialist.
 - [`rcc-core`](plugins/rcc/skills/rcc-core/SKILL.md) — RCC itself: CLI/source orientation, holotree/cache internals, endpoints, templates, bundles, and remote cache/client behavior.
 - [`rcc-robots`](plugins/rcc/skills/rcc-robots/SKILL.md) — RCC CLI, `robot.yaml`, `conda.yaml`, holotree, templates, freezes, bundles, and environment validation.
@@ -181,11 +190,14 @@ The remote entrypoints prefer a git checkout when available and fall back to ver
 After editing anything under `plugins/` or `marketplaces/catalog.json`, rebuild the generated views and marketplaces:
 
 ```bash
+python3 -m pip install -r requirements-dev.txt
 python3 scripts/build_marketplaces.py
 python3 scripts/build_runtime_views.py
 python3 scripts/build_hermes_plugins.py
 bin/check
 ```
+
+`bin/check` validates portable manifests and MCP documents against the published Agent Plugins 1.0.0 JSON Schemas, applies the specification's path and URL rules, and runs the official Agent Skills `skills-ref` validator for every canonical skill.
 
 ### Skill Views
 

@@ -1,6 +1,6 @@
 {
   "name": "fizzy",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Fizzy workflows for boards, cards, comments, account setup, self-hosted management, and connector-native MCP access.",
   "kind": "standalone"
 }

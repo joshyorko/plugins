@@ -21,6 +21,9 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install validation dependencies
+        run: python3 -m pip install -r requirements-dev.txt
+
       - name: Validate repo
         run: bin/check
 

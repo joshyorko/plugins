@@ -54,7 +54,7 @@ def load_json(path: Path) -> dict:
 
 
 def plugin_manifest(plugin_root: Path) -> dict:
-    return load_json(plugin_root / ".codex-plugin" / "plugin.json")
+    return load_json(plugin_root / "plugin.json")
 
 
 def hermes_plugin_yaml(plugin: dict, manifest: dict) -> str:
