@@ -7,21 +7,18 @@ This bridge is optional. If Docker or Dagger is not available, use the regular `
 There are two separate paths. Do not mix them up:
 
 - Launcher script: this repo's `plugins/rcc/skills/rcc/scripts/rcc-dagger-mcp`.
-- Dagger module: current working directory when it contains `dagger.json` and `.dagger/`, an override supplied by `RCC_DAGGER_REPO`, or no module when neither exists.
+- Dagger module: the versioned module under `plugins/rcc/dagger`, or an explicit override supplied by `RCC_DAGGER_REPO`/`RCC_DAGGER_MODULE`.
 
-The bridge does not embed RCC source code or pin a repo by default. It starts Dagger from the agent host and points Dagger at the current Dagger module when one is present. `RCC_DAGGER_REPO` is only for a fixed checkout override.
+The plugin bundles the RCC Dagger module so marketplace installs expose RCC methods from any working directory without a separate RCC checkout. The bundled module is sourced from `joshyorko/rcc` commit `0e3a5e4d97291b880ad97d235a2f730ae8a4e251`. `RCC_DAGGER_REPO` is only for testing or intentionally using a different checkout.
 
 ## Runtime Boundary
 
 - Host: the MCP client starts the launcher script from this `plugins` checkout.
-- Dagger: runs the module from current working directory when it contains `dagger.json` and `.dagger/`.
-- No module: if current directory is not a Dagger module and no override is set, the launcher starts `dagger mcp --no-mod --env-privileged` so Dagger can expose core API tools without a repo module.
-- Optional override: `RCC_DAGGER_REPO=/path/to/module` pins the module path when current-directory behavior is not wanted.
+- Dagger: runs the plugin-bundled module by default.
+- Optional override: `RCC_DAGGER_REPO=/path/to/module` or `RCC_DAGGER_MODULE=/path/to/module` selects a different module containing `dagger.json` and `.dagger/`.
 - Function work: runs in Dagger containers defined by the selected checkout's `.dagger/` module.
 
-Do not force a repo path unless the user asks for a fixed module. If the user wants “whatever directory I am in,” register only the launcher command and let cwd select the module. If there is no module in cwd, let Dagger start without one.
-
-No-module mode is privileged by Dagger design. Treat it as host/Docker-capable, not a harmless read-only helper.
+Do not set an override for normal plugin use. The launcher deliberately does not fall back to Dagger's generic privileged `--no-mod` surface because that would make a healthy MCP connection appear to provide RCC methods when it does not.
 
 The launcher filters Dagger's stdio stream for strict MCP clients. Dagger `mcp`
 can emit engine progress lines on stdout before JSON-RPC responses even with
@@ -30,14 +27,14 @@ stdout.
 
 ## Codex Registration
 
-On Josh's Bluefin host, prefer current-directory registration:
+Normal plugin installation requires no custom MCP registration or RCC path environment variable. For a standalone launcher registration:
 
 ```bash
 codex mcp add rcc-dagger \
   -- /var/home/kdlocpanda/second_brain/Areas/plugins/plugins/rcc/skills/rcc/scripts/rcc-dagger-mcp
 ```
 
-For a fixed RCC-only registration, add the override:
+For development against a different RCC checkout, add the override:
 
 ```bash
 codex mcp add rcc-dagger \
@@ -45,7 +42,7 @@ codex mcp add rcc-dagger \
   -- /var/home/kdlocpanda/second_brain/Areas/plugins/plugins/rcc/skills/rcc/scripts/rcc-dagger-mcp
 ```
 
-For another machine, change the script path and any optional module override to local absolute paths.
+For another machine, change the script path and any optional development override to local absolute paths.
 
 Codex loads MCP server definitions when a session starts, so start a new Codex session after adding or changing this server.
 
@@ -61,6 +58,8 @@ check the launcher path first. That error means Codex could not exec the configu
 
 If the launcher starts but prints `Dagger module path must contain dagger.json and .dagger/`, the launcher path is fine but the override path points at the wrong repo.
 
+If `ListMethods` exposes only Dagger core methods and omits `rcc`, `rcc-with-output`, and `run-robot-tests`, verify that the installed RCC plugin is version `0.1.2` or newer and restart Codex. Version `0.1.1` could silently start the generic no-module surface outside an RCC checkout.
+
 If Docker is unavailable or the Dagger engine cannot start, stop using this bridge for RCC work. Fall back to the normal `rcc` binary in the active project or install/fix `rcc` through the `$rcc-core` path.
 
 Verify registration:
@@ -69,10 +68,10 @@ Verify registration:
 codex mcp get rcc-dagger
 ```
 
-Verify current-directory module behavior from any Dagger module checkout:
+Verify the bundled module directly from the plugin checkout:
 
 ```bash
-dagger functions
+dagger functions --mod plugins/rcc/dagger
 ```
 
 ## Dagger MCP Surface

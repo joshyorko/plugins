@@ -26,7 +26,7 @@ Treat RCC as the center of gravity for this stack. Frame the domain as RCC-manag
 - For DocDB-backed RPA systems that mix queue naming, helper scripts, retry, outbox, dashboards, or GitHub Actions matrix workers, start with `$rcc-workitems`; pull in `$rcc-robots` or `$rcc-ci-maintenance` only after the queue boundary is clear.
 - Keep canonical edits under `plugins/rcc/skills/<skill>/`. Treat top-level `skills/` and `.agents/skills/` as generated views.
 - Do not prototype marketplace servers, MCP servers, web services, daemons, or new runtime products from this plugin. `action-server` covers normal action-package work only.
-- When the user explicitly asks to expose Dagger to agents, use `references/dagger-mcp.md` and `scripts/rcc-dagger-mcp`. Do not pin an RCC checkout unless the user asks for a fixed module.
+- When the user explicitly asks to expose Dagger to agents, use `references/dagger-mcp.md` and `scripts/rcc-dagger-mcp`. The installed plugin uses its bundled RCC module by default; use `RCC_DAGGER_REPO` only when the user asks for a different checkout.
 - If Docker or Dagger is unavailable, or the task does not need Dagger isolation, use the normal `rcc` binary directly. Start with `$rcc-core` for binary/version/install checks and run `rcc version` or the relevant `rcc ...` command in the active project context.
 
 ## Shared References

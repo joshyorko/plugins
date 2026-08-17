@@ -7,10 +7,9 @@ Usage: rcc-dagger-mcp [dagger mcp options]
 
 Expose a local Dagger module as a stdio MCP server.
 
-By default, the current working directory is used when it contains dagger.json
-and .dagger/. If the current directory is not a Dagger module, the server starts
-without a module. Set RCC_DAGGER_REPO or RCC_DAGGER_MODULE only when you want to
-pin the server to a specific checkout regardless of current directory.
+By default, the RCC Dagger module bundled with this plugin is used. Set
+RCC_DAGGER_REPO or RCC_DAGGER_MODULE only when you want to use a different
+checkout.
 
 Examples:
   rcc-dagger-mcp
@@ -39,13 +38,8 @@ run_dagger_mcp() {
 }
 
 rcc_repo="${RCC_DAGGER_REPO:-${RCC_DAGGER_MODULE:-}}"
-if [[ -z "$rcc_repo" && -f dagger.json && -d .dagger ]]; then
-  rcc_repo="$PWD"
-fi
-
 if [[ -z "$rcc_repo" ]]; then
-  run_dagger_mcp --no-mod --env-privileged "$@"
-  exit $?
+  rcc_repo="$script_dir/../../../dagger"
 fi
 
 rcc_repo="$(python3 - "$rcc_repo" <<'PY'
