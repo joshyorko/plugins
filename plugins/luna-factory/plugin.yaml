@@ -1,0 +1,6 @@
+{
+  "name": "luna-factory",
+  "version": "0.1.0",
+  "description": "Luna-first orchestration for economical delegation, bounded escalation, and evidence-backed completion.",
+  "kind": "standalone"
+}

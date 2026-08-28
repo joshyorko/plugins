@@ -96,6 +96,46 @@
       "category": "Productivity"
     },
     {
+      "name": "luna-factory",
+      "description": "Luna-first orchestration for economical delegation, bounded escalation, and evidence-backed completion.",
+      "tags": [
+        "codex",
+        "luna",
+        "multi-agent",
+        "orchestration",
+        "delegation",
+        "verification",
+        "developer-tools"
+      ],
+      "interface": {
+        "displayName": "Luna Factory",
+        "shortDescription": "Luna-first, evidence-driven orchestration.",
+        "longDescription": "A native Codex orchestration workflow that keeps the current agent responsible for the outcome, delegates only economical READY work to Luna workers, verifies execution and acceptance separately, and reserves Terra or Sol for explicit, bounded exceptions.",
+        "developerName": "Josh Yorko",
+        "category": "Developer Tools",
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
+        "websiteURL": "https://github.com/joshyorko/plugins",
+        "privacyPolicyURL": "https://github.com/joshyorko/plugins",
+        "termsOfServiceURL": "https://github.com/joshyorko/plugins",
+        "defaultPrompt": [
+          "Use $luna-factory to own this objective and delegate economical READY work."
+        ],
+        "brandColor": "#7C3AED"
+      },
+      "source": {
+        "source": "local",
+        "path": "./plugins/luna-factory"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
       "name": "rcc",
       "description": "RCC-family automation skills with a bundled, user-toggleable Dagger MCP server for RCC core, Robot Framework, RPA Framework, robots, work items, Action Server, and CI.",
       "tags": [

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Luna Factory"
+  short_description: "Luna-first evidence-driven orchestration"
+  default_prompt: "From this Luna Max session, use $luna-factory to own the outcome, delegate routine work economically, and stop only on proof or a genuine blocker."
