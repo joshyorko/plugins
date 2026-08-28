@@ -1,0 +1,6 @@
+{
+  "name": "changeplane",
+  "version": "0.1.0",
+  "description": "Repository-neutral governed change admission, evidence reconciliation, and read-only control-room workflows.",
+  "kind": "standalone"
+}

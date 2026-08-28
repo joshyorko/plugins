@@ -11,6 +11,21 @@
   },
   "plugins": [
     {
+      "name": "changeplane",
+      "category": "Developer Tools",
+      "claude_category": "development",
+      "description": "Repository-neutral governed change admission, evidence reconciliation, and read-only control-room workflows.",
+      "tags": [
+        "changeplane",
+        "governance",
+        "planning",
+        "evidence",
+        "mcp",
+        "orchestration",
+        "developer-tools"
+      ]
+    },
+    {
       "name": "37signals",
       "category": "Developer Tools",
       "claude_category": "development",

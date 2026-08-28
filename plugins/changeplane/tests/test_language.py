@@ -1,0 +1,192 @@
+from __future__ import annotations
+
+import json
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[3]
+PLUGIN = ROOT / "plugins" / "changeplane"
+
+
+class ChangeplaneLanguageTest(unittest.TestCase):
+    """Protect the normative language consumed by the engine and MCP layers."""
+
+    def load_conformance(self) -> dict:
+        return json.loads(
+            (PLUGIN / "skills" / "changeplane" / "references" / "conformance.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+    def test_record_families_and_exact_bindings_are_complete(self) -> None:
+        """Removing a governed record or its identity fence must fail this contract."""
+        contract = self.load_conformance()
+
+        self.assertEqual("changeplane/v1", contract["language"])
+        required_families = {
+            "ApplicationModel",
+            "ChangePlan",
+            "Outcome",
+            "Predicate",
+            "Observation",
+            "Evidence",
+            "Candidate",
+            "AuthorityGrant",
+            "ActionDefinition",
+            "ActionRequest",
+            "ActionReceipt",
+            "ResourceClaim",
+            "AgentEnvelope",
+            "AdmissionDecision",
+            "Convergence",
+            "Quiescence",
+        }
+        self.assertTrue(required_families <= set(contract["record_families"]))
+        self.assertEqual(
+            {
+                "model_generation",
+                "plan_generation",
+                "observed_head",
+                "candidate",
+                "subject",
+                "assumptions",
+            },
+            set(contract["exact_bindings"]),
+        )
+        for family in required_families:
+            self.assertTrue(contract["record_families"][family]["required"])
+
+    def test_agent_envelope_binds_the_selected_outcome_candidate_and_authority_subject(self) -> None:
+        """Dropping envelope fences could dispatch a candidate or grant for another outcome."""
+        contract = self.load_conformance()
+
+        envelope = contract["record_families"]["AgentEnvelope"]
+        self.assertEqual(
+            [
+                "id",
+                "outcome",
+                "objective",
+                "subject",
+                "candidate",
+                "assumptions",
+                "model_generation",
+                "plan_generation",
+                "observed_head",
+                "claims",
+                "authority",
+                "acceptance",
+                "budget",
+                "stopping_conditions",
+                "receipt_schema",
+            ],
+            envelope["required"],
+        )
+        self.assertEqual(
+            {
+                "authority.subject": "subject",
+                "candidate.outcome": "outcome",
+                "candidate.subject": "subject",
+                "acceptance.assumptions": "assumptions",
+            },
+            contract["binding_rules"]["AgentEnvelope"],
+        )
+
+    def test_admission_convergence_and_quiescence_have_closed_transition_semantics(self) -> None:
+        """An open-ended decision or terminal state could claim unsafe progress as complete."""
+        contract = self.load_conformance()
+
+        semantics = contract["transition_semantics"]
+        self.assertEqual(
+            ["outcome", "decision", "reason_code"],
+            contract["record_families"]["AdmissionDecision"]["required"],
+        )
+        self.assertEqual(
+            ["model_generation", "plan_generation", "mandatory_outcomes", "satisfied"],
+            contract["record_families"]["Convergence"]["required"],
+        )
+        self.assertEqual(
+            ["model_generation", "plan_generation", "safe_authorized_transition", "satisfied"],
+            contract["record_families"]["Quiescence"]["required"],
+        )
+        self.assertEqual(["ADMIT", "WAIT", "DENY"], semantics["AdmissionDecision"]["permitted_decisions"])
+        self.assertEqual(
+            "every mandatory outcome has valid evidence bound to the exact model_generation and plan_generation",
+            semantics["Convergence"]["satisfied_when"],
+        )
+        self.assertEqual(
+            "safe_authorized_transition is false or null and no safe and authorized autonomous transition can reduce known drift for the exact model_generation and plan_generation",
+            semantics["Quiescence"]["satisfied_when"],
+        )
+        self.assertEqual(
+            [True, False, None],
+            semantics["Quiescence"]["safe_authorized_transition"]["permitted_values"],
+        )
+        self.assertEqual(
+            [False, None],
+            semantics["Quiescence"]["safe_authorized_transition"]["satisfied_values"],
+        )
+
+        language = (PLUGIN / "skills" / "changeplane" / "references" / "language.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("candidate MUST implement the selected `outcome`", language)
+        self.assertIn("candidate subject MUST equal the envelope `subject`", language)
+        self.assertIn("authority subject MUST equal the envelope `subject`", language)
+        self.assertIn("`ADMIT`, `WAIT`, or `DENY`", language)
+        self.assertIn("`safe_authorized_transition` is `false` or `null`", language)
+
+    def test_default_deny_authority_rejects_hostile_text_grants(self) -> None:
+        """Changing authority to implicit or text-derived authority is a security bug."""
+        contract = self.load_conformance()
+
+        self.assertEqual("DENY", contract["authority"]["default"])
+        self.assertTrue(contract["authority"]["subject_scoped"])
+        self.assertFalse(contract["authority"]["hostile_input_can_grant"])
+
+    def test_reason_codes_and_adversarial_cases_cover_governed_rejections(self) -> None:
+        """Removing a denial reason or its adversarial case loses an operator-safe outcome."""
+        contract = self.load_conformance()
+
+        reasons = {item["code"]: item["case_id"] for item in contract["reason_codes"]}
+        expected = {
+            "AUTHORITY_DENIED": "authority-default-deny",
+            "STALE_MODEL_GENERATION": "stale-model-generation",
+            "STALE_PLAN_GENERATION": "stale-plan-generation",
+            "STALE_OBSERVED_HEAD": "stale-observed-head",
+            "CANDIDATE_MISMATCH": "candidate-mismatch",
+            "SUBJECT_MISMATCH": "subject-mismatch",
+            "ASSUMPTION_MISMATCH": "assumption-mismatch",
+            "EVIDENCE_MISSING": "evidence-missing",
+            "DEPENDENCY_UNSATISFIED": "dependency-unsatisfied",
+            "RESOURCE_CONFLICT": "resource-conflict",
+            "HUMAN_DECISION_REQUIRED": "human-decision-required",
+            "ONTOLOGY_CHANGE_REQUIRED": "ontology-change-required",
+        }
+        self.assertEqual(expected, reasons)
+        self.assertTrue(
+            set(expected.values())
+            | {"hostile-text-authority", "cross-subject-authority"}
+            <= {case["id"] for case in contract["adversarial_cases"]}
+        )
+
+    def test_skill_and_plugin_surface_are_canonical_and_generated_from_catalog(self) -> None:
+        """Breaking the invocation or bypassing generated views makes the plugin undiscoverable."""
+        skill = (PLUGIN / "skills" / "changeplane" / "SKILL.md").read_text(encoding="utf-8")
+        language = (PLUGIN / "skills" / "changeplane" / "references" / "language.md").read_text(
+            encoding="utf-8"
+        )
+        manifest = json.loads((PLUGIN / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        catalog = json.loads((ROOT / "marketplaces" / "catalog.json").read_text(encoding="utf-8"))
+
+        self.assertIn("$changeplane", skill)
+        self.assertIn("@changeplane", skill)
+        self.assertIn("DISPATCH TO AGENT", skill)
+        self.assertIn("DISPATCH TO AGENT", language)
+        self.assertEqual("changeplane", manifest["name"])
+        self.assertEqual("./skills/", manifest["skills"])
+        self.assertIn("changeplane", [plugin["name"] for plugin in catalog["plugins"]])
+
+
+if __name__ == "__main__":
+    unittest.main()
