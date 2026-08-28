@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -72,6 +73,15 @@ class RuntimeViewsTest(unittest.TestCase):
             Path("../../plugins/37signals/skills/37signals-rails-implement"),
             Path(active_link.readlink()),
         )
+
+    def test_repository_catalog_discovers_luna_factory(self) -> None:
+        catalog = json.loads(build_runtime_views.CATALOG_PATH.read_text())
+
+        canonical, standalone = build_runtime_views.collect_skills(catalog)
+
+        expected = build_runtime_views.ROOT / "plugins" / "luna-factory" / "skills" / "luna-factory"
+        self.assertEqual(expected, canonical["luna-factory"])
+        self.assertEqual(expected, standalone["luna-factory"])
 
 
 if __name__ == "__main__":

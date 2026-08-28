@@ -1,0 +1,40 @@
+{
+  "name": "luna-factory",
+  "version": "0.1.0",
+  "description": "Luna-first orchestration for economical delegation, bounded escalation, and evidence-backed completion.",
+  "author": {
+    "name": "Josh Yorko",
+    "email": "joshua.yorko@gmail.com",
+    "url": "https://github.com/joshyorko"
+  },
+  "homepage": "https://github.com/joshyorko/plugins",
+  "repository": "https://github.com/joshyorko/plugins",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "luna",
+    "multi-agent",
+    "orchestration",
+    "delegation",
+    "verification"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Luna Factory",
+    "shortDescription": "Luna-first, evidence-driven orchestration.",
+    "longDescription": "A native Codex orchestration workflow that keeps the current agent responsible for the outcome, delegates only economical READY work to Luna workers, verifies execution and acceptance separately, and reserves Terra or Sol for explicit, bounded exceptions.",
+    "developerName": "Josh Yorko",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/joshyorko/plugins",
+    "privacyPolicyURL": "https://github.com/joshyorko/plugins",
+    "termsOfServiceURL": "https://github.com/joshyorko/plugins",
+    "defaultPrompt": [
+      "Use $luna-factory to own this objective and delegate economical READY work."
+    ],
+    "brandColor": "#7C3AED"
+  }
+}

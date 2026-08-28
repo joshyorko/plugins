@@ -4,7 +4,7 @@
     "name": "Josh Yorko"
   },
   "metadata": {
-    "description": "Plugin-first skill marketplace for 37signals, Fizzy, and RCC workflows."
+    "description": "Plugin-first skill marketplace for 37signals, Fizzy, Luna Factory, and RCC workflows."
   },
   "plugins": [
     {
@@ -39,6 +39,21 @@
         "connector",
         "cli",
         "productivity"
+      ]
+    },
+    {
+      "name": "luna-factory",
+      "source": "./plugins/luna-factory",
+      "description": "Luna-first orchestration for economical delegation, bounded escalation, and evidence-backed completion.",
+      "category": "development",
+      "tags": [
+        "codex",
+        "luna",
+        "multi-agent",
+        "orchestration",
+        "delegation",
+        "verification",
+        "developer-tools"
       ]
     },
     {

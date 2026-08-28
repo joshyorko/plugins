@@ -7,7 +7,7 @@
     "displayName": "Agent Skills"
   },
   "metadata": {
-    "description": "Plugin-first skill marketplace for 37signals, Fizzy, and RCC workflows."
+    "description": "Plugin-first skill marketplace for 37signals, Fizzy, Luna Factory, and RCC workflows."
   },
   "plugins": [
     {
@@ -42,6 +42,21 @@
         "connector",
         "cli",
         "productivity"
+      ]
+    },
+    {
+      "name": "luna-factory",
+      "category": "Developer Tools",
+      "claude_category": "development",
+      "description": "Luna-first orchestration for economical delegation, bounded escalation, and evidence-backed completion.",
+      "tags": [
+        "codex",
+        "luna",
+        "multi-agent",
+        "orchestration",
+        "delegation",
+        "verification",
+        "developer-tools"
       ]
     },
     {

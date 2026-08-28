@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "luna-factory",
+  "version": "0.1.0",
+  "description": "Luna-first orchestration for economical delegation, bounded escalation, and evidence-backed completion.",
+  "author": {
+    "name": "Josh Yorko",
+    "email": "joshua.yorko@gmail.com",
+    "url": "https://github.com/joshyorko"
+  },
+  "homepage": "https://github.com/joshyorko/plugins",
+  "repository": "https://github.com/joshyorko/plugins",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "luna",
+    "multi-agent",
+    "orchestration",
+    "delegation",
+    "verification"
+  ]
+}
