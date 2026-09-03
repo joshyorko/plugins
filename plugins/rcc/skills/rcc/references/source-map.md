@@ -4,6 +4,34 @@ This file records sources inspected across RCC skill refreshes and what each sou
 
 Treat Josh-owned RCC sources as the primary evidence path for current stack behavior. Use upstream Robocorp/Sema4.ai repositories and docs as dependency/interface-history evidence unless a task explicitly targets those packages, APIs, or hosted services. Preserve literal package/API names like `robocorp.tasks`, `robocorp.workitems`, `robocorp-browser`, and `ROBOCORP_HOME` when they are the real interfaces in use.
 
+## 2026-09-03 RCC v18.19.3 Refresh
+
+- Release tag: `joshyorko/rcc@v18.19.3`, exact commit `4148c2b71705c9d2baf0e88b48d08a79cb7bda0f`.
+- Previous RCC source snapshot recorded by this plugin: `59011b848ee1e8a75a02d08cfd01ac09d3e57cdf` (2026-05-14).
+- Exact snapshot-to-tag diff: 267 files, 43,273 insertions, and 1,842 deletions, covering releases v18.17.4 through v18.19.3.
+- Installed Linux binary: published `rcc-linux64` asset, SHA-256 `7e588c01751ca2ae15ba13ef67f2f4b7567697a5a8389737059a73936f509428`.
+- Exact tag workflow: run `33187409580`; Build, Release Candidate Verification, Linux amd64, Windows amd64, macOS amd64, macOS arm64, and Create GitHub Release passed.
+
+Primary source surfaces:
+
+- `docs/changelog.md`, `docs/environment-artifact-compatibility.md`, `docs/environment-artifact-trust.md`, and `docs/environment-build-coordination.md`.
+- `environmentartifact/`: canonical identities, indexes, archives, catalogs, and compatibility.
+- `environmentlifecycle/`: publish/acquire/materialize/execute, leases, recovery, repair, GC, and platform supervision.
+- `artifactprovider/`, `artifactpolicy/`, and `settings/provider*.go`: provider CAS/protocol/policy/profile behavior.
+- `artifacttrust/`: provenance, SBOM, signatures, revocations, carriers, policies, and receipts.
+- `buildcoord/` and `cmd/environmentCoordinate.go`: coordination implementation and released CLI.
+- `cmd/environment*.go`, `cmd/provider*.go`, and `cmd/cacheServe.go`: exact command/flag/output contracts.
+- `robot_tests/environment_artifacts.robot`, `robot_tests/environment_artifacts/library.py`, and `robot_tests/environment_artifact_binary.robot`: source and exact-binary lifecycle acceptance.
+
+Reconciled limitations:
+
+- Issues `joshyorko/rcc#122`, `#124`, and `#125` remain open; do not claim complete lease/GC semantics, all carrier convergence/OCI, or selected storage optimizations.
+- Shipped coordination JSON differs from the aspirational documentation; follow exact binary help/output and `build-coordination.md`.
+- The tag's native matrix proves four-platform Environment Artifact lifecycle, not complete four-platform coordination/prewarm.
+- `env trust verify --permissive-local` accepts a noncanonical artifact string in v18.19.3; callers must validate the canonical digest until upstream fixes it.
+- Coordination completion/event state can persist `ProviderAuthorization`; never pass a real credential through that field in v18.19.3.
+- `rcc cache serve` is loopback-only and unauthenticated at the server itself; it is not a remote hosted-service recipe.
+
 ## 2026-08-01 Robot Framework / RPA Framework Coverage
 
 Sources inspected for Robot Framework and RPA Framework skill coverage:

@@ -25,7 +25,8 @@ import (
 
 const (
 	defaultGoVersion  = "1.26.5"
-	defaultRccVersion = "v18.17.4"
+	defaultRccVersion = "v18.19.3"
+	defaultRccSHA256  = "7e588c01751ca2ae15ba13ef67f2f4b7567697a5a8389737059a73936f509428"
 )
 
 type RccCi struct{}
@@ -37,14 +38,12 @@ func (m *RccCi) ContainerEcho(stringArg string) *dagger.Container {
 
 // Run tests using the Go container
 func (m *RccCi) RunRobotTests(ctx context.Context, source *dagger.Directory) (string, error) {
-	rccURL := fmt.Sprintf("https://github.com/joshyorko/rcc/releases/download/%s/rcc-linux64", defaultRccVersion)
-
-	return dag.Container().
+	container := dag.Container().
 		From(fmt.Sprintf("golang:%s", defaultGoVersion)).
 		WithExec([]string{"apt-get", "update"}).
-		WithExec([]string{"apt-get", "install", "-y", "curl", "git", "unzip", "ca-certificates"}).
-		WithExec([]string{"curl", "-L", "-o", "/usr/local/bin/rcc", rccURL}).
-		WithExec([]string{"chmod", "+x", "/usr/local/bin/rcc"}).
+		WithExec([]string{"apt-get", "install", "-y", "curl", "git", "unzip", "ca-certificates", "coreutils"})
+
+	return installRcc(container, defaultRccVersion).
 		WithMountedDirectory("/src", source).
 		WithWorkdir("/src").
 		WithMountedCache("/go/pkg/mod", dag.CacheVolume("go-mod-cache")).
@@ -63,19 +62,28 @@ func (m *RccCi) buildRccContainer(
 	if rccVersion == "" {
 		rccVersion = defaultRccVersion
 	}
-	rccURL := fmt.Sprintf("https://github.com/joshyorko/rcc/releases/download/%s/rcc-linux64", rccVersion)
-
-	return dag.
+	container := dag.
 		Container(dagger.ContainerOpts{Platform: dagger.Platform("linux/amd64")}).
 		From("python:3.11-slim").
 		WithExec([]string{"apt-get", "update"}).
-		WithExec([]string{"apt-get", "install", "-y", "curl", "ca-certificates"}).
-		WithExec([]string{"curl", "-L", "-o", "/usr/local/bin/rcc", rccURL}).
-		WithExec([]string{"chmod", "+x", "/usr/local/bin/rcc"}).
+		WithExec([]string{"apt-get", "install", "-y", "curl", "ca-certificates", "coreutils"})
+
+	return installRcc(container, rccVersion).
 		WithMountedCache("/root/.robocorp", dag.CacheVolume("robocorp-home")).
 		WithEnvVariable("ROBOCORP_HOME", "/root/.robocorp").
 		WithMountedDirectory("/src", source).
 		WithWorkdir("/src")
+}
+
+func installRcc(container *dagger.Container, rccVersion string) *dagger.Container {
+	rccPath := "/usr/local/bin/rcc"
+	rccURL := fmt.Sprintf("https://github.com/joshyorko/rcc/releases/download/%s/rcc-linux64", rccVersion)
+	result := container.WithExec([]string{"curl", "--fail", "--location", "--output", rccPath, rccURL})
+	if rccVersion == defaultRccVersion {
+		check := fmt.Sprintf("printf '%%s  %%s\\n' %q %q | sha256sum -c -", defaultRccSHA256, rccPath)
+		result = result.WithExec([]string{"sh", "-c", check})
+	}
+	return result.WithExec([]string{"chmod", "+x", rccPath})
 }
 
 // Run any RCC command and return stdout.
@@ -86,7 +94,7 @@ func (m *RccCi) Rcc(
 	// +defaultPath="."
 	source *dagger.Directory,
 	// RCC release version to install in the container.
-	// +default="v18.17.4"
+	// +default="v18.19.3"
 	rccVersion string,
 ) (string, error) {
 	args, err := splitCommand(c)
@@ -109,7 +117,7 @@ func (m *RccCi) RccWithOutput(
 	// +default="./output"
 	outputPath string,
 	// RCC release version to install in the container.
-	// +default="v18.17.4"
+	// +default="v18.19.3"
 	rccVersion string,
 ) (*dagger.Directory, error) {
 	args, err := splitCommand(c)

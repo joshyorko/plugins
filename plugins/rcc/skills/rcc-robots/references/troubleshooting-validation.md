@@ -49,6 +49,29 @@ Check:
 - Is a prior RCC process holding a lock?
 - Does the network allow package index access?
 
+For uv-native mode, also verify the exact declared Python/uv versions, that no inherited `UV_*` policy is being assumed, that staged Python symlinks remain within the selected prefix, and that RCC's dependency inventory/strict check completed.
+
+## Environment Artifact Failures
+
+Start read-only and keep the layers separate:
+
+```bash
+rcc provider list --json
+rcc provider inspect <reference> --json
+rcc provider test <reference> --json
+rcc env lifecycle inspect --artifact sha256:<64-hex> --json
+rcc env lifecycle verify --artifact sha256:<64-hex> --json
+```
+
+- Compatibility failure: inspect OS/architecture/RCC platform, Python ABI, libc/libraries, CPU features, filesystem capabilities, relocation, and system-requirement policy. Do not retry on another merely similar platform.
+- Trust failure: keep strict remote policy; verify the carrier, deployment-owned roots, signature/provenance/SBOM binding, revocation freshness, and canonical Artifact digest. Never substitute `--permissive-local` for remote production trust.
+- Provider failure: distinguish endpoint/auth/proxy/custom-CA/`no-proxy` policy from missing/corrupt content. Credentials belong in the named environment variable, not the command.
+- Archive failure: semantic/platform/compatibility preflight can fail before local CAS writes; later digest/closure failure must leave no committed Manifest.
+- Warm failure: a ready local materialization should need no provider or package network. Inspect local closure/catalog rebasing before rebuilding.
+- Repair: use `rcc env lifecycle repair` only after inspect/verify establishes the target and a trusted source is available.
+
+Read the `$rcc-core` Environment Artifact and provider/trust references for the full lifecycle and open upstream boundaries.
+
 ## Python/Package Failures
 
 Use the RCC environment, not the system Python:

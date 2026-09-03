@@ -1,4 +1,4 @@
 interface:
   display_name: "RCC Robots"
-  short_description: "RCC CLI, robot.yaml, conda.yaml, holotree, templates, and robot validation."
-  default_prompt: "Use $rcc-robots for RCC-backed automation projects that use the robot.yaml packaging/runtime convention, holotree environments, conda.yaml, freeze files, templates, and task runtime debugging."
+  short_description: "RCC robot.yaml projects, environments, artifact use, bundles, templates, and validation."
+  default_prompt: "Use $rcc-robots for robot.yaml automation projects, conda/uv environments, freezes, Environment Artifact use, bundles, templates, and task runtime debugging."

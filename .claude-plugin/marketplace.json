@@ -59,7 +59,7 @@
     {
       "name": "rcc",
       "source": "./plugins/rcc",
-      "description": "RCC-family automation skills with a bundled, user-toggleable Dagger MCP server for RCC core, Robot Framework, RPA Framework, robots, work items, Action Server, and CI.",
+      "description": "RCC v18.19.3 skills for Environment Artifacts, providers, trust, coordination, automation projects, Robot/RPA Framework, work items, Action Server, CI, and optional Dagger MCP.",
       "category": "development",
       "tags": [
         "rcc",
@@ -70,6 +70,9 @@
         "rpa-framework",
         "automation",
         "holotree",
+        "environment-artifacts",
+        "artifact-provider",
+        "prewarm",
         "workitems",
         "action-server",
         "actions",

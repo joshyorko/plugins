@@ -1,4 +1,4 @@
 interface:
   display_name: "RCC Core"
-  short_description: "RCC CLI/source, holotree, cache, endpoints, templates, and diagnostics."
-  default_prompt: "Use $rcc-core for RCC itself: command selection, source tree orientation, holotree/cache internals, endpoint/profile configuration, templates, bundles, remote cache/client behavior, and diagnostics before robot task code runs."
+  short_description: "RCC CLI/source, Environment Artifacts, providers/trust, coordination, Holotree, and diagnostics."
+  default_prompt: "Use $rcc-core for RCC commands/source, Environment Artifacts, providers, trust, lifecycle/leases, coordination/prewarm, Holotree/cache, endpoints, bundles, and pre-task diagnostics."

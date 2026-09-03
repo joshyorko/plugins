@@ -13,6 +13,18 @@ Use $rcc-core for RCC holotree, freeze/export, endpoint, prebuilt environment, r
 ```
 
 ```text
+Use $rcc-core for Environment Artifacts. Confirm RCC v18.19.3, then separate the canonical Artifact digest, platform compatibility, provider, trust carrier/policy, local materialization, and execution lease. Inspect lifecycle state before repair and preserve strict remote trust.
+```
+
+```text
+Use $rcc-core for provider or cache-server work. Inspect the named profile without printing credential values, keep rcc cache serve loopback-only, test the configured proxy/no-proxy/custom-CA boundary, and do not confuse Manifest v1 providers with legacy rccremote.
+```
+
+```text
+Use $rcc-core for env coordinate or prewarm. Read the shipped v18.19.3 command help and build-coordination reference, use external timeouts, keep verified Artifact closure authoritative, and report released-binary CLI evidence separately from internal/source tests.
+```
+
+```text
 Use $rcc when exposing the plugin's bundled RCC Dagger module to agents through MCP. Set RCC_DAGGER_REPO only when a different checkout is requested. If Docker or Dagger is unavailable, fall back to $rcc-core and use the regular rcc binary directly in the active project context.
 ```
 
@@ -62,4 +74,8 @@ Use $rcc-robots. Before changing package pins, fetch PyPI or the owning repo met
 
 ```text
 Use $rcc-ci-maintenance. Check ROBOCORP_HOME, holotree cache keys, OS/architecture freeze files, and rcc ht vars output. Prefer cache-key invalidation over broad cache deletion, and keep output/work item runtime files as artifacts.
+```
+
+```text
+Use $rcc-ci-maintenance for Environment Artifact promotion. Pin RCC and its asset SHA, isolate producer/provider/consumer/coordinator roots, verify cold and provider-dead warm paths, retain exact commit/binary/artifact receipts, and report four-platform lifecycle separately from Linux-only prewarm.
 ```

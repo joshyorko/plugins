@@ -29,7 +29,7 @@ if [ -n "$CLAUDE_ENV_FILE" ]; then
         if command -v brew &> /dev/null; then
             echo "export RCC_INSTALL_HINT='brew install --cask joshyorko/tools/rcc'" >> "$CLAUDE_ENV_FILE"
         else
-            echo "export RCC_INSTALL_HINT='curl -o rcc https://github.com/joshyorko/rcc/releases/latest/download/rcc-linux64 && chmod +x rcc && sudo mv rcc /usr/local/bin/'" >> "$CLAUDE_ENV_FILE"
+            echo "export RCC_INSTALL_HINT='Install RCC v18.19.3 to ~/.local/bin from the published rcc-linux64 asset only after verifying SHA-256 7e588c01751ca2ae15ba13ef67f2f4b7567697a5a8389737059a73936f509428.'" >> "$CLAUDE_ENV_FILE"
         fi
     fi
 

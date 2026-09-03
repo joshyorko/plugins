@@ -10,6 +10,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = REPO_ROOT / "plugins/rcc/skills/rcc/scripts/rcc-dagger-mcp"
 BUNDLED_MODULE = REPO_ROOT / "plugins/rcc/dagger"
+DAGGER_MAIN = BUNDLED_MODULE / ".dagger/main.go"
+SESSION_SETUP = REPO_ROOT / "plugins/rcc/skills/rcc-robots/scripts/hooks/session-setup.sh"
 
 
 def _run_launcher(tmp_path: Path, *, module_override: Path | None = None) -> tuple[subprocess.CompletedProcess[str], list[str]]:
@@ -41,6 +43,25 @@ def _run_launcher(tmp_path: Path, *, module_override: Path | None = None) -> tup
 
 
 class RccDaggerMcpLauncherTests(unittest.TestCase):
+    def test_bundled_module_defaults_to_released_rcc(self) -> None:
+        source = DAGGER_MAIN.read_text()
+
+        self.assertIn('defaultRccVersion = "v18.19.3"', source)
+        self.assertRegex(
+            source,
+            r'defaultRccSHA256\s*=\s*"7e588c01751ca2ae15ba13ef67f2f4b7567697a5a8389737059a73936f509428"',
+        )
+        self.assertIn("sha256sum -c -", source)
+        self.assertNotIn('defaultRccVersion = "v18.17.4"', source)
+
+    def test_fallback_install_hint_is_pinned_and_user_scoped(self) -> None:
+        source = SESSION_SETUP.read_text()
+
+        self.assertIn("v18.19.3", source)
+        self.assertIn("7e588c01751ca2ae15ba13ef67f2f4b7567697a5a8389737059a73936f509428", source)
+        self.assertNotIn("releases/latest", source)
+        self.assertNotIn("sudo mv", source)
+
     def test_uses_bundled_module_outside_a_dagger_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             result, dagger_args = _run_launcher(Path(temp_dir))

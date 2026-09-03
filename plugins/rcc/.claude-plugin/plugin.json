@@ -1,7 +1,7 @@
 {
   "name": "rcc",
-  "version": "0.1.2",
-  "description": "RCC-family skills plus an optional Dagger MCP server for RCC core, Robot Framework, RPA Framework, robots, work items, Action Server, and CI.",
+  "version": "0.2.0",
+  "description": "RCC v18.19.3 skills for Environment Artifacts, providers, trust, coordination, robots, Robot/RPA Framework, work items, Action Server, CI, and optional Dagger MCP.",
   "author": {
     "name": "Josh Yorko",
     "email": "joshua.yorko@gmail.com",
@@ -19,6 +19,9 @@
     "rpa-framework",
     "automation",
     "holotree",
+    "environment-artifacts",
+    "artifact-provider",
+    "prewarm",
     "workitems",
     "action-server",
     "actions",

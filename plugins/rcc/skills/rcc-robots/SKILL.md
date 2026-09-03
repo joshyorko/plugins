@@ -1,11 +1,11 @@
 ---
 name: rcc-robots
-description: Use for RCC automation projects, robot.yaml, conda.yaml, holotree, freezes, bundles, templates, envs, and tasks.
+description: Use for RCC automation projects, robot.yaml, conda.yaml, Holotree, Environment Artifact use, freezes, bundles, templates, envs, and tasks.
 ---
 
 # RCC Robots
 
-Use this skill for RCC-backed automation projects and runtime/environment work once the task is clearly about a `robot.yaml` project. Here, `robot` is the RCC packaging/runtime convention, not a claim that Robocorp owns the architecture or current product direction. Keep literal package/API names such as `robocorp.tasks`, `robocorp.workitems`, `robocorp-browser`, and `ROBOCORP_HOME` when the project uses them. Use `$rcc-core` for RCC source, installation, endpoint, holotree/cache, or template catalog work before a task starts.
+Use this skill for RCC-backed automation projects and runtime/environment work once the task is clearly about a `robot.yaml` project. Here, `robot` is the RCC packaging/runtime convention, not a claim that Robocorp owns the architecture or current product direction. Keep literal package/API names such as `robocorp.tasks`, `robocorp.workitems`, `robocorp-browser`, and `ROBOCORP_HOME` when the project uses them. Use `$rcc-core` for RCC source, installation, endpoint, Holotree/cache, Environment Artifact lifecycle/provider/trust/coordination, or template catalog work before a task starts.
 
 Retain ownership of `robot.yaml`, `conda.yaml`, holotree, freeze files, task runtime, and artifacts. Route `.robot` suite mechanics to `$rcc-robot-framework` and `RPA.*` library selection to `$rcc-rpaframework`.
 
@@ -22,6 +22,8 @@ Retain ownership of `robot.yaml`, `conda.yaml`, holotree, freeze files, task run
 - Run or request `rcc ht vars -r robot.yaml` first when startup fails; it separates RCC/holotree resolution from Python/task failures.
 - For host/RCC health before a `robot.yaml` project exists, prefer `rcc diagnostics --quick --json` and `$rcc-core`.
 - Prefer `environmentConfigs` with platform freeze fallbacks for reproducible contained automation. Use single `condaConfigFile` only for simple local work.
+- For uv-native environments, preserve the exact declared Python and uv versions. RCC v18.18+ isolates inherited `UV_*` settings, uses `UV_NO_CONFIG=1`, disables implicit Python downloads after staging, and requires dependency inventory plus strict checks before recording layers.
+- Environment Artifact publication remains opt-in. Keep the source environment, immutable Artifact, provider, consumer-local materialization, and execution receipt separate; do not add remote publication to a baseline robot template.
 - Use RCC environment commands for Python checks, not host Python.
 - Keep helper scripts that need robot dependencies behind `rcc task script` or a declared `robot.yaml` task, especially in CI.
 - Use `ROBOT_ROOT` and `ROBOT_ARTIFACTS` for raw path resolution; in `robocorp.tasks`, prefer `get_output_dir()` and `get_current_task()`.
@@ -38,6 +40,8 @@ Retain ownership of `robot.yaml`, `conda.yaml`, holotree, freeze files, task run
 - `../rcc/references/python-library-audit.md`: cross-source Python library map, examples, and source refresh workflow.
 - `../rcc/references/source-map.md`: source evidence for current recipes.
 - `../rcc-core/references/rcc-source-recipes.md`: RCC CLI/source, holotree/cache, endpoint, template, and remote-cache orientation.
+- `../rcc-core/references/environment-artifacts.md`: robot/package publication, private-home acquisition, offline archives/bundles, consumer rebasing, execution receipts, and warm reuse.
+- `../rcc-core/references/providers-and-trust.md`: provider profiles, cache server, credentials, and artifact trust.
 
 ## Assets And Scripts
 
