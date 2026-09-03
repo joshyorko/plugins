@@ -52,6 +52,19 @@ rcc run -r robot.yaml -t Main
 rcc run -r robot.yaml --dev -t Test
 ```
 
+Environment Artifact and provider orientation:
+
+```bash
+rcc env --help
+rcc provider list --json
+rcc provider inspect local --json
+rcc env lifecycle inspect --artifact sha256:<64-hex> --json
+rcc cache serve --help
+rcc env coordinate --help
+```
+
+Read `environment-artifacts.md` before publish/acquire/export/exec or lifecycle mutation, `providers-and-trust.md` before provider/trust/cache-server work, and `build-coordination.md` before using coordination or prewarm. Confirm the exact subcommand help because several machine-contract details differ from broad design documents.
+
 Use `--debug`, `--trace`, and `--timeline` only after a normal command has shown the failing layer.
 
 ## Troubleshooting Ladder
@@ -79,6 +92,12 @@ Useful Josh fork entry points are:
 - `robot/`: `robot.yaml` parsing, task definitions, and testdata.
 - `conda/`: conda/uv environment resolution testdata.
 - `htfs/`, `blobs/`, and `journal/`: holotree filesystem and cache internals.
+- `environmentartifact/`: canonical Manifest, Specification, Object/Platform Index, digest, archive, catalog, and compatibility contracts.
+- `environmentlifecycle/`: publish/acquire/materialize/execute, archives, leases, reconciliation, repair, GC, and native supervision.
+- `artifactprovider/` and `artifactpolicy/`: filesystem/journal CAS, HTTP/admin protocol, quotas, recovery, and transport policy.
+- `artifacttrust/`: provenance, SBOM, signatures, revocation, carriers, policies, and receipts.
+- `buildcoord/`: build keys, claims/epochs, fencing, recovery, nondeterminism, staging, and prewarm.
+- `cmd/environment*.go`, `cmd/provider*.go`, and `cmd/cacheServe.go`: released CLI wiring and output behavior.
 - `settings/` and `assets/robocorp_settings.yaml`: endpoint/profile defaults and overrides.
 - `templates/` and `assets/templates.yaml`: template catalog behavior.
 - `developer/toolkit.yaml`: RCC's own RCC-driven development tasks.
@@ -172,9 +191,13 @@ rcc run -r developer/toolkit.yaml --dev -t tools
 
 When running Go tests outside the toolkit, verify the repo's developer docs first. Some tests assume `GOARCH=amd64`.
 
+At v18.19.3 the release Go toolchain is 1.26.5, while the contained toolkit may remain on the newest available Conda Forge build. Treat those as distinct evidence. The toolkit's micromamba bootstrap uses bounded 64 MiB downloads, immutable SHA-256-pinned fallbacks, three attempts with 10/20-second delays, and strict archive-member/executable validation. Do not bypass checksum, size, traversal, symlink, hard-link, or exact-member failures to make setup pass.
+
+General RCC downloads now stage to a temporary file and replace the destination only after success. Preserve an existing binary/cache input after a failed replacement. Linux diagnostics prefer `/etc/os-release` or `/usr/lib/os-release` and include Bluefin, bootc/image, variant, and OSTree metadata before falling back to `lsb_release` and `uname`.
+
 ## Remote Cache / Remote Client
 
-For `rccremote` or self-hosted cache/client work, prove server and client separately:
+For legacy `rccremote` work, prove server and client separately:
 
 ```bash
 export RCC_REMOTE_ORIGIN=https://rccremote.example.com
@@ -185,3 +208,5 @@ rcc holotree pull -r robot.yaml --origin https://rccremote.example.com
 ```
 
 If remote pull fails, debug the remote deployment and endpoint variables before touching robot dependencies.
+
+This is the legacy v12 `/parts` and `/delta` protocol. Environment Artifact named/direct providers and `rcc cache serve` use the separate Manifest v1 HTTP contract. Do not exchange their endpoints, credentials, storage roots, or health assumptions. See `providers-and-trust.md`.

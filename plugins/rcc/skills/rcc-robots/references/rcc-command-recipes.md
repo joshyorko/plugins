@@ -86,6 +86,8 @@ dependencies:
 
 RCC templates in this skill use `uv` for faster pip dependency installation. Package metadata was refreshed from PyPI during the 2026-05-23 skill refresh; recheck exact pins before bumping.
 
+For uv-native mode, declare exact Python and uv versions. RCC v18.18+ strips inherited `UV_*` configuration, forces `UV_NO_CONFIG=1`, disables implicit Python downloads after the chosen interpreter is staged, rejects ambiguous or escaping Python symlinks, and requires the pinned uv dependency inventory and strict `pip check` to succeed before recording Holotree layers. Diagnose these as RCC environment failures before changing application imports.
+
 ## Prebuild And Inspect Holotree
 
 ```bash
@@ -118,7 +120,9 @@ rcc robot bundle --robot robot.yaml --output my-robot.py
 rcc robot run-from-bundle my-robot.py --task Main
 ```
 
-Bundle after the robot validates locally. Do not commit `output/`, transient bundle outputs, or generated freeze files unless the project intentionally tracks them.
+Environment Artifact bundles can add `--artifact-archive` and `--artifact-index`; inspect the exact v18.19.3 help before creating one. Platform selection is exact and must reject incompatible workers. Hardened unpacking rejects traversal, archive/project symlinks, and unsafe destinations; `--force` stages and replaces the complete destination instead of merging into it. Bundle after the robot validates locally. Do not commit `output/`, transient bundle outputs, or generated freeze files unless the project intentionally tracks them.
+
+For canonical `.rcca` layout, trust attachments, and archive limits, read `../../rcc-core/references/environment-artifacts.md`.
 
 ## Freeze Files And Dependency Exports
 
@@ -161,7 +165,20 @@ rcc diagnostics --quick --json
 
 Use targeted deletes by space. Avoid broad cache deletion in shared developer machines or CI caches unless the cache is known corrupt.
 
-## RCC Remote
+Environment Artifact state under `$ROBOCORP_HOME/artifacts/v1`, provider storage, coordinator roots, and legacy Holotree are separate boundaries. Set `RCC_HOLOTREE_MODE=private` when an artifact worker needs private-home lifecycle despite a machine shared-Holotree marker. Use `rcc env lifecycle inspect|verify|repair` before considering deletion.
+
+## Environment Artifact Robot Flow
+
+```bash
+rcc env publish --robot robot.yaml --provider <reference> --json
+rcc env acquire --artifact sha256:<64-hex> --provider <reference> --json
+rcc env exec --artifact sha256:<64-hex> --provider <reference> \
+  --json -- python -m robocorp.tasks run tasks.py -t Main
+```
+
+For long-lived/interactive commands, use `--inherit-streams --receipt-file <path>` and parse the receipt only after the child exits. A valid warm materialization can run with the provider dead and without package-network access; it must still pass compatibility and trust checks. See the RCC core artifact and provider references before using remote publication.
+
+## Legacy RCC Remote
 
 Josh's `rccremote-docker` repo uses `RCC_REMOTE_ORIGIN` for clients:
 
@@ -172,6 +189,8 @@ rcc holotree pull -r robot.yaml --origin https://rccremote.example.com
 ```
 
 For self-hosted remote caches, validate server bootstrapping from the deployment repo first, then validate client connectivity with catalog/list/pull commands before changing robot dependencies.
+
+This is the legacy v12 `rccremote` protocol, not a Manifest v1 named provider or `rcc cache serve`. Keep their roots, endpoints, credentials, and diagnostics separate.
 
 ## CI Cache Hygiene
 

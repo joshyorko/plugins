@@ -201,8 +201,10 @@ exit 0
 {
   "permissions": {
     "allow": [
-      "Bash(rcc *)",                        // All rcc commands
       "Bash(rcc run --task *)",             // Specific pattern
+      "Bash(rcc provider list --json)",      // Read-only provider inventory
+      "Bash(rcc provider inspect * --json)", // Read-only provider details
+      "Bash(rcc env lifecycle inspect *)",   // Read-only lifecycle state
       "Read(./**/*.yaml)",                  // Config files
       "Edit(conda.yaml)"                    // Specific file
     ],
@@ -214,6 +216,10 @@ exit 0
   }
 }
 ```
+
+Keep new v18.19 commands out of blanket allowlists. `rcc provider list|inspect|test`, `rcc env lifecycle inspect|verify`, and command help are read-only. `env publish`, provider add/replace/remove, lifecycle repair, provider administration, and coordinator release change local or remote state; authorize the exact target and operation. `cache serve` starts a long-lived loopback service and must not be broadened to a remote listener.
+
+The bundled session hook reports a pinned v18.19.3 Linux asset and published SHA-256 when Homebrew is unavailable. It does not recommend `releases/latest`, `sudo`, or host package layering. Prefer the project's container/devcontainer before a host installation.
 
 ## Prompt-Based Hooks
 

@@ -6,14 +6,14 @@ Recheck sources before making "latest", version-current, or default-template cla
 
 ## Source Snapshot
 
-Official docs and source repos checked:
+Official docs and source repos checked. Only the RCC source row was refreshed on 2026-09-03; the Python package/library rows retain the 2026-05-23 snapshot and must not be treated as current-version proof:
 
 - Sema4AI actions docs: `https://sema4.ai/docs/build-agents/develop-actions/action-structure`
 - Sema4AI Python action/MCP source: `https://github.com/Sema4AI/actions` at `master` / `9d9479e`
 - Robocorp Python library docs: `https://sema4.ai/docs/automation/python/robocorp`
 - Robocorp Python library source: `https://github.com/robocorp/robocorp` at `master` / `64cc9a3`
 - Josh Action Server fork: `https://github.com/joshyorko/actions` at `community` / `3bae23bb49fe`
-- Josh RCC fork: `https://github.com/joshyorko/rcc` at `main` / `59011b848ee1`
+- Josh RCC fork: `https://github.com/joshyorko/rcc` at tag `v18.19.3` / `4148c2b71705c9d2baf0e88b48d08a79cb7bda0f`
 - Sema4AI gallery: `https://github.com/Sema4AI/gallery` at `main` / `d6afd61`
 - Public Robocorp runtime/process examples: `k8s-on-demand-runtimes`, `azure-on-demand-runtimes`, `example-worker-logs`, `template-python-workitems`, and `python-producer-consumer-reporting`.
 

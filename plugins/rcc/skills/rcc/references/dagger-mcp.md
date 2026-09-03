@@ -9,7 +9,7 @@ There are two separate paths. Do not mix them up:
 - Launcher script: this repo's `plugins/rcc/skills/rcc/scripts/rcc-dagger-mcp`.
 - Dagger module: the versioned module under `plugins/rcc/dagger`, or an explicit override supplied by `RCC_DAGGER_REPO`/`RCC_DAGGER_MODULE`.
 
-The plugin bundles the RCC Dagger module so marketplace installs expose RCC methods from any working directory without a separate RCC checkout. The bundled module is sourced from `joshyorko/rcc` commit `0e3a5e4d97291b880ad97d235a2f730ae8a4e251`. `RCC_DAGGER_REPO` is only for testing or intentionally using a different checkout.
+The plugin bundles the RCC Dagger module so marketplace installs expose RCC methods from any working directory without a separate RCC checkout. Its default RCC binary is pinned to released v18.19.3 and verified against the published Linux SHA-256; callers can still supply an explicit version, whose integrity they must verify separately. `RCC_DAGGER_REPO` is only for testing or intentionally using a different checkout.
 
 ## Runtime Boundary
 
@@ -58,7 +58,7 @@ check the launcher path first. That error means Codex could not exec the configu
 
 If the launcher starts but prints `Dagger module path must contain dagger.json and .dagger/`, the launcher path is fine but the override path points at the wrong repo.
 
-If `ListMethods` exposes only Dagger core methods and omits `rcc`, `rcc-with-output`, and `run-robot-tests`, verify that the installed RCC plugin is version `0.1.2` or newer and restart Codex. Version `0.1.1` could silently start the generic no-module surface outside an RCC checkout.
+If `ListMethods` exposes only Dagger core methods and omits `rcc`, `rcc-with-output`, and `run-robot-tests`, verify that the installed RCC plugin is version `0.1.2` or newer and restart Codex. Version `0.1.1` could silently start the generic no-module surface outside an RCC checkout. Plugin v0.2.0 updates the module's default binary to RCC v18.19.3.
 
 If Docker is unavailable or the Dagger engine cannot start, stop using this bridge for RCC work. Fall back to the normal `rcc` binary in the active project or install/fix `rcc` through the `$rcc-core` path.
 

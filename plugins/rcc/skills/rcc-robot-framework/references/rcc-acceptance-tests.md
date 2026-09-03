@@ -1,18 +1,46 @@
-# RCC acceptance tests
+# RCC Acceptance Tests
 
-This guidance is pinned to [`joshyorko/rcc` commit `d5942d90994d7bd9034aeed6b88cc60fd7a3e330`](https://github.com/joshyorko/rcc/tree/d5942d90994d7bd9034aeed6b88cc60fd7a3e330). Inspect the pinned [root suite initializer](https://github.com/joshyorko/rcc/blob/d5942d90994d7bd9034aeed6b88cc60fd7a3e330/robot_tests/__init__.robot), [root suite resources](https://github.com/joshyorko/rcc/blob/d5942d90994d7bd9034aeed6b88cc60fd7a3e330/robot_tests/resources.robot), [Python support library](https://github.com/joshyorko/rcc/blob/d5942d90994d7bd9034aeed6b88cc60fd7a3e330/robot_tests/supporting.py), [exit-code suite](https://github.com/joshyorko/rcc/blob/d5942d90994d7bd9034aeed6b88cc60fd7a3e330/robot_tests/exitcodes.robot), [hash suite](https://github.com/joshyorko/rcc/blob/d5942d90994d7bd9034aeed6b88cc60fd7a3e330/robot_tests/ht_hash.robot), [uv-native suite](https://github.com/joshyorko/rcc/blob/d5942d90994d7bd9034aeed6b88cc60fd7a3e330/robot_tests/uv_native.robot), [bundle suite](https://github.com/joshyorko/rcc/blob/d5942d90994d7bd9034aeed6b88cc60fd7a3e330/robot_tests/robot_bundle.robot), and [tasks.py](https://github.com/joshyorko/rcc/blob/d5942d90994d7bd9034aeed6b88cc60fd7a3e330/tasks.py).
+This guidance is pinned to released [`joshyorko/rcc` v18.19.3 at `4148c2b71705c9d2baf0e88b48d08a79cb7bda0f`](https://github.com/joshyorko/rcc/tree/4148c2b71705c9d2baf0e88b48d08a79cb7bda0f/robot_tests). Inside an RCC checkout, its repository-local `AGENTS.md` and `docs/skills/rcc-development/SKILL.md` are authoritative.
 
-Run locally from the RCC checkout after building `build/rcc`:
+Inspect the root suite initializer/resources/support library and the nearest suite before editing. Environment Artifact work additionally requires:
+
+- `robot_tests/environment_artifacts.robot`: source-level lifecycle acceptance;
+- `robot_tests/environment_artifacts/library.py`: provider, archive, compatibility, and receipt helpers; and
+- `robot_tests/environment_artifact_binary.robot`: exact released/built binary A-to-B acceptance.
+
+Run from the RCC checkout after building `build/rcc`:
 
 ```bash
-python3 -m robot -L DEBUG -d tmp/output robot_tests
+python3 -m robot -L DEBUG -d tmp/output robot_tests/environment_artifacts.robot
+python3 -m robot -L DEBUG -d tmp/output robot_tests/environment_artifact_binary.robot
 python3 -m robot -L DEBUG -d tmp/output robot_tests/robot_bundle.robot
+python3 -m robot -L DEBUG -d tmp/output robot_tests
 ```
 
-`robot_tests/__init__.robot` declares the root `Prepare Local` suite setup and `Clean Local` suite teardown; `resources.robot` implements those keywords and supplies the shared DSL. `Step` runs a command, preserves `${robot_stdout}` and `${robot_stderr}`, checks the expected exit code, and selects a stream with `Use Stdout` or `Use Stderr`; assertion keywords then target that selected stream. `Must Be Json Response` calls structural Python `Parse JSON`. `Fire And Forget` only logs its code/streams, so use it solely for deliberate cleanup/setup where an unchecked result is acceptable.
+Prefer the checked-in RCC toolkit when its dependencies are not already present:
 
-For a nonzero command, use `Step    command    expected_code`, then select stderr for the diagnostic and stdout for structural JSON parsing. Do not collapse streams or assert JSON with text fragments.
+```bash
+rcc run -r developer/toolkit.yaml --dev -t unitTests
+rcc run -r developer/toolkit.yaml -t robot
+```
 
-The root preparation places `ROBOCORP_HOME=tmp/robocorp`, removes mutable temporary paths, and initializes/revokes holotree state. The support library scrubs activation-environment variables for RCC subprocesses and normalizes `build/rcc` to the Windows executable spelling. Preserve both behaviors when adding helpers. Use suite-local fixtures for files and directories; make adversarial archives/input through Python helpers such as `create_traversal_bundle`, not fragile shell construction.
+`robot_tests/__init__.robot` owns root setup/teardown; `resources.robot` supplies the shared command DSL. `Step` preserves stdout/stderr and asserts the expected exit code. Select the intended stream, parse JSON structurally, and never accept a machine contract through substring matching. `Fire And Forget` is unasserted and belongs only in deliberate best-effort setup/cleanup.
 
-Golden outputs are created only when missing and otherwise compared after newline normalization. Review every golden diff before retaining it. Keep command matrix fixtures deterministic and place cleanup beside their suite. `uv_native.robot` shows platform tags and runtime `Skip`; `robot_bundle.robot` shows fixtures, intentional nonzero exits, and cleanup.
+The root suite uses shared mutable `tmp/` and RCC state, so run serially unless CI creates truly isolated copies and homes. Keep adversarial files/archives in Python helpers, normalize platform line endings deliberately, and review golden changes.
+
+## Environment Artifact Acceptance
+
+A release-quality runtime case proves, with the exact candidate binary:
+
+1. producer A builds and publishes a real representative environment;
+2. consumer B uses a different empty private `ROBOCORP_HOME`;
+3. B acquires, verifies, materializes, leases, and executes without package-network installation;
+4. provider-dead warm reuse succeeds;
+5. representative Python/native imports such as SQLite succeed;
+6. incompatibility fails before provider object fetch;
+7. execution receipts are complete and the lease is released; and
+8. Artifact identity remains independent of provider and local paths.
+
+Keep Linux amd64, Windows amd64, macOS amd64, and macOS arm64 results separate. Platform-specific skips are expected and must be named. A green compile, Go unit suite, source-level Robot suite, or one platform is not the native four-platform result.
+
+The v18.19.3 tag run `33187409580` passed Build, Release Candidate Verification, all four native runtime jobs, and hosted release creation at exact SHA `4148c2b...`. This is upstream release evidence, not a substitute for local verification of a new change. The artifact suite proves lifecycle behavior; it does not prove the complete `env coordinate` CLI or cross-platform prewarm.

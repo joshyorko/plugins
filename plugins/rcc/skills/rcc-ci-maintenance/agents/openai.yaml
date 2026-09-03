@@ -1,5 +1,4 @@
 interface:
   display_name: "RCC CI Maintenance"
-  short_description: "RCC GitHub Actions, ROBOCORP_HOME caching, scheduled maintenance robots, and bot PRs."
-  default_prompt: "Use $rcc-ci-maintenance for RCC-powered CI, scheduled maintenance robots, pinned RCC installs, ROBOCORP_HOME cache keys, allowlist updates, and bot PR workflows."
-
+  short_description: "RCC CI, Artifact promotion/prewarm, ROBOCORP_HOME caching, maintenance, and bot PRs."
+  default_prompt: "Use $rcc-ci-maintenance for RCC CI, Environment Artifact promotion/prewarm evidence, pinned installs, ROBOCORP_HOME cache keys, scheduled maintenance, and bot PRs."

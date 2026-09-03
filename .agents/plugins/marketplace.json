@@ -137,7 +137,7 @@
     },
     {
       "name": "rcc",
-      "description": "RCC-family automation skills with a bundled, user-toggleable Dagger MCP server for RCC core, Robot Framework, RPA Framework, robots, work items, Action Server, and CI.",
+      "description": "RCC v18.19.3 skills for Environment Artifacts, providers, trust, coordination, automation projects, Robot/RPA Framework, work items, Action Server, CI, and optional Dagger MCP.",
       "tags": [
         "rcc",
         "robocorp",
@@ -147,6 +147,9 @@
         "rpa-framework",
         "automation",
         "holotree",
+        "environment-artifacts",
+        "artifact-provider",
+        "prewarm",
         "workitems",
         "action-server",
         "actions",
@@ -158,7 +161,7 @@
       "interface": {
         "displayName": "RCC Automation + Dagger MCP",
         "shortDescription": "RCC automation skills with an optional, user-toggleable Dagger MCP server.",
-        "longDescription": "RCC-family workflows split across focused skills for RCC core, robot projects and environments, Robot Framework suites, RPA Framework automation, work items, Action Server packages, and CI maintenance. Includes an optional Dagger MCP server that users can enable or disable independently after installation.",
+        "longDescription": "RCC v18.19.3 workflows split across focused skills for Environment Artifacts, providers, trust, coordination/prewarm, RCC core, robot projects, Robot Framework suites, RPA Framework automation, work items, Action Server packages, and CI maintenance. Includes an optional Dagger MCP server that users can enable or disable independently after installation.",
         "developerName": "Josh Yorko",
         "category": "Developer Tools",
         "capabilities": [
@@ -170,6 +173,8 @@
         "termsOfServiceURL": "https://github.com/joshyorko/plugins",
         "defaultPrompt": [
           "Maintain RCC Robot Framework acceptance tests.",
+          "Publish and acquire a trusted RCC Environment Artifact.",
+          "Inspect an RCC artifact provider or prewarm workflow.",
           "Build or debug an RCC automation with RPA Framework.",
           "Use the bundled Dagger MCP server to inspect or run an RCC Dagger module."
         ],
