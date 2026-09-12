@@ -121,3 +121,19 @@ Reject the skill revision unless all answers are satisfactory:
 - Did stopping reject optional scope growth while legitimate defects still received action?
 - Did plateau handling preserve retry lineage and distinguish progress from activity?
 - Did finalization distinguish evidence-backed convergence from autonomous quiescence?
+
+## Recorded checkpoint — 2026-09-12
+
+Protocol subject: `e6a26c6fb2d098cf89f5595d746335a76cc952af`, PR #53. This is a partial behavioral checkpoint, not issue #52 acceptance or a termination guarantee.
+
+| Exercise | Observed result | Limits |
+|---|---|---|
+| Luna Low baseline and candidate | Each passed three fresh post-success traps and three stale-write repair countercases; actual terminal calls and independent artifact checks, with no optional product additions in those cases | Explicit non-goals made these fixtures comparatively easy; both revisions passed, so no measured improvement is established |
+| Other convergence scenarios and A–I | Seventeen candidate local probes recorded actual actions and receipts | Terminal-only fixtures do not prove native splitting, dependency/event wait, live routing, or in-flight worker steering |
+| Additional Luna Max baseline | Three stopping trials and two defect trials completed with passing local checks | The third defect trial and matched Max candidate triples were not run before the publication boundary |
+| Focused Luna Max candidate retests | Environment check used the supported alternative and remained blocked on service availability; two-attempt history triggered diagnosis and rejection of a renamed retry | Plateau diagnosis reproduced the unchanged failure once; the earlier environment probe overstated the missing-runner requirement |
+| Fresh bounded acceptance review | Source protocol and repository validation passed review | Full behavioral acceptance remains unproved; effective reviewer routing is unverified |
+
+The 36 completed sequential trials requested Luna Low or Max through the existing native Hermes harness. Effective model/effort were not independently exposed. Zero user interventions were needed during these trials; missing shell helpers/pytest and expected rejection checks are recorded rather than hidden. Some probes ran unrelated checks, and the typo probe incidentally removed a final newline. A separate native audit verified its Luna Max evaluation context at depth 1, but that context exposed no callable collaboration tools. No fixture workers were spawned; B/C/D remain unrun there and H is partial. This does not imply that collaboration is unavailable in every runtime.
+
+Isolated requirements-dev validation passed all three generated-view checks, four factory unit tests, and 47 repository tests; Linux and Windows CI passed at the protocol subject. Raw prompts, private runtime evidence, per-trial hashes and passive usage remain outside the public repository. Prior usage receipts were preserved. Keep the PR in draft until the remaining mandatory behavioral gates are proven; do not replace them with this summary.
