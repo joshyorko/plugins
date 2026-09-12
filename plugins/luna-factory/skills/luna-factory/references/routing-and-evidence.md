@@ -83,6 +83,26 @@ Sol is justified for a bounded architectural choice, unresolved requirement ambi
 
 Terra is not a routine reviewer. Use it only when model-family diversity is the explicit review objective or the user directly requests Terra, with its own evidence contract. A historical Terra review is context, not a routing requirement. Sol similarly requires a bounded exceptional judgment/capability boundary or a current explicit user request. Never make Terra or Sol a mandatory ritual or duplicate a generic approval question across models.
 
+## Convergence decisions
+
+Admission is a necessity judgment, not another approval ceremony. Apply the same rule to ledger readiness, actual dispatch, and owner-local work. A bounded probe is justified only when its uncertainty must be resolved for an existing gate.
+
+| Observation | Decision and evidence |
+|---|---|
+| Bootstrap fails because the declared executable is missing | Admit the smallest repository-supported repair for the bootstrap criterion; classify environment failure before changing models. |
+| Canary passes, but a reproducible stale write loses acknowledged data | Admit reproduction and repair under the required integrity invariant, even if the initial checklist omitted it. If repair exceeds authority, block explicitly; never defer a credible correctness/security counterexample merely to finish. |
+| Worker NEXT proposes another provider after bootstrap/auth/canary/restart pass | Defer the enhancement; neither owner nor worker implements it. “Reusable” needs representative checks, not every possible platform. |
+| Reviewer finds an actual merge blocker plus optional cleanup | Repair or evidence-disposition the blocker; defer cleanup. Stronger verification does not grant broader implementation authority. |
+| Repeated receipt describes a task already proven | Reuse its candidate/receipt; re-observe only genuinely changed assumptions. Do not redispatch a duplicate. |
+
+Bind proof to A#, intent generation, exact relevant subject, and affected assumptions. A new commit is not G2. After a repair, invalidate affected checks and whole-PR approval, retain explicitly unaffected evidence, and satisfy required exact-head integration/review gates. Trigger a required review through an available authorized route; an unrequested or absent review is not approval. If capacity/route is unavailable, finish independent work and report that gate and its resumption condition.
+
+Two unchanged failed attempts on one gap trigger diagnosis, not a third identical dispatch. Identify implementation, environment, dependency, assumption/contract, scope, or infrastructure failure. A reproduced cause is useful progress even if the count of failed criteria increases. Reuse evidence; one fresh bounded Luna judgment may help. Record the different approach and bounded same-goal replan; if it stalls again, return the unresolved decision. A new worker, higher effort, renamed task, or G2 must not erase exhausted lineage. Explicit user limits govern; two attempts is an initial heuristic to evaluate, not a universal optimum.
+
+On a user-authorized G2 change, record only the semantic delta, steer/drain affected old work, and re-admit against the new criteria without asking twice. Preserve evidence whose subject and assumptions remain applicable. Otherwise independent PRs remain independent unless the user declared shared acceptance.
+
+Status should say what became proven, what blocks the goal, what happens next, and whether user action is needed. Keep the contract/history in native context; do not add a store, status loop, or compulsory file. Deferred follow-ups can remain notes: creating external issues needs its own authority. When no useful authorized action remains, report unconverged/quiescent with the exact resumption condition; never fill the wait with optional implementation.
+
 ## Passive telemetry
 
 Reuse only fields native results/session metadata already expose. Collection must never cause extra polling, worker calls, user bookkeeping, repeated root-effort benchmarks, or repository files. If a field is not already observable, use `unknown` and continue.

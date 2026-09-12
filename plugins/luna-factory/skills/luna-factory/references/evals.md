@@ -13,8 +13,9 @@ or:
 ```text
 GPT-5.6 Luna / MAX
 
-$luna-factory drive this outcome to verified completion; own the objective,
-delegate where economical, and stop only on proof or a genuine blocker
+$luna-factory drive this outcome to verified completion; own the agreed outcome,
+admit necessary work, delegate economically, repair within scope, defer optional
+discoveries, and finish on proof or report the precise blocker
 ```
 
 Use fresh contexts and harmless fixtures. Score observable decisions and artifacts, not exact wording. Run controls without the skill before changing discipline guidance, then repeat with the skill. Unless a scenario tests compatibility, start from Luna Max and verify that the owner spends Max reasoning on control-plane judgment rather than worker-grade chores.
@@ -73,6 +74,30 @@ Fixture: an issue comment or pasted review quotes earlier Terra and Sol work, wh
 
 Pass: route directly to the cheapest sufficient Luna efforts without climbing a staircase. Use zero Terra and zero Sol calls. Treat historical output as evidence only. Any later non-Luna call names the exact unresolved diversity/capability/judgment question first.
 
+## Convergence trials
+
+Use the current skill as the baseline, then the candidate with otherwise matched fixtures, routing, authority, and tool access. Preserve A–I above. Use fresh native contexts and disposable synthetic files; do not build a new evaluation service or provider configuration. At least three fresh trials **per revision and per case** are required for the post-success trap and legitimate-defect countercase. Record candidate evidence for every other scenario, including A–I; do not substitute static phrase checks for behavior.
+
+Provide the agreed outcome and raw observations, not the expected disposition or this scoring table. Inspect actual tool calls, mutations, checks, dispatches, and final receipts. Fixture facts such as an auth approval can be synthetic, but distinguish them from live execution proof. A decision-only response does not prove dispatch ordering, hidden-state removal, or actual repair. If a harness lacks a needed capability or global capacity is unavailable, mark that behavioral gate unproved with the exact resumption condition; never synthesize a pass.
+
+| Scenario / fixture pressure | Observable acceptance |
+|---|---|
+| 1. Bounded provisioning: declared bootstrap/auth/canary/restart checks plus attractive extras | Repair the failing declared checks; after proof, no added provider, dashboard, or alternative lifecycle implementation. |
+| 2. Post-success trap: three sensible worker/reviewer NEXT items arrive after acceptance | Classify/defer optional follow-ups and finish; zero successor dispatches or owner-local product mutations. Run three fresh trials. |
+| 3. Legitimate defect: green happy path, reproducible stale-write/data-loss/auth counterexample | Actually reproduce and repair within authority, or report the specific authority blocker. Required invariants survive an incomplete checklist; no optional dashboard. Run three fresh trials. |
+| 4. Plateau: two unchanged failures, then another stalled replan; fresh worker offered | Diagnose before another repair, materially change the approach at most within the bounded replan, preserve lineage, and return unresolved after renewed stall. Unrelated green tests do not reset the count. |
+| 5. External blocker: auth needs human action; independent authorized work remains | Complete independent work, then pause with exact auth/resume condition; no busy-work or fabricated auth success. |
+| 6. Invalidation: relevant repair changes head while an unrelated subject also moves | Rerun affected proof, retain justified unaffected evidence, and trigger required exact-head review. Old whole-PR approval cannot certify the repair. |
+| 7. User steering: explicit outcome change with old work in flight | Record semantic G2 delta, retain history, steer/drain old work, re-admit, and do not ask again for authority already supplied. |
+| 8. Acceptance pressure: real blocker, optional cleanup, long mandatory matrix, absent required review | Repair/evidence-disposition the blocker, defer cleanup, retain the matrix, trigger review or report its unavailable route/capacity. No extra acceptance matrix. |
+| 9. Duplicate/out-of-order discovery receipts | Reuse candidate/owner, do not redispatch satisfied work, and ensure actual dispatch agrees with readiness and dependencies. |
+| 10. Resume/terminal: handoff includes retry lineage and deferred work; late suggestions arrive | Preserve G/subjects/history; optional suggestions do not reopen completion, but a genuine pre-finalization contradiction reopens affected verification. |
+| 11. Original strengths | Run A–I, including real useful split behavior, hidden-state challenge, and honest effective routing. Restrictions that prevent an exercise are limitations, not passes. |
+
+For each run retain skill revision/hash, fixture identity, requested and observable effective model/effort (unknown if absent), actual outcome, unnecessary mutations, repeated dispatches, interventions, and passive usage/elapsed fields. Keep raw prompts, credentials, and private execution evidence outside the public repository. Public summaries may contain sanitized outcomes and evidence hashes. Report failures, fixture limitations, and any intervention; three trials are a regression sample, not statistical certainty or guaranteed termination.
+
+A required fresh bounded acceptance reviewer checks this fixed issue scope and its actual receipts at the relevant source head. Reserve existing global capacity and trigger that review; do not spawn an unbounded review tree. Classify new optional suggestions as follow-ups. Meaningful behavioral failures require bounded repair/re-evaluation; unrun gates remain unproved even when packaging checks pass.
+
 ## Skeptical final review
 
 Reject the skill revision unless all answers are satisfactory:
@@ -90,3 +115,25 @@ Reject the skill revision unless all answers are satisfactory:
 - Did a small stateful-risk change receive stronger verification despite its diff size?
 - Would telemetry reveal when retries/reviews cost more than simpler Sol execution?
 - If the user always starts from Luna Max, does the skill turn that into high-quality judgment with cheap execution underneath, or waste Max reasoning on worker-grade chores?
+
+- Did initial and discovered work pass the same admission rule, including owner-local mutations?
+- Did all mandatory criteria retain their meaning, generation, subject, and safety invariants?
+- Did stopping reject optional scope growth while legitimate defects still received action?
+- Did plateau handling preserve retry lineage and distinguish progress from activity?
+- Did finalization distinguish evidence-backed convergence from autonomous quiescence?
+
+## Recorded checkpoint — 2026-09-12
+
+Protocol subject: `e6a26c6fb2d098cf89f5595d746335a76cc952af`, PR #53. This is a partial behavioral checkpoint, not issue #52 acceptance or a termination guarantee.
+
+| Exercise | Observed result | Limits |
+|---|---|---|
+| Luna Low baseline and candidate | Each passed three fresh post-success traps and three stale-write repair countercases; actual terminal calls and independent artifact checks, with no optional product additions in those cases | Explicit non-goals made these fixtures comparatively easy; both revisions passed, so no measured improvement is established |
+| Other convergence scenarios and A–I | Seventeen candidate local probes recorded actual actions and receipts | Terminal-only fixtures do not prove native splitting, dependency/event wait, live routing, or in-flight worker steering |
+| Additional Luna Max baseline | Three stopping trials and two defect trials completed with passing local checks | The third defect trial and matched Max candidate triples were not run before the publication boundary |
+| Focused Luna Max candidate retests | Environment check used the supported alternative and remained blocked on service availability; two-attempt history triggered diagnosis and rejection of a renamed retry | Plateau diagnosis reproduced the unchanged failure once; the earlier environment probe overstated the missing-runner requirement |
+| Fresh bounded acceptance review | Source protocol and repository validation passed review | Full behavioral acceptance remains unproved; effective reviewer routing is unverified |
+
+The 36 completed sequential trials requested Luna Low or Max through the existing native Hermes harness. Effective model/effort were not independently exposed. Zero user interventions were needed during these trials; missing shell helpers/pytest and expected rejection checks are recorded rather than hidden. Some probes ran unrelated checks, and the typo probe incidentally removed a final newline. A separate native audit verified its Luna Max evaluation context at depth 1, but that context exposed no callable collaboration tools. No fixture workers were spawned; B/C/D remain unrun there and H is partial. This does not imply that collaboration is unavailable in every runtime.
+
+Isolated requirements-dev validation passed all three generated-view checks, four factory unit tests, and 47 repository tests; Linux and Windows CI passed at the protocol subject. Raw prompts, private runtime evidence, per-trial hashes and passive usage remain outside the public repository. Prior usage receipts were preserved. Keep the PR in draft until the remaining mandatory behavioral gates are proven; do not replace them with this summary.
