@@ -1,4 +1,4 @@
 interface:
   display_name: "Luna Factory"
   short_description: "Luna-first evidence-driven orchestration"
-  default_prompt: "From this Luna Max session, use $luna-factory to own the outcome, delegate routine work economically, and stop only on proof or a genuine blocker."
+  default_prompt: "From this Luna Max session, use $luna-factory to own the agreed outcome and delegate economically. Admit only work needed to prove its acceptance criteria and required invariants; repair within scope and defer optional discoveries. Finish when proven, or report the precise blocker when autonomous progress is unavailable."

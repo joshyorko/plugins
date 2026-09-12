@@ -26,15 +26,35 @@ Concentrate Max reasoning at consequential control points: outcome/world-model u
 
 ## Own the objective
 
-Maintain a small ledger, not a planning dossier:
+Before substantive work, reuse the request, selected issue, repository rules, and native plan to record a compact contract: **G1 / observable goal; A1..An / mandatory behavior and invariants; non-goals; authority / finish deliverable; appetite / repair limits**. A trivial SOLO task needs only a sentence and its check. Freeze acceptance meaning, not implementation steps. Keep generation separate from commit/subject: better substeps and necessary defect repairs stay in G1; changed outcomes, weakened gates, or expanded effects require G2 and the appropriate authority. An explicit user change already supplies that authority. Never drop mandatory acceptance or safety requirements to finish.
+
+### Admit, reconcile, finish
+
+Discovery creates candidates, not authority. Initial tasks, worker `NEXT`/`UNRESOLVED`, review findings, and owner ideas all use the same admission rule **before READY or owner-local implementation**: name an unproved/failed A# or required invariant (possibly through a necessary dependency), cite the observation or necessary uncertainty, choose the smallest sufficient action, and check authority, appetite, ownership, and dependencies. Batch related observations and reuse duplicates.
+
+- **ADMIT:** necessary and authorized; `READY` only when dependencies and ownership permit, otherwise `BLOCKED` with a reason.
+- **DEFER:** useful but unnecessary; retain a concise `DEFERRED` follow-up and do not execute it.
+- **DISMISS:** unsupported, duplicate, irrelevant, or already covered by valid proof.
+- **NEEDS_AUTHORITY:** `ESCALATE` the precise missing permission or outcome decision.
+
+Use the existing small ledger:
 
 ```text
-TASK | DEPENDS ON | OWNER | STATE | ACCEPTANCE | EVIDENCE
+TASK | A# / GAP | DEPENDS ON | OWNER | STATE | EVIDENCE / SUBJECT
+CANDIDATE -> READY | BLOCKED | DEFERRED | ESCALATE
+READY -> RUNNING -> VERIFY -> DONE
+VERIFY -> bounded repair of the same admitted task | CANDIDATE discovery
 ```
 
-States: `BLOCKED`, `READY`, `RUNNING`, `VERIFY`, `DONE`, `ESCALATE`.
+No mutable dispatch from `CANDIDATE`, `BLOCKED`, `DEFERRED`, or `ESCALATE`. Workers repair within their admitted packet and return discoveries outside it; they do not start successor missions. A return is `VERIFY`, not automatic `DONE`: the owner judges execution and acceptance proof for the relevant generation, subject, and assumptions. Dependency loss or contradictory/stale proof removes readiness and reopens affected verification; retain historical receipts and explicitly unaffected proof. Optional discoveries alone cannot reopen a proven objective.
 
-Keep enough state to answer: objective, proven facts, remaining work, READY work, blockers, and next decision. A worker finishing is not objective completion.
+At start/resume, meaningful receipt/integration, relevant review/environment change, and before new work: refresh only relevant authoritative facts; mark mandatory criteria proven/failed/unproved; reconcile candidates, dependencies, and ownership; take the minimum useful authorized step. Keep one run note with G, remaining gaps, deferred items, and next decision. At handoff preserve subjects, retry history, active owners, and resumption conditions; do not restart discovery.
+
+**Plateau:** unless user limits override, two consecutive attempts on the same gap without material new evidence or acceptance progress trigger diagnosis before another repair. Progress means proven criteria, reproduced/root-caused blockers, resolved necessary uncertainty, or integrated dependencies—not commits, receipts, or unrelated green tests. Classify the failure; choose a materially different authorized approach or one bounded same-goal replan. Preserve retry lineage across workers and generations. If that replan stalls again, checkpoint the unresolved decision. Real new evidence can justify continued in-scope repair. Once the end-to-end path exists, focus on remaining verification/repair; admit no speculative enhancements.
+
+**Converged** means all mandatory criteria have valid proof for G/current subjects. **Quiescent** means no authorized autonomous step can reduce remaining gaps; it can still be unconverged. Continue independent admitted work around a blocked lane, then report the exact blocker/resumption condition. Empty queues, returned workers, and exhausted budgets are not success. When proven, stop creating work, safely collect/drain relevant in-flight activity, confirm it cannot invalidate the accepted subject, and return the authorized deliverable. Completion never independently authorizes merge/deploy. Coordinate declared shared acceptance without inventing cross-PR gates.
+
+This is a cooperative owner protocol, not runtime enforcement or a termination guarantee. Read [routing and evidence](references/routing-and-evidence.md#convergence-decisions) for admission, proof freshness, and repair examples; forward-test with [eval scenarios](references/evals.md#convergence-trials).
 
 ## Choose a mode
 
