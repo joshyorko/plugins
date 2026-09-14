@@ -1,0 +1,21 @@
+{
+  "name": "changeplane",
+  "version": "0.1.0",
+  "description": "Repository-neutral governed change admission, evidence reconciliation, and read-only control-room workflows.",
+  "author": {
+    "name": "Josh Yorko",
+    "email": "joshua.yorko@gmail.com",
+    "url": "https://github.com/joshyorko"
+  },
+  "homepage": "https://github.com/joshyorko/plugins",
+  "repository": "https://github.com/joshyorko/plugins",
+  "license": "MIT",
+  "keywords": [
+    "changeplane",
+    "governance",
+    "planning",
+    "evidence",
+    "mcp",
+    "orchestration"
+  ]
+}
