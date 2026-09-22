@@ -14,25 +14,102 @@ from pathlib import Path
 from typing import Any
 
 
-MODEL_SLUGS = ("gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol")
+def _is_luna_model(slug: str, model: dict[str, Any]) -> bool:
+    for key in ("role", "family", "model_family"):
+        value = model.get(key)
+        if isinstance(value, str):
+            return value.lower() == "luna"
+    return slug.rsplit("-", 1)[-1].lower() == "luna"
 
 
 def summarize_catalog(catalog: dict[str, Any]) -> dict[str, Any]:
     summary: dict[str, Any] = {}
     for model in catalog.get("models", []):
-        slug = model.get("slug")
-        if slug not in MODEL_SLUGS or slug in summary:
+        if not isinstance(model, dict):
             continue
+        slug = model.get("slug")
+        if not isinstance(slug, str) or not slug or slug in summary:
+            continue
+        levels = model.get("supported_reasoning_levels", [])
+        if not isinstance(levels, list):
+            levels = []
         summary[slug] = {
             "default_reasoning_effort": model.get("default_reasoning_level"),
             "supported_reasoning_efforts": [
                 item.get("effort")
-                for item in model.get("supported_reasoning_levels", [])
-                if item.get("effort")
+                for item in levels
+                if isinstance(item, dict) and item.get("effort")
             ],
             "multi_agent_version": model.get("multi_agent_version"),
         }
     return summary
+
+
+def assess_luna_route(
+    catalog: dict[str, Any],
+    *,
+    requested_model: str | None,
+    root_model: str | None,
+) -> dict[str, Any]:
+    """Describe safe Luna selection without choosing a generation implicitly."""
+    entries = {
+        model.get("slug"): model
+        for model in catalog.get("models", [])
+        if isinstance(model, dict)
+        and isinstance(model.get("slug"), str)
+        and model.get("slug")
+    }
+    available_luna = [
+        slug for slug, model in entries.items() if _is_luna_model(slug, model)
+    ]
+
+    if requested_model is not None:
+        model = entries.get(requested_model)
+        if model is None:
+            return {
+                "status": "requested_model_unavailable",
+                "requested_model": requested_model,
+                "available_luna_models": available_luna,
+                "fallback_proposed": False,
+                "reason": (
+                    "requested Luna model is absent from the live catalog; "
+                    "report the capability or rollout limitation without a fallback"
+                ),
+            }
+        if not _is_luna_model(requested_model, model):
+            return {
+                "status": "requested_model_not_luna",
+                "requested_model": requested_model,
+                "available_luna_models": available_luna,
+                "fallback_proposed": False,
+            }
+        return {
+            "status": "explicit_request",
+            "requested_model": requested_model,
+            "available_luna_models": available_luna,
+            "fallback_proposed": False,
+        }
+
+    if root_model is not None and root_model in entries and _is_luna_model(
+        root_model, entries[root_model]
+    ):
+        return {
+            "status": "inherit_selected_root",
+            "root_model": root_model,
+            "available_luna_models": available_luna,
+            "fallback_proposed": False,
+            "reason": "inheritance was requested; effective child routing remains unverified",
+        }
+
+    return {
+        "status": "explicit_selection_required",
+        "available_luna_models": available_luna,
+        "fallback_proposed": False,
+        "reason": (
+            "no explicit Luna request or selected Luna root resolves the route; "
+            "do not silently choose a generation"
+        ),
+    }
 
 
 def _comparison(requested: str | None, observed: str | None) -> str:
@@ -85,11 +162,10 @@ def run_command(*args: str) -> str:
 
 
 def parse_features(output: str) -> dict[str, dict[str, str]]:
-    wanted = {"multi_agent", "multi_agent_v2", "rollout_budget"}
     features: dict[str, dict[str, str]] = {}
     for line in output.splitlines():
         parts = line.split()
-        if len(parts) >= 3 and parts[0] in wanted:
+        if len(parts) >= 3:
             features[parts[0]] = {
                 "stage": " ".join(parts[1:-1]),
                 "enabled": parts[-1],
@@ -174,19 +250,20 @@ def main() -> int:
     args = parser.parse_args()
 
     report: dict[str, Any] = {
-        "audit_schema": 1,
+        "audit_schema": 2,
         "audited_at_utc": datetime.now(timezone.utc).isoformat(),
         "errors": [],
     }
+    catalog: dict[str, Any] = {"models": []}
     try:
         report["codex_version"] = run_command("codex", "--version")
     except (OSError, subprocess.CalledProcessError) as exc:
         report["errors"].append(f"codex_version: {exc}")
     try:
-        report["models"] = summarize_catalog(
-            json.loads(run_command("codex", "debug", "models"))
-        )
+        catalog = json.loads(run_command("codex", "debug", "models"))
+        report["models"] = summarize_catalog(catalog)
     except (OSError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        report["models"] = {}
         report["errors"].append(f"model_catalog: {exc}")
     try:
         report["features"] = parse_features(run_command("codex", "features", "list"))
@@ -197,6 +274,12 @@ def main() -> int:
         report["config"] = load_config_summary(args.config)
     except (OSError, tomllib.TOMLDecodeError) as exc:
         report["config"] = {"available": False, "error": str(exc)}
+
+    report["routing_capability"] = assess_luna_route(
+        catalog,
+        requested_model=args.requested_model,
+        root_model=report.get("config", {}).get("root_model_configured"),
+    )
 
     session = observe_session(args.session_id, args.sessions_root)
     report["session"] = session

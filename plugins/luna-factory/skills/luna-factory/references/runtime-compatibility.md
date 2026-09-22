@@ -16,22 +16,34 @@ Re-audit when no verified snapshot exists, the signature changes, or a spawn/res
 6. Test nested delegation only if the planned graph needs it. Otherwise use a flat owner-to-workers graph.
 7. Test a Sol override before relying on ESCALATE. On failure or unverifiable execution, return a decision packet for manual review.
 
-## Current observed snapshot (2026-08-26)
+## Current observed snapshot (2026-09-22)
 
-This snapshot is evidence from Codex CLI 0.149.1 on one installation, not a portable contract:
+Codex CLI 0.155.1 is authenticated in the executing environment. This is current runtime evidence, not a portable contract:
+
+- `codex --version` → `codex-cli 0.155.1`.
+- `codex login status` → `Logged in`.
+- Authenticated `codex debug models` includes both `gpt-6-luna` and `gpt-5.6-luna`; GPT-6 Luna is the current intended request. No fallback is proposed.
+- Generated app-server v1/v2 schemas expose `collaborationMode`, collaboration/list methods, and model plus reasoning-effort request fields.
+- A native spawn canary completed with a parent requesting `gpt-6-luna` at `max`; rollout metadata identified the parent as `gpt-6-luna`/`max` and an inherited child as the selected route. The audit observed `gpt-6-luna`/`max` and reported `model: verified_match`, `reasoning_effort: verified_match`, and `overall: verified_match`.
+- A direct audit with `--requested-model gpt-6-luna --requested-effort max` reported `routing_capability.status: explicit_request` and `fallback_proposed: false`.
+
+Re-audit when the Codex version, model catalog, collaboration configuration, or observed routing changes. Catalog/request acceptance is not execution proof; retain session metadata as the effective-routing evidence.
+
+## Historical snapshot (2026-08-26; not a current contract)
+
+The following evidence came from Codex CLI 0.149.1 on one installation. It remains historical context only and must not determine current model selection:
 
 - `codex debug models` listed `gpt-5.6-luna` with `low`, `medium`, `high`, `xhigh`, and `max`; default `medium`; catalog multi-agent version `v1`.
 - It listed `gpt-5.6-terra` and `gpt-5.6-sol` with `low` through `ultra`; catalog multi-agent version `v2`.
 - `features.multi_agent` was stable/enabled; `features.multi_agent_v2` was stable/disabled.
 - Local config capped spawned threads at 12, excluding the primary. The live session advertised 13 total slots.
 - The root live `spawn_agent` schema exposed optional model and reasoning overrides, with fork/history constraints; the wait primitive was event-oriented.
-- Direct Luna spawns created depth-1 sessions. Their rollout `turn_context` identified both `model: gpt-5.6-luna` and the effective `effort`, so direct model/effort overrides were verifiable after execution.
-- A new Luna Medium root successfully spawned one clean-context child with model/effort omitted and completed one native event wait. This proved the spawn/wait path and that inheritance was requested; child effective model/effort remained unverified because the result exposed no routing metadata.
-- Depth-1 Luna children spawned from the existing root had no collaboration primitives. Use a flat root-to-worker graph here; do not assume deeper nesting merely because a Luna root can spawn.
-- A direct Sol Low override completed and its rollout `turn_context` verified both `gpt-5.6-sol` and `effort: low`.
-- Agent-list status did not expose effective model or effort.
+- Direct Luna spawns created depth-1 sessions whose rollout `turn_context` identified the requested model and effective effort, so direct overrides were verifiable after execution.
+- A Luna root spawned a clean-context child with model/effort omitted, proving inheritance was requested; child effective model/effort remained unverified because the result exposed no routing metadata.
+- Depth-1 Luna children had no collaboration primitives; use a flat root-to-worker graph unless current schemas prove otherwise.
+- A direct Sol override verified model and effort in rollout metadata; agent-list status did not expose effective model or effort.
 
-Re-audit when the signature changes or evidence contradicts these conclusions; do not rediscover an unchanged verified runtime on every factory invocation.
+Re-audit when the signature changes or observed behavior contradicts these historical conclusions; do not rediscover an unchanged verified runtime on every invocation.
 
 ## Safe degradation
 

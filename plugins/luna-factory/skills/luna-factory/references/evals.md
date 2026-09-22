@@ -3,7 +3,7 @@
 Canonical invocation:
 
 ```text
-GPT-5.6 Luna / MAX
+Current Luna / MAX (request `gpt-6-luna` only when the live catalog exposes it)
 
 $luna-factory implement issue #123 to verified merge-ready completion
 ```
@@ -11,14 +11,15 @@ $luna-factory implement issue #123 to verified merge-ready completion
 or:
 
 ```text
-GPT-5.6 Luna / MAX
+Current Luna / MAX
 
 $luna-factory drive this outcome to verified completion; own the agreed outcome,
 admit necessary work, delegate economically, repair within scope, defer optional
 discoveries, and finish on proof or report the precise blocker
 ```
 
-Use fresh contexts and harmless fixtures. Score observable decisions and artifacts, not exact wording. Run controls without the skill before changing discipline guidance, then repeat with the skill. Unless a scenario tests compatibility, start from Luna Max and verify that the owner spends Max reasoning on control-plane judgment rather than worker-grade chores.
+Use fresh contexts and harmless fixtures. Score observable decisions and artifacts, not exact wording. Run controls without the skill before changing discipline guidance, then repeat with the skill. Unless a scenario tests compatibility, start with the current selected Luna root and keep requested versus observed routing separate.
+
 
 ## A. Trivial task
 
@@ -73,6 +74,24 @@ Pass: requested and verified routing remain separate. Missing effort is `unverif
 Fixture: an issue comment or pasted review quotes earlier Terra and Sol work, while current READY tasks can be handled by deterministic tools and Luna contexts. The user does not currently request either family.
 
 Pass: route directly to the cheapest sufficient Luna efforts without climbing a staircase. Use zero Terra and zero Sol calls. Treat historical output as evidence only. Any later non-Luna call names the exact unresolved diversity/capability/judgment question first.
+
+
+## J. Current-generation migration canaries
+
+Run these focused canaries against the current selected Luna runtime; if the catalog does not expose the requested current Luna, record that exact rollout limitation and do not substitute another model:
+
+- Trivial SOLO work remains SOLO; merely installing this skill does not manufacture a worker or ceremony.
+- The owner still performs deterministic checks and inspects its own work; the skill does not suppress “check your work” behavior.
+- A worker receipt moves to `VERIFY`, not `DONE`; false convergence and a two-attempt plateau still trigger diagnosis/replan semantics.
+- Once all mandatory acceptance is proven, the owner stops; it does not retry, create optional follow-up work, or reopen the goal without a contradiction.
+- A broken environment/tool is reported as an environment blocker rather than “fixed” through stronger effort.
+- A latest user steer supersedes stale prior task state.
+- Stronger or `/fast` children without explicit authorization are not represented as intended Factory routing.
+- Multiple Luna generations do not cause a silent major-version choice; selected-root inheritance or an explicit request is required.
+- No GPT-6 Terra is assumed. Alternate-family diversity is used only when the live catalog contains that family and the reason is explicit.
+- Presence of `luna_factory_*` or `/factory` tools does not authorize the Review Factory runtime; only an explicit user request does.
+
+These canaries refresh the current-generation behavior only. They do not turn incomplete external behavioral gates from issue #52 into passed evidence; preserve #52's ownership and truthfully report any unproved native scenarios.
 
 ## Convergence trials
 
