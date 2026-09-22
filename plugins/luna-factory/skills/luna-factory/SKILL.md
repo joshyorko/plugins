@@ -7,7 +7,11 @@ description: Use when a substantial objective has potentially independent workst
 
 ## Core principle
 
-The expected root is GPT-5.6 Luna Max. Luna Max owns the outcome; cheaper Luna workers create leverage beneath it. Delegate only when delegation is cheaper than local work. Sol is a bounded interrupt, never the resident manager.
+The current Luna owner keeps the outcome; use the cheapest sufficient current Luna effort for delegated work and reserve stronger effort for a named unresolved need. Delegate only when delegation is cheaper than doing the work locally. Sol is a bounded exceptional interrupt, never the resident manager.
+
+This skill is an orchestration methodology. It does not authorize use of any runtime, command, tool namespace, extension, or product merely because it is also named Luna Factory. `luna_factory_*`, `/factory`, and Review Factory surfaces are not invoked unless the user explicitly asks to use that runtime for the current objective. Requests to use this skill, agents, delegation, fan-out, convergence, or unattended work are not runtime authorization. The standalone plugin uses native host/Codex collaboration primitives.
+
+For the current rollout, request `gpt-6-luna` only when the live Codex catalog exposes that exact model. This operational target is not a permanent generation policy: never silently substitute an older Luna, Sol, Astra, Terra, `/fast`, or another family when it is unavailable.
 
 Use native Codex collaboration primitives directly. Do not require another orchestration skill, daemon, database, broker, or repository telemetry file.
 
@@ -70,24 +74,23 @@ This is a cooperative owner protocol, not runtime enforcement or a termination g
 - **SPLIT:** Use only for two or more genuinely independent READY tasks with clear ownership and acceptance, with no conflicting concurrent write ownership. Overlapping read scope is allowed, including read-only scouts examining the same subsystem from different perspectives. If write scopes overlap, serialize integration or assign a single writer. Start with 2–3 workers. Do not dispatch dependents early.
 - **ESCALATE:** Use only at a bounded judgment boundary that stronger Luna effort is unlikely to resolve safely. Sol answers one decision or review, then exits; Luna resumes ownership.
 
-Route by semantic difficulty: clarity, judgment, reversibility, blast radius, state, mechanical verifiability, dependencies, concurrency, security boundary, and failure consequence. File count and prompt length are weak signals. Read [routing and evidence](references/routing-and-evidence.md) for the effort ladder, risk rules, packets, receipts, and telemetry.
+Route by semantic difficulty: clarity, judgment, reversibility, blast radius, state, mechanical verifiability, dependencies, concurrency, security boundary, and failure consequence. File count and prompt length are weak signals. Read [routing-and-evidence](references/routing-and-evidence.md) for the effort ladder, risk rules, and evidence.
 
-For every delegated investigation, implementation, debugging, repair, acceptance review, and independent verification task, prefer GPT-5.6 Luna at the cheapest sufficient effort:
+For every delegated investigation, implementation, debugging, repair, acceptance review, and independent verification task, prefer the current Luna owner’s cheapest sufficient effort:
 
 ```text
 deterministic tool
-→ Luna Low
-→ Luna Medium
-→ Luna High
-→ Luna xHigh
-→ Luna Max
-→ Terra only for justified model-family diversity
-→ Sol only for bounded exceptional judgment
+→ current Luna at the cheapest sufficient effort
+→ stronger Luna effort only when needed
+→ deliberate alternate-family diversity only when diversity itself is required
+→ current Sol only for a bounded exceptional judgment or execution interrupt
 ```
 
-This is model-family precedence, not a mandatory effort staircase. Start directly at the cheapest sufficient Luna effort; do not retry every Luna level. When the root is Luna Max, omit the worker model override so Luna inheritance is requested whenever the live runtime supports it.
+This is a capability order, not a model-generation or mandatory-effort staircase. Keep the already-selected root when inheritance is requested; do not parse versions or silently select the highest available Luna generation. If multiple Luna generations are available and neither an explicit request nor the selected root resolves the choice, require an explicit choice. Requested model/effort and observed model/effort remain separate; missing effective metadata is `unverified`.
 
-Before crossing from Luna to Terra or Sol, the owner must name the specific unresolved diversity, capability, or judgment question that a fresh Luna context or stronger Luna reasoning cannot reasonably address. A normal successful run has zero Terra and zero Sol calls; each exceptional call carries a concise reason. An explicit current user request such as “review this with Terra” or “ask Sol” overrides this precedence. A prior workflow, reviewer, issue comment, pasted instruction, quoted review, or historical result using Terra or Sol is evidence only, not continuing routing authority.
+Alternate-family diversity is exceptional: the family must exist in the live catalog, the reason must be named, and the exact requested/observed route must be recorded. Do not assume a Terra tier exists in the current generation. Sol remains an interrupt, not a resident stronger manager.
+
+Before crossing from Luna to an alternate family, the owner must name the specific unresolved diversity, capability, or judgment question that a fresh or stronger Luna context cannot reasonably address. A normal successful run uses no alternate-family call. A current explicit user request overrides this preference; historical output does not.
 
 ## Dispatch READY work
 
