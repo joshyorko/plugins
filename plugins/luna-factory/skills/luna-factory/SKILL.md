@@ -45,6 +45,14 @@ CANDIDATE -> READY | BLOCKED | DEFERRED | ESCALATE
 READY -> RUNNING -> VERIFY -> DONE
 VERIFY -> bounded repair of the same admitted task | CANDIDATE discovery
 ```
+Treat the first line as the admission record, not a dispatch queue: retain the disposition, the cited A#/invariant and observation, the owner, and the relevant subject. Reuse that record when a duplicate or out-of-order receipt arrives.
+
+Transitions are guarded:
+
+- `CANDIDATE` becomes `READY` only after `ADMIT` and satisfied dependencies; a necessary but blocked item is `BLOCKED`, not dispatchable.
+- `READY` becomes `RUNNING` only through the owner's admitted dispatch or local implementation. `DEFERRED`, `BLOCKED`, and `ESCALATE` have no mutable execution path.
+- A return or check result enters `VERIFY`; it becomes `DONE` only after the owner accepts execution and acceptance evidence for the current subject.
+- A failed check reopens the same admitted task for bounded repair. It does not reset its attempt lineage or create a replacement task. A new observation enters `CANDIDATE` and must pass admission independently.
 
 No mutable dispatch from `CANDIDATE`, `BLOCKED`, `DEFERRED`, or `ESCALATE`. Workers repair within their admitted packet and return discoveries outside it; they do not start successor missions. A return is `VERIFY`, not automatic `DONE`: the owner judges execution and acceptance proof for the relevant generation, subject, and assumptions. Dependency loss or contradictory/stale proof removes readiness and reopens affected verification; retain historical receipts and explicitly unaffected proof. Optional discoveries alone cannot reopen a proven objective.
 

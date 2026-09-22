@@ -98,6 +98,8 @@ For each run retain skill revision/hash, fixture identity, requested and observa
 
 A required fresh bounded acceptance reviewer checks this fixed issue scope and its actual receipts at the relevant source head. Reserve existing global capacity and trigger that review; do not spawn an unbounded review tree. Classify new optional suggestions as follow-ups. Meaningful behavioral failures require bounded repair/re-evaluation; unrun gates remain unproved even when packaging checks pass.
 
+For admission and repair cases, the raw receipt must make the guard observable: record the candidate's cited gap/invariant and observation, disposition, dependency state, owner, subject, and any mutation/dispatch. For each failed same-gap attempt, record the attempt number, whether material progress occurred, the diagnosis, and the next action. A passing terminal receipt must identify either `Converged(G)` with every mandatory criterion and subject, or `unconverged/quiescent` with the blocker and resumption condition. This evidence is a behavioral check of the protocol, not a requirement to build a runtime state store.
+
 ## Skeptical final review
 
 Reject the skill revision unless all answers are satisfactory:
