@@ -1,0 +1,28 @@
+services:
+  action-server:
+    build:
+      context: .
+      args:
+        ACTIONS_RUNTIME_VERSION: ${ACTIONS_RUNTIME_VERSION:-1.0.2}
+        ACTIONS_CORE_VERSION: ${ACTIONS_CORE_VERSION:-1.0.1}
+    platform: linux/amd64
+    ports:
+      - "127.0.0.1:${ACTION_SERVER_HOST_PORT:-8080}:8080"
+    volumes:
+      - action-server-data:/var/lib/action-server
+    secrets:
+      - action-server-api-key
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "http://127.0.0.1:8080/openapi.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 120s
+
+secrets:
+  action-server-api-key:
+    file: .secrets/action-server-api-key
+volumes:
+  action-server-data:

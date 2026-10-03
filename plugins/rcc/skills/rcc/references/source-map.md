@@ -118,6 +118,7 @@ Org-level `gh repo list` scans were also run for `Sema4AI`, `robocorp`, and `jos
   - Research checkout: `/tmp/plugins-rcc-research/actions`
   - Branch/commit inspected: `community` / `3bae23bb49fe`
   - Supports Action Server community source build commands, `package.yaml` v2 examples, Sema4AI action/MCP docs, `actions-work-items`, workflow producer/consumer templates, and frontend community build notes.
+  - ACTIONS container refresh, 2026-10-03: `community` / `8bdce09944c9e370917a8222243cd1a239ea7060`; current repository toolkit uses `developer/toolkit.yaml`, `Bootstrap`, and `InstallCommunity`. PyPI `actions-runtime` 1.0.2 and `actions-core` 1.0.1 are the container baseline, with MCP v2. See `../../action-server/references/container-deployment.md` for release metadata, local Docker/Compose examples, and the runnable starter.
 
 - `https://github.com/joshyorko/robot-templates.git`
   - Research checkout: `/tmp/plugins-rcc-research/robot-templates`

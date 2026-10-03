@@ -57,11 +57,11 @@ Use $rcc-workitems for producer/consumer/reporter, robocorp-adapters-custom, act
 ## Create An Action Package
 
 ```text
-Use $action-server. Create or update an Action Server package with package.yaml spec-version v2, typed sema4ai.actions responses, Secret/OAuth2Secret for sensitive inputs, and dev-tasks for tests/lint. Validate action-server start and OpenAPI/MCP endpoints when the dependency is available.
+Use $action-server. Create or update a joshyorko/actions community package with package.yaml spec-version v2, PyPI actions-core and actions-runtime, typed actions responses, Secret/OAuth2Secret for sensitive inputs, and dev-tasks for tests/lint. Validate action-server start and OpenAPI/MCP v2 endpoints when the dependency is available.
 ```
 
 ```text
-Use $action-server for package.yaml v2, sema4ai-actions, sema4ai-mcp, /mcp, or Action Server work-items template questions. Validate package behavior through Action Server commands and endpoint checks when available.
+Use $action-server for package.yaml v2, actions-core, actions-runtime, actions.mcp, MCP v2 at /mcp, Docker/Compose deployment, or ACTIONS work-items template questions. Use the bundled container reference and smoke check for a complete build/run/update recipe.
 ```
 
 ## Review Template Pins

@@ -1,22 +1,21 @@
 # Action Server Recipes
 
-Use this guide for Action Server packages, MCP tools, secrets, Sema4AI-compatible package APIs, and Josh's `actions` community fork.
+Use this guide for Action Server packages, MCP tools, secrets, PyPI `actions-core` and `actions-runtime`, and the owning `joshyorko/actions` repository.
 
 For cross-source Python library evidence, current example gaps, and refresh commands, see `../../rcc/references/python-library-audit.md`.
 
 ## Source Build From Josh's Fork
 
-The inspected `joshyorko/actions` checkout is on branch `community`. It keeps Sema4AI action/MCP packages and adds a community `actions-work-items` package.
+The inspected `joshyorko/actions` checkout is on branch `community`. Its ACTIONS packages include `actions-core`, `actions-runtime`, and `actions-work-items`.
 
-Common build commands from the repo:
+Use the checkout's devcontainer for source builds. In the current `community` checkout, the repository toolkit is at `developer/toolkit.yaml`:
 
 ```bash
-rcc run -r action_server/developer/toolkit.yaml -t community
-cd action_server/frontend
-inv build-frontend --tier=community
+rcc run --dev -r developer/toolkit.yaml -t Bootstrap
+rcc run --dev -r developer/toolkit.yaml -t InstallCommunity
 ```
 
-Use source builds when you need the community fork behavior. For ordinary action-package authoring, a PyPI Action Server install is usually enough.
+`InstallCommunity` invokes `build-frontend` without a tier argument, then `build-executable`. Inspect the toolkit in the selected revision before building. For ordinary packages and containers, install pinned PyPI `actions-runtime` and `actions-core`; see [Container deployment](container-deployment.md).
 
 ## package.yaml v2
 
@@ -40,8 +39,7 @@ dependencies:
     - python=3.12.11
     - uv=0.11.8
   pypi:
-    - sema4ai-actions=1.6.6
-    - sema4ai-mcp=0.0.3
+    - actions-core=1.0.1
     - requests=2.32.5
     - pydantic=2.11.7
 
@@ -83,8 +81,8 @@ For `external-endpoints`, `name` and `description` are required. `rules`, `host`
 action-server new
 action-server start
 action-server start --actions-sync=false --datadir ./.action-server
-python -m sema4ai.actions run actions.py
-python -m sema4ai.actions run . -t my_action --json-input input.json
+python -m actions run my_actions.py
+python -m actions run . -t my_action --json-input input.json
 ```
 
 Default local endpoints:
@@ -110,7 +108,7 @@ action-server start --actions-sync=false --datadir=./.action-server
 from typing import Annotated
 
 from pydantic import BaseModel, Field
-from sema4ai.actions import ActionError, Response, Secret, action
+from actions import ActionError, Response, Secret, action
 
 
 CustomerId = Annotated[str, Field(description="Customer identifier")]
@@ -139,7 +137,7 @@ Keep request/session logic outside the action function, and turn remote failures
 import os
 
 import requests
-from sema4ai.actions import ActionError, Response, Secret, action
+from actions import ActionError, Response, Secret, action
 
 
 def _token_value(token: Secret | None) -> str:
@@ -165,15 +163,15 @@ For paginated APIs, keep the cursor/ETag/next URL in a typed response model so c
 
 ## MCP
 
-Two MCP modes matter:
+The `community` branch and current PyPI `actions-runtime` use MCP v2. Two package declaration modes matter:
 
 - Ordinary `@action` packages are exposed by Action Server through `/mcp`.
-- Direct `sema4ai.mcp` decorators define MCP tools/resources/prompts in code.
+- Direct `actions.mcp` decorators, included in `actions-core`, define MCP tools/resources/prompts in code. There is no separate `actions-mcp` dependency.
 - `@action` and `@tool` are reciprocally exposed by Action Server. Current Action Server versions expose action MCP tool names as the action name.
 - `/mcp` is the primary streamable HTTP MCP endpoint; older `/sse` references are historical compatibility.
 
 ```python
-from sema4ai.mcp import prompt, resource, tool
+from actions.mcp import prompt, resource, tool
 
 
 @tool(read_only_hint=True, open_world_hint=False)
@@ -201,7 +199,7 @@ Use official `Secret` and `OAuth2Secret` parameter types. Do not pass secrets as
 ```python
 from typing import Literal
 
-from sema4ai.actions import OAuth2Secret, Secret, SecretSpec, action
+from actions import OAuth2Secret, Secret, SecretSpec, action
 
 
 class DocumentIntelligenceSecret(SecretSpec):
@@ -234,7 +232,6 @@ MCP-style clients can pass secrets by environment variable or header, for exampl
 
 ```bash
 action-server start --oauth2-settings oauth2-settings.json
-action-server oauth2 sema4ai-config
 action-server oauth2 user-config-path
 ```
 
@@ -274,15 +271,11 @@ For SQLite tests, isolate the database path with an env var and clean `-wal`/`-s
 
 ## Deployment
 
-Docker images commonly import actions at build time, then run with sync disabled:
+Read [Container deployment](container-deployment.md) before building Docker images. It includes a complete starter, runtime/library compatibility, persistent-data initialization and updates, authentication, browser caveats, and a real container smoke check.
 
-```dockerfile
-RUN action-server import --dir /app/actions --datadir /app/.action-server
-CMD ["action-server", "start", "--expose", "--address", "0.0.0.0", "--datadir", "/app/.action-server", "--actions-sync=false"]
-```
+Resolve and validate action environments at build time, then start with the package directory and native startup synchronization against the mounted datadir. A volume can hide image-baked imports. `action-server import` followed by sync-disabled startup retains removed actions in an existing volume; it is not an image-update lifecycle.
 
-Persist the datadir in compose/Kubernetes when runs, auth, or imported package state must survive container restarts. Keep API keys and secrets in the platform secret store, not image layers.
-Use `--api-key` in exposed deployments; `--api-key None` is only for controlled local/no-auth contexts. Use `--full-openapi-spec` when validating internal run/artifact endpoints. Current Action Server writes `server-info.json` under the datadir, and container builds can set `SEMA4AI_OPTIMIZE_FOR_CONTAINER=1`.
+Bind the server to `0.0.0.0` inside the container and choose the host port binding in Compose. `--expose` creates a public tunnel; it is not needed for Docker port publishing. Keep API keys and secrets out of image layers. Use `--full-openapi-spec` for internal run/artifact endpoint validation. `SEMA4AI_OPTIMIZE_FOR_CONTAINER=1` selects RCC's container optimization; it does not replace persistent-data initialization.
 
 ## Wrapping RCC Robots As Actions
 
@@ -305,7 +298,7 @@ dependencies:
     - python=3.12.11
     - uv=0.11.8
   pypi:
-    - sema4ai-actions=1.6.6
+    - actions-core=1.0.1
     - actions-work-items>=0.2.4
 ```
 
@@ -319,4 +312,4 @@ for item in inputs:
 
 Use `actions-work-items` for Action Server-centered producer/consumer flows and non-robot workflows. Use `robocorp.workitems` for RCC robot processes. Use `robocorp-adapters-custom` when the production robot workflow depends on custom backend adapters such as DocumentDB.
 
-The community `workflow-producer-consumer` template stores its default SQLite queue under `ACTION_SERVER_DATADIR` or `SEMA4AI_ACTION_SERVER_DATADIR` by setting `RC_WORKITEM_DB_PATH`. Its `/api/work-items` UI/API path is SQLite/datadir-specific in the reviewed community branch; do not present it as a generic Redis/DocumentDB control plane.
+The community `workflow-producer-consumer` template stores its default SQLite queue under `ACTION_SERVER_DATADIR` by setting `RC_WORKITEM_DB_PATH`. Its `/api/work-items` UI/API path is SQLite/datadir-specific in the reviewed community branch; do not present it as a generic Redis/DocumentDB control plane.

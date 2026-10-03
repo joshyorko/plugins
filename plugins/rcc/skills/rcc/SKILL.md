@@ -16,7 +16,7 @@ Treat RCC as the center of gravity for this stack. Frame the domain as RCC-manag
 - Use `$rcc-robot-framework` for `.robot` suites and resources, Robot CLI/Rebot, custom Robot libraries, results, and RCC `robot_tests` acceptance work.
 - Use `$rcc-rpaframework` for `RPA.*` library selection, keyword recipes, package/platform needs, and interoperability with `robocorp.*` libraries.
 - Use `$rcc-workitems` for classic `robocorp.workitems`, `actions-work-items`, producer/consumer/reporter flows, local SQLite/file queues, custom adapters, Redis, DocumentDB, and Yorko Control Room adapters.
-- Use `$action-server` for ordinary Action Server packages, Josh's actions community branch, `package.yaml` v2, `sema4ai-actions`, `sema4ai-mcp`, OpenAPI/MCP exposure, secrets, dev tasks, action tests, and typed responses.
+- Use `$action-server` for `joshyorko/actions` packages, `package.yaml` v2, PyPI `actions-core` and `actions-runtime`, `actions.mcp`, Docker/Compose builds and deployments, OpenAPI/MCP exposure, secrets, dev tasks, action tests, and typed responses.
 - Use `$rcc-ci-maintenance` for RCC in GitHub Actions, `ROBOCORP_HOME` cache, pinned RCC install, scheduled maintenance automation, allowlist dependency maintenance, bot PR flows, and CI cache hygiene.
 
 ## Router Rules

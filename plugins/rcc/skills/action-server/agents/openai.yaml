@@ -1,4 +1,4 @@
 interface:
   display_name: "Action Server"
-  short_description: "Action Server packages, package.yaml v2, actions, MCP exposure, and secrets."
-  default_prompt: "Use $action-server for ordinary Action Server packages, package.yaml v2, sema4ai-actions, sema4ai-mcp, OpenAPI/MCP validation, secrets, and dev tasks."
+  short_description: "Action packages, MCP, secrets, and Docker/Compose deployment."
+  default_prompt: "Use $action-server for joshyorko/actions packages, package.yaml v2, PyPI actions-core and actions-runtime, OpenAPI/MCP validation, secrets, dev tasks, and Docker/Compose builds and deployments."

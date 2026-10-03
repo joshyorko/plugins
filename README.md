@@ -149,7 +149,7 @@ The plugin also advertises `rcc-dagger` as a bundled stdio MCP server. The marke
 - [`rcc-core`](plugins/rcc/skills/rcc-core/SKILL.md) — RCC itself: CLI/source orientation, holotree/cache internals, endpoints, templates, bundles, and remote cache/client behavior.
 - [`rcc-robots`](plugins/rcc/skills/rcc-robots/SKILL.md) — RCC CLI, `robot.yaml`, `conda.yaml`, holotree, templates, freezes, bundles, and environment validation.
 - [`rcc-workitems`](plugins/rcc/skills/rcc-workitems/SKILL.md) — classic `robocorp.workitems`, `actions-work-items`, producer/consumer/reporter flows, local queues, and custom adapters.
-- [`action-server`](plugins/rcc/skills/action-server/SKILL.md) — ordinary Action Server packages, Josh's `actions` community branch, `package.yaml` v2, `sema4ai-actions`, `sema4ai-mcp`, secrets, dev tasks, and OpenAPI/MCP checks.
+- [`action-server`](plugins/rcc/skills/action-server/SKILL.md) — `joshyorko/actions` community packages, PyPI `actions-core` and `actions-runtime`, `package.yaml` v2, secrets, dev tasks, MCP v2 checks, and a complete Docker/Compose build/run/update recipe.
 - [`rcc-ci-maintenance`](plugins/rcc/skills/rcc-ci-maintenance/SKILL.md) — RCC in GitHub Actions, `ROBOCORP_HOME` caching, pinned RCC installs, scheduled maintenance robots, allowlists, and bot PR workflows.
 
 ## Quick Start

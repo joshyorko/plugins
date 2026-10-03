@@ -1,0 +1,15 @@
+spec-version: v2
+name: container-demo
+description: Harmless action for verifying an Action Server container.
+version: 0.0.1
+dependencies:
+  conda-forge:
+    - python=3.12.11
+    - uv=0.11.8
+  pypi:
+    - actions-core=1.0.1
+packaging:
+  exclude:
+    - ./.secrets/**
+    - ./.env
+    - ./output/**
