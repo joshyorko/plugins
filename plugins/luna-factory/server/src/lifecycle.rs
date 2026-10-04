@@ -1,6 +1,6 @@
 use crate::{
     config::Config,
-    native::{NativeClient, configured_route, thread_is_idle},
+    native::{NativeClient, NativeTerminal, configured_route, thread_is_idle},
     store::{Run, StartRequest, Store, now, repository_subject},
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -96,22 +96,56 @@ fn observe_command(run: &mut Run, thread: &str, item: &Value) -> Result<()> {
         run.owned_commands.len() < 1000 || run.owned_commands.contains_key(&key),
         "command_observation_bound_reached"
     );
+    if let Some(previous) = run.command_processes.get(&key) {
+        ensure!(
+            item["processId"]
+                .as_str()
+                .is_some_and(|process| previous == &format!("{thread}:{process}")),
+            "native_command_process_identity_changed"
+        );
+    }
     if let Some(process) = item["processId"].as_str() {
         ensure!(process.len() <= 256, "process_identity_too_large");
         let process = format!("{thread}:{process}");
         run.command_processes.insert(key.clone(), process.clone());
-        if terminal {
-            for (item, pid) in &run.command_processes {
-                if pid == &process {
-                    run.owned_commands.insert(item.clone(), true);
-                }
-            }
-        }
     }
+    // A native process ID can be reused. Exit evidence belongs to this exact
+    // command item, never every historical item with the same process ID.
+    if run
+        .terminal_stop_attempts
+        .get(&key)
+        .is_some_and(|state| state == "exit_evidence_conflict")
+    {
+        run.owned_commands.insert(key, false);
+        return Ok(());
+    }
+
     // A later historical snapshot must not invalidate already-observed process exit.
     let done = terminal || run.owned_commands.get(&key) == Some(&true);
     run.owned_commands.insert(key, done);
     Ok(())
+}
+
+/// A live native terminal invalidates any older command completion snapshot.
+fn observe_terminal(run: &mut Run, thread: &str, terminal: &NativeTerminal) -> Result<String> {
+    let key = format!("{thread}:{}", terminal.item_id);
+    let process = format!("{thread}:{}", terminal.process_id);
+    ensure!(
+        run.owned_commands.len() < 1000 || run.owned_commands.contains_key(&key),
+        "command_observation_bound_reached"
+    );
+    if let Some(previous) = run.command_processes.get(&key) {
+        ensure!(previous == &process, "native_terminal_identity_changed");
+    }
+    run.command_processes.insert(key.clone(), process);
+    if run.owned_commands.get(&key) == Some(&true) {
+        // A live terminal contradicts an old exit snapshot. Replaying that same
+        // history after a stop acknowledgement cannot turn it into fresh proof.
+        run.terminal_stop_attempts
+            .insert(key.clone(), "exit_evidence_conflict".into());
+    }
+    run.owned_commands.insert(key.clone(), false);
+    Ok(key)
 }
 
 pub fn safe_summary(text: &str, limit: usize) -> String {
@@ -721,10 +755,15 @@ impl Factory {
         let mut expected = run.owned_threads.clone();
         expected.push(owner);
         let mut observed = Vec::new();
+        let mut terminals_empty = true;
         for thread in &expected {
             observed.push(client.read_thread(thread).await?);
             for item in client.thread_items(thread).await? {
                 observe_command(run, thread, &item)?;
+            }
+            for terminal in client.background_terminals(thread).await? {
+                terminals_empty = false;
+                observe_terminal(run, thread, &terminal)?;
             }
         }
         run.active_threads = observed
@@ -736,7 +775,9 @@ impl Factory {
             .filter_map(|thread| thread["id"].as_str().map(str::to_owned))
             .collect();
         self.store.lock().await.save(run)?;
-        Ok(terminal_threads(&expected, &observed) && run.owned_commands.values().all(|done| *done))
+        Ok(terminals_empty
+            && terminal_threads(&expected, &observed)
+            && run.owned_commands.values().all(|done| *done))
     }
     pub async fn cancel(&self, id: &str) -> Result<Value> {
         let _guard = self.mutation.lock().await;
@@ -779,10 +820,52 @@ impl Factory {
                     client.interrupt_turn(&child, &turn).await?;
                 }
             }
+            self.stop_owned_terminals(&client, run).await?;
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
         self.observe_stopped(&client, run).await
     }
+    async fn stop_owned_terminals(&self, client: &NativeClient, run: &mut Run) -> Result<()> {
+        let mut threads = run.owned_threads.clone();
+        threads.push(run.thread_id.clone().context("owner_identity_unknown")?);
+        // No terminal stop while a known thread can still dispatch new work.
+        for thread in &threads {
+            if !thread_is_idle(&client.read_thread(thread).await?) {
+                return Ok(());
+            }
+        }
+        for thread in threads {
+            for terminal in client.background_terminals(&thread).await? {
+                let key = observe_terminal(run, &thread, &terminal)?;
+                if run.terminal_stop_attempts.contains_key(&key) {
+                    continue;
+                }
+                let target = client.prepare_terminal_stop(&thread, &terminal).await?;
+                run.terminal_stop_attempts
+                    .insert(key.clone(), "pending".into());
+                {
+                    let mut store = self.store.lock().await;
+                    store.save(run)?;
+                    store.receipt(run, "terminal_stop_requested", &format!("Owned thread {thread}, item {}, process {}: targeted native stop requested; exit unverified", terminal.item_id, terminal.process_id))?;
+                }
+                let result = client.terminate_background_terminal(target).await;
+                run.terminal_stop_attempts.insert(
+                    key,
+                    match &result {
+                        Ok(true) => "acknowledged",
+                        Ok(false) => "not_confirmed",
+                        Err(_) => "outcome_unknown",
+                    }
+                    .into(),
+                );
+                self.store.lock().await.save(run)?;
+                // Never blindly retry a mutating call after a lost response.
+                result?;
+            }
+        }
+        Ok(())
+    }
+
     async fn client_for_reconcile(&self, id: &str) -> Result<NativeClient> {
         if let Some(client) = self.clients.lock().await.get(id).cloned() {
             if !client.is_closed() {

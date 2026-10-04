@@ -334,3 +334,162 @@ async fn ambiguous_recovery_blocks_one_run_without_preventing_service_startup() 
     assert!(factory.resume(&run.id).await.is_ok());
     assert!(!calls(&dir).iter().any(|r| r["method"] == "turn/start"));
 }
+
+#[tokio::test]
+async fn cancellation_terminates_only_fresh_owned_terminal_and_requires_exit_evidence() {
+    let (dir, factory, request) = setup();
+    std::fs::write(dir.path().join("mode"), "terminal_exit").unwrap();
+    let run = factory.start(request).await.unwrap();
+    let stopped = factory.cancel(run["id"].as_str().unwrap()).await.unwrap();
+    assert_eq!(stopped["state"], "CANCELLED");
+    assert_eq!(stopped["claim_held"], false);
+    let records = calls(&dir);
+    let stops: Vec<_> = records
+        .iter()
+        .filter(|r| r["method"] == "thread/backgroundTerminals/terminate")
+        .collect();
+    assert_eq!(stops.len(), 1);
+    assert_eq!(
+        stops[0]["params"],
+        json!({"threadId":"child","processId":"42"})
+    );
+    assert_eq!(
+        records[0]["params"]["capabilities"]["experimentalApi"],
+        true
+    );
+    assert!(
+        !records
+            .iter()
+            .any(|r| r["method"] == "thread/backgroundTerminals/clean")
+    );
+}
+
+#[tokio::test]
+async fn terminal_disappearance_and_ack_are_not_exit_proof() {
+    let (dir, factory, request) = setup();
+    std::fs::write(dir.path().join("mode"), "terminal_disappeared").unwrap();
+    let run = factory.start(request).await.unwrap();
+    let stopped = factory.cancel(run["id"].as_str().unwrap()).await.unwrap();
+    assert_eq!(stopped["state"], "BLOCKED");
+    assert_eq!(stopped["claim_held"], true);
+    assert_eq!(
+        calls(&dir)
+            .iter()
+            .filter(|r| r["method"] == "thread/backgroundTerminals/terminate")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn uncertain_terminal_stop_is_not_replayed_on_cancel_retry() {
+    let (dir, factory, request) = setup();
+    std::fs::write(dir.path().join("mode"), "terminal_lost_ack").unwrap();
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    for _ in 0..2 {
+        let stopped = factory.cancel(id).await.unwrap();
+        assert_eq!(stopped["state"], "BLOCKED");
+        assert_eq!(stopped["claim_held"], true);
+    }
+    assert_eq!(
+        calls(&dir)
+            .iter()
+            .filter(|r| r["method"] == "thread/backgroundTerminals/terminate")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn unsupported_terminal_observation_keeps_idle_run_claimed() {
+    let (dir, factory, request) = setup();
+    let run = factory.start(request).await.unwrap();
+    factory.cancel(run["id"].as_str().unwrap()).await.unwrap();
+    let run = factory.resume(run["id"].as_str().unwrap()).await.unwrap();
+    std::fs::write(dir.path().join("mode"), "terminal_unsupported").unwrap();
+    let stopped = factory.cancel(run["id"].as_str().unwrap()).await.unwrap();
+    assert_eq!(stopped["state"], "BLOCKED");
+    assert_eq!(stopped["claim_held"], true);
+}
+
+#[tokio::test]
+async fn stale_exit_history_and_reused_process_ids_cannot_release_a_live_terminal() {
+    for mode in ["terminal_reused_pid", "terminal_conflicting_exit"] {
+        let (dir, factory, request) = setup();
+        std::fs::write(dir.path().join("mode"), mode).unwrap();
+        let run = factory.start(request).await.unwrap();
+        let id = run["id"].as_str().unwrap();
+        for _ in 0..2 {
+            let stopped = factory.cancel(id).await.unwrap();
+            assert_eq!(stopped["state"], "BLOCKED", "{mode}");
+            assert_eq!(stopped["claim_held"], true, "{mode}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn failed_read_only_terminal_preflight_can_retry_before_any_stop_dispatch() {
+    let (dir, factory, request) = setup();
+    std::fs::write(dir.path().join("mode"), "terminal_preflight").unwrap();
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    assert_eq!(factory.cancel(id).await.unwrap()["state"], "BLOCKED");
+    assert!(
+        !calls(&dir)
+            .iter()
+            .any(|r| r["method"] == "thread/backgroundTerminals/terminate")
+    );
+    assert_eq!(factory.cancel(id).await.unwrap()["state"], "CANCELLED");
+    assert_eq!(
+        calls(&dir)
+            .iter()
+            .filter(|r| r["method"] == "thread/backgroundTerminals/terminate")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn restart_preserves_pending_and_unknown_terminal_stops_without_replay() {
+    for outcome in ["pending", "outcome_unknown"] {
+        let (dir, base, request) = setup();
+        let mut config = (*base.config).clone();
+        config.database = dir.path().join("restart-stop/runs.sqlite");
+        config.native_transport = "existing_daemon".into();
+        let mut store = luna_factoryd::store::Store::open(&config).unwrap();
+        let mut run = store.admit(&config, &request).unwrap().run;
+        run.thread_id = Some("owner".into());
+        run.owned_threads.push("child".into());
+        run.terminal_stop_attempts
+            .insert("child:terminal-item".into(), outcome.into());
+        run.owned_commands
+            .insert("child:terminal-item".into(), false);
+        run.command_processes
+            .insert("child:terminal-item".into(), "child:42".into());
+        store.save(&run).unwrap();
+        drop(store);
+        std::fs::write(dir.path().join("mode"), "terminal_lost_ack").unwrap();
+        let factory = Factory::new(config).unwrap();
+        factory.reconcile_startup().await.unwrap();
+        let stopped = factory.cancel(&run.id).await.unwrap();
+        assert_eq!(stopped["claim_held"], true);
+        assert_eq!(stopped["state"], "BLOCKED");
+        assert!(
+            !calls(&dir)
+                .iter()
+                .any(|r| r["method"] == "thread/backgroundTerminals/terminate"
+                    || r["method"] == "turn/start")
+        );
+    }
+}
+
+#[tokio::test]
+async fn changed_command_process_identity_after_stop_cannot_release_claim() {
+    let (dir, factory, request) = setup();
+    std::fs::write(dir.path().join("mode"), "terminal_changed_pid").unwrap();
+    let run = factory.start(request).await.unwrap();
+    let stopped = factory.cancel(run["id"].as_str().unwrap()).await.unwrap();
+    assert_eq!(stopped["state"], "BLOCKED");
+    assert_eq!(stopped["claim_held"], true);
+}

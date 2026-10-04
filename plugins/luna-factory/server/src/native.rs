@@ -31,6 +31,20 @@ pub struct NativeHistoryItem {
     pub item: Value,
 }
 
+/// Native managed-terminal identity only; never persist commands or host paths.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeTerminal {
+    pub process_id: String,
+    pub item_id: String,
+}
+
+/// Constructed only by a successful fresh identity check.
+pub struct NativeTerminalTarget {
+    thread_id: String,
+    terminal: NativeTerminal,
+}
+
 pub const LUNA_MODEL: &str = "gpt-6-luna";
 const MAX_PENDING: usize = 128;
 const MAX_PAGES: usize = 100;
@@ -160,7 +174,7 @@ impl NativeClient {
             .extend([stdout_task, stderr_task]);
         let client = Self { inner };
         let handshake = async {
-            client.request("initialize", json!({"clientInfo":{"name":"luna_factory", "title":"Luna Factory", "version":env!("CARGO_PKG_VERSION")}})).await?;
+            client.request("initialize", json!({"clientInfo":{"name":"luna_factory", "title":"Luna Factory", "version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}})).await?;
             client.write_message(json!({"method":"initialized"})).await
         }.await;
         if let Err(error) = handshake {
@@ -670,6 +684,75 @@ impl NativeClient {
             json!({"threadId":thread_id, "turnId":turn_id}),
         )
         .await
+    }
+
+    /// Experimental in Codex 0.159.2. Failure is unknown ownership, never empty.
+    pub async fn background_terminals(&self, thread_id: &str) -> Result<Vec<NativeTerminal>> {
+        let rows = self
+            .pages(
+                "thread/backgroundTerminals/list",
+                json!({"threadId":thread_id,"limit":100}),
+            )
+            .await?;
+        ensure!(rows.len() <= 1000, "native_terminal_bound_reached");
+        let mut ids = HashSet::new();
+        rows.into_iter()
+            .map(|row| {
+                let terminal: NativeTerminal =
+                    serde_json::from_value(row).context("invalid_native_terminal_identity")?;
+                let process = terminal
+                    .process_id
+                    .parse::<i32>()
+                    .context("invalid_native_process_id")?;
+                ensure!(
+                    process > 0 && process.to_string() == terminal.process_id,
+                    "invalid_native_process_id"
+                );
+                ensure!(
+                    !terminal.item_id.is_empty() && terminal.item_id.len() <= 256,
+                    "invalid_native_terminal_item"
+                );
+                ensure!(
+                    ids.insert(terminal.process_id.clone()),
+                    "duplicate_native_terminal_identity"
+                );
+                Ok(terminal)
+            })
+            .collect()
+    }
+
+    /// Pure read-only preflight. Failure here is known not to have sent a stop.
+    pub async fn prepare_terminal_stop(
+        &self,
+        thread_id: &str,
+        terminal: &NativeTerminal,
+    ) -> Result<NativeTerminalTarget> {
+        let fresh = self.background_terminals(thread_id).await?;
+        ensure!(
+            fresh.iter().any(|item| item == terminal),
+            "native_terminal_identity_changed"
+        );
+        Ok(NativeTerminalTarget {
+            thread_id: thread_id.into(),
+            terminal: terminal.clone(),
+        })
+    }
+
+    /// Call immediately after preparing the target and durably recording intent.
+    /// Acknowledgement is not process-exit evidence. No automatic mutation retry.
+    pub async fn terminate_background_terminal(
+        &self,
+        target: NativeTerminalTarget,
+    ) -> Result<bool> {
+        let result = self
+            .request(
+                "thread/backgroundTerminals/terminate",
+                json!({"threadId":target.thread_id,"processId":target.terminal.process_id}),
+            )
+            .await?;
+        result["terminated"]
+            .as_bool()
+            .context("invalid_native_terminal_stop_result")
     }
 
     pub async fn read_thread(&self, thread_id: &str) -> Result<Value> {

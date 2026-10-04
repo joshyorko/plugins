@@ -43,10 +43,9 @@ The canonical skill input schema is supported, but actual skill loading remains
 unproved. App-server 0.159.2 rejects profile switching; aliases use inherited
 configuration and requested Luna effort, and unsupported overrides fail closed.
 
-Current Rust checks: 27 tests passed, 1 opt-in native test ignored by default;
-locked clippy with warnings denied and fmt pass. Runtime claim fencing, recovery
-and final owner reports are under independent review. UI is being implemented
-against this endpoint contract. Private ChatGPT/tunnel and phone proof remain open.
+At the initial runtime checkpoint, 27 Rust tests passed and 1 opt-in native test was ignored;
+locked clippy with warnings denied and fmt pass. The subsequent checkpoints below include independent review fixes and the UI
+implementation against this endpoint contract. Private ChatGPT/tunnel and phone proof remain open.
 
 ## Workbench and recovery checkpoint
 
@@ -73,3 +72,24 @@ call. Resume/restart can recover the same native turn and subject-bound owner
 result. A recovered completion spends no additional repair budget; missing or
 ambiguous correlation keeps the run blocked and does not prevent other service
 status reads. Native history is decoded using the installed turn/item envelope.
+
+## Owned terminal stop checkpoint
+
+Cancellation explicitly negotiates native experimental APIs per connection. It
+uses bounded, validated terminal identities on recorded owner/descendant threads,
+interrupts owned active turns, refreshes identity immediately before a targeted
+stop and persists stop intent before dispatch. Unknown outcomes are not replayed.
+No arbitrary process ID or blanket cleanup is exposed through MCP.
+
+The local native terminate path can acknowledge a requested kill without proving
+OS cessation. Therefore an acknowledgement and subsequent empty terminal list do
+not mark a command done. Existing command-exit evidence plus a fresh empty list
+and idle owned threads remain required. Missing, unsupported or contradictory
+observations retain the claim. These are fixture-tested controls, not live native
+cancellation proof.
+
+This checkpoint passes 61 Rust tests, formatting, locked clippy with warnings
+denied, 53 repository checks, 27 packaging tests and 11 canonical skill checks.
+A compiled HTTP smoke still discovers 12 tools and the unchanged 392189-byte UI
+resource. The opt-in live audit remains ignored. Desktop/phone rendering,
+authorized native inference and actual process cessation remain unproved.

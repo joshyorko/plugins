@@ -122,8 +122,14 @@ revoked/remapped repositories, changed profiles/skill content and reduced limits
 A successful interrupt and idle owner/worker threads do not prove a background
 terminal exited. The service retains bounded command identities and requires
 terminal command evidence before releasing a claim. Unknown processes keep the
-run blocked. The installed native protocol does not yet have a proven direct
-termination path for agent-owned background terminals. Do not substitute
+run blocked. The runtime explicitly opts into the connection-scoped experimental
+API and uses `thread/backgroundTerminals/list` and targeted `terminate` from the
+installed Codex 0.159.2 schema. Only owned owner/descendant threads and freshly
+matched native item/process identities can be stopped. It persists stop intent
+before dispatch and never blindly retries a lost acknowledgement. Unsupported
+methods fail closed. A terminate acknowledgement or an empty terminal list is
+not process-exit evidence: command exit evidence and fresh idle/empty observations
+are all required before claim release. Do not substitute
 `command/exec/terminate`: its IDs belong to separate connection-scoped commands.
 There is no force-unlock endpoint. This boundary still requires live operator
 proof, even when synthetic lifecycle tests pass.

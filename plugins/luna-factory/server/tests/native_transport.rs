@@ -283,3 +283,46 @@ async fn dispatch_correlation_uses_client_id_not_item_id_or_latest_turn() {
     );
     c.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn terminal_identity_is_validated_and_refreshed_before_targeted_stop() {
+    let c = client().await;
+    let rows = c.background_terminals("terminals").await.unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].process_id, "42");
+    assert!(
+        c.terminate_background_terminal(
+            c.prepare_terminal_stop("terminals", &rows[0])
+                .await
+                .unwrap()
+        )
+        .await
+        .unwrap()
+    );
+    let stale = c
+        .background_terminals("terminal-replaced")
+        .await
+        .unwrap()
+        .remove(0);
+    assert!(
+        c.prepare_terminal_stop("terminal-replaced", &stale)
+            .await
+            .is_err()
+    );
+    for thread in ["terminal-malformed", "terminal-duplicate"] {
+        assert!(c.background_terminals(thread).await.is_err());
+    }
+    let calls = c.request("history", json!({})).await.unwrap();
+    let stops: Vec<_> = calls
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["method"] == "thread/backgroundTerminals/terminate")
+        .collect();
+    assert_eq!(stops.len(), 1);
+    assert_eq!(
+        stops[0]["params"],
+        json!({"threadId":"terminals","processId":"42"})
+    );
+    c.shutdown().await.unwrap();
+}

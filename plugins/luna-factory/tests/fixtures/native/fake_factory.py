@@ -7,6 +7,8 @@ import sys
 home = pathlib.Path(__file__).parent
 history_path=home / "native_history.json"
 history=json.loads(history_path.read_text()) if history_path.exists() else []
+terminal_stopped = False
+terminal_reads = {}
 turn_number=len(history)
 active={"owner":bool(history and history[-1]["status"]=="inProgress"),"child":bool(history and history[-1]["status"]=="inProgress")}
 
@@ -65,6 +67,24 @@ for line in sys.stdin:
         emit({"method":"turn/completed","params":{"threadId":"owner","turn":{"id":f"turn-{turn_number}","status":"completed","items":[]}}})
     elif method == "thread/items/list" and mode == "finish" and params["threadId"] == "owner":
         result = {"data":[{"id":"final","type":"agentMessage","phase":"final_answer","text":(home / "report.json").read_text()}]}
+    elif method == "thread/backgroundTerminals/list":
+        tid=params["threadId"];terminal_reads[tid]=terminal_reads.get(tid,0)+1
+        if mode=="terminal_preflight" and tid=="child" and terminal_reads[tid]==3:
+            emit({"id":message["id"],"error":{"code":-32000,"message":"read-only preflight unavailable"}})
+            continue
+        if mode == "terminal_unsupported":
+            emit({"id":message["id"],"error":{"code":-32601,"message":"unsupported"}})
+            continue
+        result = {"data": [{"processId":"42","itemId":"terminal-item","command":"synthetic sleep","cwd":"/synthetic"}] if mode.startswith("terminal_") and params["threadId"]=="child" and not terminal_stopped else []}
+    elif method == "thread/backgroundTerminals/terminate":
+        assert params == {"threadId":"child","processId":"42"}, "unowned termination"
+        terminal_stopped = mode in ("terminal_exit", "terminal_disappeared", "terminal_reused_pid", "terminal_conflicting_exit", "terminal_preflight", "terminal_changed_pid")
+        if mode == "terminal_lost_ack":
+            emit({"id":message["id"],"error":{"code":-32000,"message":"uncertain outcome"}})
+            continue
+        result = {"terminated": True}
+    elif method == "thread/items/list" and mode.startswith("terminal_") and mode != "terminal_unsupported":
+        result = {"data": [{"id":"terminal-item","type":"commandExecution","processId":"42","status":"completed","exitCode":-9 if terminal_stopped and mode in ("terminal_exit", "terminal_preflight") else None}] if params["threadId"]=="child" else []}
     elif method == "thread/items/list":
         result = {"data": [{"id": "background-item", "type": "commandExecution", "processId": "background-process", "status": "completed", "exitCode": 0 if mode == "process_exited" else None}] if mode in ("background", "process_exited") and params["threadId"] == "child" else []}
     elif method == "thread/turns/list":
@@ -73,6 +93,14 @@ for line in sys.stdin:
         active[params["threadId"]] = False
         if params["threadId"]=="owner" and history:
             history[-1]["status"]="interrupted";history_path.write_text(json.dumps(history))
+    if method == "thread/items/list" and params["threadId"]=="child":
+        if mode=="terminal_reused_pid":
+            result["data"].insert(0,{"id":"old-item","type":"commandExecution","processId":"42","status":"completed","exitCode":0})
+        if mode=="terminal_changed_pid" and terminal_stopped:
+            result["data"][0]["processId"]="43"
+            result["data"][0]["exitCode"]=-9
+        if mode=="terminal_conflicting_exit":
+            result["data"][0]["exitCode"]=0
     if method == "thread/items/list":
         result["data"]=[{"turnId":f"turn-{turn_number}","item":item} for item in result["data"]]
         if params["threadId"]=="owner":

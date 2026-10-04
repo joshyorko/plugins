@@ -23,14 +23,17 @@ MODEL = "gpt-6-luna"
 EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
 METHODS = ("initialize", "model/list", "skills/list", "thread/start", "thread/resume",
            "thread/read", "thread/list", "thread/loaded/list", "thread/turns/list", "thread/items/list",
-           "turn/start", "turn/steer", "turn/interrupt")
+           "turn/start", "turn/steer", "turn/interrupt",
+           "thread/backgroundTerminals/list", "thread/backgroundTerminals/terminate")
 SCHEMAS = ("v1/InitializeParams", "v2/ModelListParams", "v2/ModelListResponse",
            "v2/SkillsListParams", "v2/ThreadStartParams", "v2/ThreadStartResponse",
            "v2/ThreadResumeParams", "v2/TurnStartParams", "v2/TurnSteerParams",
            "v2/TurnInterruptParams", "v2/ThreadReadParams", "v2/ThreadListParams",
            "v2/ThreadLoadedListResponse", "v2/ThreadTurnsListParams",
            "v2/TurnCompletedNotification", "v2/ItemCompletedNotification",
-           "v2/ThreadStatusChangedNotification", "v2/ThreadItemsListResponse")
+           "v2/ThreadStatusChangedNotification", "v2/ThreadItemsListResponse",
+           "v2/ThreadBackgroundTerminalsListParams", "v2/ThreadBackgroundTerminalsListResponse",
+           "v2/ThreadBackgroundTerminalsTerminateParams", "v2/ThreadBackgroundTerminalsTerminateResponse")
 
 
 def catalog_projection(catalog: dict) -> dict:
@@ -122,7 +125,7 @@ async def probe(binary: str, clean: bool, cwd: Path, skill: Path) -> dict:
                   "inference_calls": 0, "effective_routing": "unverified"}
         phase = "initialize"
         try:
-            await asyncio.wait_for(request("initialize", {"clientInfo": {"name": "luna_factory_audit", "version": "0.2.0"}}), TIMEOUT)
+            await asyncio.wait_for(request("initialize", {"clientInfo": {"name": "luna_factory_audit", "version": "0.2.0"}, "capabilities": {"experimentalApi": True}}), TIMEOUT)
             process.stdin.write(b'{"method":"initialized"}\n')
             await process.stdin.drain()
             result["initialize"] = "passed"
@@ -189,9 +192,9 @@ def main() -> int:
     # CLI/version/schema generation cannot perform a model turn.
     version = subprocess.run([args.codex, "--version"], capture_output=True, text=True, timeout=10, check=True)
     with tempfile.TemporaryDirectory(prefix="luna-native-schemas-") as temporary:
-        subprocess.run([args.codex, "app-server", "generate-json-schema", "--out", temporary], capture_output=True, timeout=30, check=True)
+        subprocess.run([args.codex, "app-server", "generate-json-schema", "--experimental", "--out", temporary], capture_output=True, timeout=30, check=True)
         schemas = schema_evidence(Path(temporary))
-    report = {"codex_version": version.stdout.strip(), "protocol_generated_from_installed_binary": True,
+    report = {"codex_version": version.stdout.strip(), "protocol_generated_from_installed_binary": True, "experimental_api_opt_in": True,
               "required_methods_present": all(schemas["methods"].values()),
               "canonical_skill_sha256": hashlib.sha256(args.skill.resolve().read_bytes()).hexdigest(),
               "native": asyncio.run(probe(args.codex, args.clean_config, args.cwd.resolve(), args.skill.resolve()))}

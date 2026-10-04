@@ -42,7 +42,7 @@ for line in sys.stdin:
     elif method == "thread/read":
         thread = params["threadId"]
         result = {"thread": {"id": thread, "model": "gpt-6-luna", "status": {"type": "active" if state["active"].get(thread) else "idle"}, "parentThreadId": "owner" if thread == "child" else None}}
-    elif method == "thread/items/list":
+    elif method in ("thread/items/list", "thread/backgroundTerminals/list"):
         result = {"data": []}
     elif method == "thread/list":
         result = {"data": [{"id": "child", "parentThreadId": "owner"}] if state["turn"] else []}

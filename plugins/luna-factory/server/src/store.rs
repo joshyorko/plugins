@@ -52,6 +52,8 @@ pub struct Run {
     pub owned_commands: std::collections::BTreeMap<String, bool>,
     #[serde(default)]
     pub command_processes: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub terminal_stop_attempts: std::collections::BTreeMap<String, String>,
     pub generation: u64,
     pub repairs_used: u32,
     pub created_at: u64,
@@ -320,6 +322,7 @@ impl Store {
             active_threads: vec![],
             owned_commands: std::collections::BTreeMap::new(),
             command_processes: std::collections::BTreeMap::new(),
+            terminal_stop_attempts: std::collections::BTreeMap::new(),
             generation: 1,
             repairs_used: 0,
             created_at: timestamp,

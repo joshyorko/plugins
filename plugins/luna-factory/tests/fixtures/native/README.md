@@ -114,3 +114,22 @@ https://github.com/openai/codex/blob/main/codex-rs/app-server/tests/suite/v2/tur
 The installed 0.159.2 schemas also expose both fields. Synthetic fixtures test
 completed-but-unacknowledged dispatch, restart, missing correlation and ambiguity;
 these do not establish native live execution proof.
+
+## Experimental owned background-terminal control
+
+The installed 0.159.2 `generate-json-schema --experimental` output includes
+`thread/backgroundTerminals/list` and `thread/backgroundTerminals/terminate`.
+Initialize opts into `capabilities.experimentalApi` for this connection only.
+List records identify `processId` and `itemId`; raw commands/cwd are not retained
+or sent to the workbench. Stop intent is durable, identity is re-read before
+termination, and a lost mutation reply is not blindly retried.
+
+A source audit explains why the native boolean is insufficient proof:
+- [process manager](https://github.com/openai/codex/blob/de3721a7be07054c8c2a41102b5a501f34155361/codex-rs/core/src/unified_exec/process_manager.rs) calls `terminate_confirmed` before removing its tracked entry
+- [unified process](https://github.com/openai/codex/blob/de3721a7be07054c8c2a41102b5a501f34155361/codex-rs/core/src/unified_exec/process.rs) signals logical exit after the local terminate call
+- [local PTY process](https://github.com/openai/codex/blob/de3721a7be07054c8c2a41102b5a501f34155361/codex-rs/utils/pty/src/process.rs) discards the kill result; it does not await actual exit in `terminate`
+
+The fixture distinguishes positive command exit, acknowledgement plus vanished
+entry without exit evidence, unsupported observation and uncertain stop outcome.
+Only actual terminal command evidence can close command ownership. These tests
+are synthetic; they do not prove a real native process tree has stopped.

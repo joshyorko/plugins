@@ -22,6 +22,8 @@
     "initialize": true,
     "model/list": true,
     "skills/list": true,
+    "thread/backgroundTerminals/list": true,
+    "thread/backgroundTerminals/terminate": true,
     "thread/items/list": true,
     "thread/list": true,
     "thread/loaded/list": true,
@@ -296,6 +298,47 @@
       "required": [],
       "sha256": "1d245374e64c5acc9739dfc68a4fe5114c6c9147af04c480886f1846d2ca6239"
     },
+    "v2/ThreadBackgroundTerminalsListParams": {
+      "properties": [
+        "cursor",
+        "limit",
+        "threadId"
+      ],
+      "required": [
+        "threadId"
+      ],
+      "sha256": "7ac232410d59afd308dca04f8c0b08f20fa6e87f00bd0d3b5892b7ce8b31d2ee"
+    },
+    "v2/ThreadBackgroundTerminalsListResponse": {
+      "properties": [
+        "data",
+        "nextCursor"
+      ],
+      "required": [
+        "data"
+      ],
+      "sha256": "b56b1cbcb1d60079ee9f9caaeef29cad869a25b4a6d356566f7c9f672faa7bf4"
+    },
+    "v2/ThreadBackgroundTerminalsTerminateParams": {
+      "properties": [
+        "processId",
+        "threadId"
+      ],
+      "required": [
+        "processId",
+        "threadId"
+      ],
+      "sha256": "4af4973b4e965228e7c6ffdff341c22c227c26bc48d4b44a8696993869b64103"
+    },
+    "v2/ThreadBackgroundTerminalsTerminateResponse": {
+      "properties": [
+        "terminated"
+      ],
+      "required": [
+        "terminated"
+      ],
+      "sha256": "1f5dfb3fdd3c1fef2ef9b9b2c26eb2f2c7346cdf695d4ca291ede076050d1bc7"
+    },
     "v2/ThreadItemsListResponse": {
       "properties": [
         "backwardsCursor",
@@ -309,12 +352,15 @@
     },
     "v2/ThreadListParams": {
       "properties": [
+        "ancestorThreadId",
         "archived",
         "cursor",
         "cwd",
         "limit",
         "modelProviders",
         "originators",
+        "parentThreadId",
+        "projectId",
         "searchTerm",
         "sectionId",
         "sortDirection",
@@ -323,7 +369,7 @@
         "useStateDbOnly"
       ],
       "required": [],
-      "sha256": "bf5abcb5363c177f8d6b60e6193c76ad8807d6452b67a73ee2f1d77dfe427ac9"
+      "sha256": "5daf371b2852c409d4405c95f79cddb2d92a1ee89da808b2c5112ef16a57432c"
     },
     "v2/ThreadLoadedListResponse": {
       "properties": [
@@ -354,9 +400,14 @@
         "cwd",
         "developerInstructions",
         "excludeTurns",
+        "history",
+        "initialTurnsPage",
         "model",
         "modelProvider",
+        "path",
+        "permissions",
         "personality",
+        "runtimeWorkspaceRoots",
         "sandbox",
         "serviceTier",
         "threadId"
@@ -364,31 +415,44 @@
       "required": [
         "threadId"
       ],
-      "sha256": "c818e26d830ac4430791eab7d4a872d2384fa6006b14c505d8caf46e7e093527"
+      "sha256": "cc5bb3b25f82073d24af5b6c09e4804ac307467f8400ba5f263fa86f9f0349e6"
     },
     "v2/ThreadStartParams": {
       "properties": [
+        "allowProviderModelFallback",
         "approvalPolicy",
         "approvalsReviewer",
         "baseInstructions",
         "config",
         "cwd",
+        "daybreakEnabled",
         "developerInstructions",
+        "dynamicTools",
+        "environments",
         "ephemeral",
+        "experimentalRawEvents",
+        "historyMode",
+        "mockExperimentalField",
         "model",
         "modelProvider",
+        "multiAgentMode",
+        "permissions",
         "personality",
+        "projectId",
+        "runtimeWorkspaceRoots",
         "sandbox",
+        "selectedCapabilityRoots",
         "serviceName",
         "serviceTier",
         "sessionStartSource",
         "threadSource"
       ],
       "required": [],
-      "sha256": "e9c6d3cc18d049bfbc0249add3808fb8e5a27e1a0b5a423767aafbc3859a9428"
+      "sha256": "80a40a7fac15b4bf70efb7f893fb353acc0a0d30c68f54aee4f01923deca85de"
     },
     "v2/ThreadStartResponse": {
       "properties": [
+        "activePermissionProfile",
         "approvalPolicy",
         "approvalsReviewer",
         "cwd",
@@ -396,7 +460,9 @@
         "instructionSources",
         "model",
         "modelProvider",
+        "multiAgentMode",
         "reasoningEffort",
+        "runtimeWorkspaceRoots",
         "sandbox",
         "serviceTier",
         "thread"
@@ -410,7 +476,7 @@
         "sandbox",
         "thread"
       ],
-      "sha256": "70d9c9a3a064edb76662ec7cd066d142ed9252b768272bc3a7d00788386755c0"
+      "sha256": "92f5ddc37717b922de1dc0b0405e9a6d463f370554e2091610c6e595bc2616d4"
     },
     "v2/ThreadStatusChangedNotification": {
       "properties": [
@@ -460,16 +526,24 @@
     },
     "v2/TurnStartParams": {
       "properties": [
+        "additionalContext",
         "approvalPolicy",
         "approvalsReviewer",
         "clientUserMessageId",
+        "collaborationMode",
         "cwd",
+        "cyberAccessProgram",
         "disabledPluginIds",
         "effort",
+        "environments",
         "input",
         "model",
+        "multiAgentMode",
         "outputSchema",
+        "permissions",
         "personality",
+        "responsesapiClientMetadata",
+        "runtimeWorkspaceRoots",
         "sandboxPolicy",
         "serviceTier",
         "serviceTierForTurn",
@@ -482,13 +556,15 @@
         "input",
         "threadId"
       ],
-      "sha256": "2dfcf68705896fadc344ccfeb2e9fe5a6bcbbb8b9a90cf449ce232b636daf05a"
+      "sha256": "07771223642e1b61bd9aac0069fc0f98143a1c047724ca02c7ceb13653442738"
     },
     "v2/TurnSteerParams": {
       "properties": [
+        "additionalContext",
         "clientUserMessageId",
         "expectedTurnId",
         "input",
+        "responsesapiClientMetadata",
         "threadId"
       ],
       "required": [
@@ -496,7 +572,7 @@
         "input",
         "threadId"
       ],
-      "sha256": "857e7a2b061ae46ed6aedea6a5fddd3a6ce14f0334bf7eafaf10d4cbe68ec78b"
+      "sha256": "99f7fdff8b090065b68f36420b70870b5eafed048c024b308230aaa02f15d891"
     }
   }
 }

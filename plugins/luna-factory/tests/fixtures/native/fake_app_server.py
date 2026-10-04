@@ -9,6 +9,7 @@ counts = {"responses": 0}
 initialized = False
 history = []
 reorder = []
+terminal_reads = {}
 
 def emit(value):
     print(json.dumps(value), flush=True)
@@ -77,6 +78,19 @@ for line in sys.stdin:
         result={"data":[{"turnId":"turn-one","item":{"id":"server-item-7","type":"userMessage","clientId":"dispatch-one","content":[]}}]}
         if message["params"]["threadId"]=="ambiguous-correlation":
             result["data"].append({"turnId":"turn-two","item":{"id":"server-item-8","type":"userMessage","clientId":"dispatch-one","content":[]}})
+    if method == "thread/backgroundTerminals/list":
+        params=message["params"];tid=params["threadId"]
+        terminal_reads[tid]=terminal_reads.get(tid,0)+1
+        row={"processId":"42","itemId":"terminal-item","command":"private command","cwd":"/private"}
+        if tid=="terminal-malformed": row["processId"]="-1"
+        if tid=="terminal-replaced" and terminal_reads[tid]>1: row["itemId"]="new-item"
+        result={"data":[row]}
+        if tid=="terminal-duplicate": result["data"].append(row)
+        if tid=="terminals":
+            if params.get("cursor") is None: result["nextCursor"]="next"
+            else: result["data"]=[dict(row,processId="43",itemId="second-item")]
+    if method == "thread/backgroundTerminals/terminate":
+        result={"terminated":True}
     if method == "thread/turns/list":
         result = {"data": [{"id": "turn-one", "status": "inProgress"}, {"id": "old-turn", "status": "completed"}]}
     emit({"id": request_id, "result": result})
