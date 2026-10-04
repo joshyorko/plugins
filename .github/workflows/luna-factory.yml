@@ -1,0 +1,43 @@
+name: Luna Factory
+on:
+  pull_request:
+    paths:
+      - 'plugins/luna-factory/**'
+      - '.github/workflows/luna-factory.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/luna-factory/**'
+      - '.github/workflows/luna-factory.yml'
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/luna-factory/server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --locked --release
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test and build bundled UI when present
+        run: |
+          if test -f plugins/luna-factory/ui/package-lock.json; then
+            npm ci --prefix plugins/luna-factory/ui
+            npm run typecheck --prefix plugins/luna-factory/ui
+            npm test --prefix plugins/luna-factory/ui
+            npm run build --prefix plugins/luna-factory/ui
+          else
+            echo 'UI work remains open in this draft checkpoint'
+          fi

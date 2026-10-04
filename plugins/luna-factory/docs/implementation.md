@@ -26,3 +26,24 @@ contract. Shared generators have one writer.
 
 No merge, release, deploy, production restart, new credential, or blanket approval
 is part of this implementation.
+
+## Runtime checkpoint
+
+The Rust service now has SQLite admission/claims, request idempotency, exact
+repository subjects, finite wall/capacity limits, bounded receipts and zero-model
+status reads. It connects to native app-server over stdio or proxies an existing
+operator-owned daemon. The latter keeps daemon lifetime independent of MCP.
+Standalone stdio recovery refuses unknown process ownership after restart.
+
+Native adapter tests exercise real subprocess transport with a labeled synthetic
+fixture; an opt-in installed-Codex test also passed initialize/model-list only.
+Neither proves a live inference run. The inherited VM Codex home cannot initialize
+SQLite; the clean-config audit does not inherit authentication/provider settings.
+The canonical skill input schema is supported, but actual skill loading remains
+unproved. App-server 0.159.2 rejects profile switching; aliases use inherited
+configuration and requested Luna effort, and unsupported overrides fail closed.
+
+Current Rust checks: 27 tests passed, 1 opt-in native test ignored by default;
+locked clippy with warnings denied and fmt pass. Runtime claim fencing, recovery
+and final owner reports are under independent review. UI is being implemented
+against this endpoint contract. Private ChatGPT/tunnel and phone proof remain open.

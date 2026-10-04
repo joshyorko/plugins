@@ -1,0 +1,458 @@
+{
+  "message_phase_schema": {
+    "description": "Classifies an assistant message as interim commentary or final answer text.\n\nProviders do not emit this consistently, so callers must treat `None` as \"phase unknown\" and keep compatibility behavior for legacy models.",
+    "oneOf": [
+      {
+        "description": "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+        "enum": [
+          "commentary"
+        ],
+        "type": "string"
+      },
+      {
+        "description": "The assistant's terminal answer text for the current turn.",
+        "enum": [
+          "final_answer"
+        ],
+        "type": "string"
+      }
+    ]
+  },
+  "methods": {
+    "initialize": true,
+    "model/list": true,
+    "skills/list": true,
+    "thread/list": true,
+    "thread/loaded/list": true,
+    "thread/read": true,
+    "thread/resume": true,
+    "thread/start": true,
+    "thread/turns/list": true,
+    "turn/interrupt": true,
+    "turn/start": true,
+    "turn/steer": true
+  },
+  "native_event_item_schemas": [
+    {
+      "properties": {
+        "delivery": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AgentMessageDelivery"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "type": "string"
+        },
+        "memoryCitation": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MemoryCitation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MessagePhase"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "questions": {
+          "default": null,
+          "items": {
+            "$ref": "#/definitions/AsyncUserInputQuestion"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "agentMessage"
+          ],
+          "title": "AgentMessageThreadItemType",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text",
+        "type"
+      ],
+      "title": "AgentMessageThreadItem",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "agentsStates": {
+          "additionalProperties": {
+            "$ref": "#/definitions/CollabAgentState"
+          },
+          "description": "Last known status of the target agents, when available.",
+          "type": "object"
+        },
+        "id": {
+          "description": "Unique identifier for this collab tool call.",
+          "type": "string"
+        },
+        "model": {
+          "description": "Model requested for the spawned agent, when applicable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prompt": {
+          "description": "Prompt text sent as part of the collab tool call, when available.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reasoningEffort": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Reasoning effort requested for the spawned agent, when applicable."
+        },
+        "receiverThreadIds": {
+          "description": "Thread ID of the receiving agent, when applicable. In case of spawn operation, this corresponds to the newly spawned agent.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "senderThreadId": {
+          "description": "Thread ID of the agent issuing the collab request.",
+          "type": "string"
+        },
+        "status": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CollabAgentToolCallStatus"
+            }
+          ],
+          "description": "Current status of the collab tool call."
+        },
+        "tool": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CollabAgentTool"
+            }
+          ],
+          "description": "Name of the collab tool that was invoked."
+        },
+        "type": {
+          "enum": [
+            "collabAgentToolCall"
+          ],
+          "title": "CollabAgentToolCallThreadItemType",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agentsStates",
+        "id",
+        "receiverThreadIds",
+        "senderThreadId",
+        "status",
+        "tool",
+        "type"
+      ],
+      "title": "CollabAgentToolCallThreadItem",
+      "type": "object"
+    }
+  ],
+  "native_skill_input_schema": {
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      },
+      "type": {
+        "enum": [
+          "skill"
+        ],
+        "title": "SkillUserInputType",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "path",
+      "type"
+    ],
+    "title": "SkillUserInput",
+    "type": "object"
+  },
+  "schemas": {
+    "v1/InitializeParams": {
+      "properties": [
+        "capabilities",
+        "clientInfo"
+      ],
+      "required": [
+        "clientInfo"
+      ],
+      "sha256": "b55124e7c0f36a1789396daa5578217a92be67f053903696236686e59f6f212e"
+    },
+    "v2/ItemCompletedNotification": {
+      "properties": [
+        "completedAtMs",
+        "item",
+        "threadId",
+        "turnId"
+      ],
+      "required": [
+        "completedAtMs",
+        "item",
+        "threadId",
+        "turnId"
+      ],
+      "sha256": "d04b9153de38cd8302a2a418a44a65e8265d4c7586d46ea2cc801b594c6acf5b"
+    },
+    "v2/ModelListParams": {
+      "properties": [
+        "cursor",
+        "includeHidden",
+        "limit"
+      ],
+      "required": [],
+      "sha256": "de29a536c00a5b8f46f34dba417dabd93365305571a8ed200e33bea85db68b5a"
+    },
+    "v2/ModelListResponse": {
+      "properties": [
+        "data",
+        "nextCursor"
+      ],
+      "required": [
+        "data"
+      ],
+      "sha256": "bfbb3ee9f6e203e0b767587c17de94b9cb42f712d0d8168afbbbc3fcb4492f30"
+    },
+    "v2/SkillsListParams": {
+      "properties": [
+        "cwds",
+        "forceReload"
+      ],
+      "required": [],
+      "sha256": "1d245374e64c5acc9739dfc68a4fe5114c6c9147af04c480886f1846d2ca6239"
+    },
+    "v2/ThreadListParams": {
+      "properties": [
+        "archived",
+        "cursor",
+        "cwd",
+        "limit",
+        "modelProviders",
+        "originators",
+        "searchTerm",
+        "sectionId",
+        "sortDirection",
+        "sortKey",
+        "sourceKinds",
+        "useStateDbOnly"
+      ],
+      "required": [],
+      "sha256": "bf5abcb5363c177f8d6b60e6193c76ad8807d6452b67a73ee2f1d77dfe427ac9"
+    },
+    "v2/ThreadLoadedListResponse": {
+      "properties": [
+        "data",
+        "nextCursor"
+      ],
+      "required": [
+        "data"
+      ],
+      "sha256": "1ea02c4710083e552b2a3a89b931b9049d5bf05b7db46278b8352cf9fd80cd52"
+    },
+    "v2/ThreadReadParams": {
+      "properties": [
+        "includeTurns",
+        "threadId"
+      ],
+      "required": [
+        "threadId"
+      ],
+      "sha256": "dfe040c6ac71d30795b8be3f3ff232e66f362a37f883b491e5d1ea367f470db4"
+    },
+    "v2/ThreadResumeParams": {
+      "properties": [
+        "approvalPolicy",
+        "approvalsReviewer",
+        "baseInstructions",
+        "config",
+        "cwd",
+        "developerInstructions",
+        "excludeTurns",
+        "model",
+        "modelProvider",
+        "personality",
+        "sandbox",
+        "serviceTier",
+        "threadId"
+      ],
+      "required": [
+        "threadId"
+      ],
+      "sha256": "c818e26d830ac4430791eab7d4a872d2384fa6006b14c505d8caf46e7e093527"
+    },
+    "v2/ThreadStartParams": {
+      "properties": [
+        "approvalPolicy",
+        "approvalsReviewer",
+        "baseInstructions",
+        "config",
+        "cwd",
+        "developerInstructions",
+        "ephemeral",
+        "model",
+        "modelProvider",
+        "personality",
+        "sandbox",
+        "serviceName",
+        "serviceTier",
+        "sessionStartSource",
+        "threadSource"
+      ],
+      "required": [],
+      "sha256": "e9c6d3cc18d049bfbc0249add3808fb8e5a27e1a0b5a423767aafbc3859a9428"
+    },
+    "v2/ThreadStartResponse": {
+      "properties": [
+        "approvalPolicy",
+        "approvalsReviewer",
+        "cwd",
+        "disabledPluginIds",
+        "instructionSources",
+        "model",
+        "modelProvider",
+        "reasoningEffort",
+        "sandbox",
+        "serviceTier",
+        "thread"
+      ],
+      "required": [
+        "approvalPolicy",
+        "approvalsReviewer",
+        "cwd",
+        "model",
+        "modelProvider",
+        "sandbox",
+        "thread"
+      ],
+      "sha256": "70d9c9a3a064edb76662ec7cd066d142ed9252b768272bc3a7d00788386755c0"
+    },
+    "v2/ThreadStatusChangedNotification": {
+      "properties": [
+        "status",
+        "threadId"
+      ],
+      "required": [
+        "status",
+        "threadId"
+      ],
+      "sha256": "26f3c60c1b73f7fa2d31c74429cdc36f8746c76c33e3d314b3fb61d3661f05f6"
+    },
+    "v2/ThreadTurnsListParams": {
+      "properties": [
+        "cursor",
+        "itemsView",
+        "limit",
+        "sortDirection",
+        "threadId"
+      ],
+      "required": [
+        "threadId"
+      ],
+      "sha256": "2a8b93d7d4437cc25e16a1dde16d8db3c338d39e16c5eece2a56e943a21577d7"
+    },
+    "v2/TurnCompletedNotification": {
+      "properties": [
+        "threadId",
+        "turn"
+      ],
+      "required": [
+        "threadId",
+        "turn"
+      ],
+      "sha256": "016870158603b0f84bd9f8f65f927161c9fd5128e5ec632087616462dc44e085"
+    },
+    "v2/TurnInterruptParams": {
+      "properties": [
+        "threadId",
+        "turnId"
+      ],
+      "required": [
+        "threadId",
+        "turnId"
+      ],
+      "sha256": "6dff382dae73d1dbc58406ed045605f647e7a49660e2540fbd2c6c24d60c5f2b"
+    },
+    "v2/TurnStartParams": {
+      "properties": [
+        "approvalPolicy",
+        "approvalsReviewer",
+        "clientUserMessageId",
+        "cwd",
+        "disabledPluginIds",
+        "effort",
+        "input",
+        "model",
+        "outputSchema",
+        "personality",
+        "sandboxPolicy",
+        "serviceTier",
+        "serviceTierForTurn",
+        "summary",
+        "threadId",
+        "toolOutput",
+        "turnTrigger"
+      ],
+      "required": [
+        "input",
+        "threadId"
+      ],
+      "sha256": "2dfcf68705896fadc344ccfeb2e9fe5a6bcbbb8b9a90cf449ce232b636daf05a"
+    },
+    "v2/TurnSteerParams": {
+      "properties": [
+        "clientUserMessageId",
+        "expectedTurnId",
+        "input",
+        "threadId"
+      ],
+      "required": [
+        "expectedTurnId",
+        "input",
+        "threadId"
+      ],
+      "sha256": "857e7a2b061ae46ed6aedea6a5fddd3a6ce14f0334bf7eafaf10d4cbe68ec78b"
+    }
+  }
+}
