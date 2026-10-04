@@ -126,3 +126,144 @@ fn database_inside_repository_and_symlink_alias_are_rejected() {
     );
     assert_eq!(request.capacity, 1);
 }
+#[test]
+fn exact_subject_changes_when_index_changes_under_same_worktree() {
+    let (_temp, config, _request) = setup();
+    let root = &config.repositories["test"].root;
+    std::fs::write(root.join("file"), "base").unwrap();
+    for args in [
+        vec!["add", "file"],
+        vec![
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-m",
+            "base",
+        ],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+    std::fs::write(root.join("file"), "index-one").unwrap();
+    std::process::Command::new("git")
+        .args(["add", "file"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    std::fs::write(root.join("file"), "working-tree").unwrap();
+    let first = luna_factoryd::store::repository_subject(root).unwrap();
+    std::fs::write(root.join("file"), "index-two").unwrap();
+    std::process::Command::new("git")
+        .args(["add", "file"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    std::fs::write(root.join("file"), "working-tree").unwrap();
+    assert_ne!(
+        first,
+        luna_factoryd::store::repository_subject(root).unwrap()
+    );
+}
+#[cfg(unix)]
+#[test]
+fn repository_helpers_cannot_execute_or_hide_candidate_changes() {
+    use std::os::unix::fs::PermissionsExt;
+    let (temp, config, _) = setup();
+    let root = &config.repositories["test"].root;
+    std::fs::write(root.join("file"), "base").unwrap();
+    for args in [
+        vec!["add", "file"],
+        vec![
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-m",
+            "base",
+        ],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+    let marker = temp.path().join("executed");
+    let helper = temp.path().join("helper");
+    std::fs::write(
+        &helper,
+        format!("#!/bin/sh\ntouch '{}'\necho hidden\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::process::Command::new("git")
+        .args(["config", "diff.external", helper.to_str().unwrap()])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args(["config", "core.fsmonitor", helper.to_str().unwrap()])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    std::fs::write(root.join("file"), "modified").unwrap();
+    let first = luna_factoryd::store::repository_subject(root).unwrap();
+    assert!(
+        !marker.exists(),
+        "repository-configured executable ran outside native sandbox"
+    );
+    std::fs::write(root.join("file"), "modified-again").unwrap();
+    assert_ne!(
+        first,
+        luna_factoryd::store::repository_subject(root).unwrap()
+    );
+}
+#[test]
+fn deleting_a_tracked_directory_still_has_an_exact_subject() {
+    let (_temp, config, _) = setup();
+    let root = &config.repositories["test"].root;
+    std::fs::create_dir_all(root.join("old/subdir")).unwrap();
+    std::fs::write(root.join("old/subdir/file"), "base").unwrap();
+    for args in [
+        vec!["add", "."],
+        vec![
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-m",
+            "nested",
+        ],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+    let before = luna_factoryd::store::repository_subject(root).unwrap();
+    std::fs::remove_dir_all(root.join("old")).unwrap();
+    assert_ne!(
+        before,
+        luna_factoryd::store::repository_subject(root).unwrap()
+    );
+}

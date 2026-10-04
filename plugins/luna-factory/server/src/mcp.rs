@@ -101,8 +101,11 @@ pub fn tool_definitions() -> Vec<Tool> {
         definition(
             "resume_factory_run",
             "Resume factory run",
-            "Reconcile the same native thread and continue with preserved objective, authority and remaining limits.",
-            object(json!({"run_id":id}), &["run_id"]),
+            "Reconcile the same native thread with preserved authority and limits. Optionally include an in-scope operator answer.",
+            object(
+                json!({"run_id":id,"message":{"type":"string","minLength":1,"maxLength":4000}}),
+                &["run_id"],
+            ),
             false,
         ),
         definition(

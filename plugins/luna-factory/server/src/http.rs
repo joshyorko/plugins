@@ -44,6 +44,12 @@ struct List {
     #[serde(default = "default_limit")]
     limit: u32,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Resume {
+    run_id: String,
+    message: Option<String>,
+}
 fn default_limit() -> u32 {
     20
 }
@@ -61,7 +67,9 @@ impl McpServer {
     pub async fn invoke(&self, name: &str, args: Value) -> anyhow::Result<Value> {
         match name {
             "start_factory" => self.factory.start(parse::<StartRequest>(args)?).await,
-            "list_factory_runs" => self.factory.list(parse::<List>(args)?.limit).await,
+            "list_factory_runs" => {
+                Ok(json!({"runs":self.factory.list(parse::<List>(args)?.limit).await?}))
+            }
             "get_factory_run" => self.factory.get(&parse::<RunId>(args)?.run_id).await,
             "get_factory_capabilities" => {
                 ensure_empty(&args)?;
@@ -83,7 +91,12 @@ impl McpServer {
                     .await
             }
             "cancel_factory_run" => self.factory.cancel(&parse::<RunId>(args)?.run_id).await,
-            "resume_factory_run" => self.factory.resume(&parse::<RunId>(args)?.run_id).await,
+            "resume_factory_run" => {
+                let params: Resume = parse(args)?;
+                self.factory
+                    .resume_with_input(&params.run_id, params.message.as_deref())
+                    .await
+            }
             "read_factory_settings" => {
                 ensure_empty(&args)?;
                 self.factory.settings().await
@@ -218,7 +231,9 @@ pub fn router(factory: Factory, html: String, cancel: CancellationToken) -> Rout
             })
         },
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default().with_cancellation_token(cancel),
+        StreamableHttpServerConfig::default()
+            .with_json_response(true)
+            .with_cancellation_token(cancel),
     );
     Router::new()
         .nest_service("/mcp", service)

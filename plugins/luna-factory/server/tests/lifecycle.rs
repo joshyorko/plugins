@@ -47,3 +47,20 @@ fn external_result_does_not_include_host_paths_or_raw_logs() {
     assert_eq!(value["route"]["observed_model"], serde_json::Value::Null);
     assert_eq!(value["route"]["requested_model"], "gpt-6-luna");
 }
+#[test]
+fn bounded_owner_summaries_withhold_synthetic_credentials() {
+    for secret in [
+        "sk-synthetic-secret",
+        "Authorization: Bearer synthetic",
+        "password=synthetic",
+        "ghp_synthetic",
+    ] {
+        let summary = luna_factoryd::lifecycle::safe_summary(secret, 100);
+        assert!(!summary.contains(secret));
+        assert!(summary.contains("withheld"));
+    }
+    assert_eq!(
+        luna_factoryd::lifecycle::safe_summary("A1 passed, one decision remains", 100),
+        "A1 passed, one decision remains"
+    );
+}

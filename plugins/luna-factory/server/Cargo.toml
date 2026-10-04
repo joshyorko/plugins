@@ -9,6 +9,7 @@ description = "Durable local control plane for the canonical Luna Factory plugin
 [dependencies]
 anyhow = "1"
 axum = "0.8"
+fs2 = "0.4"
 clap = { version = "4", features = ["derive"] }
 rmcp = { version = "=3.5.0", features = ["server", "transport-streamable-http-server", "transport-io"] }
 rusqlite = { version = "0.38", features = ["bundled"] }

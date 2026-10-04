@@ -47,3 +47,20 @@ Current Rust checks: 27 tests passed, 1 opt-in native test ignored by default;
 locked clippy with warnings denied and fmt pass. Runtime claim fencing, recovery
 and final owner reports are under independent review. UI is being implemented
 against this endpoint contract. Private ChatGPT/tunnel and phone proof remain open.
+
+## Workbench and recovery checkpoint
+
+The bundled UI uses the official MCP App bridge plus feature-detected OpenAI
+helpers. It has sidebar/thread views, structured start/steer/stop forms, settings,
+exact-run host routing, summary-to-detail evidence loading and bounded context.
+Its official App/AppBridge in-memory transport test is synthetic host proof only.
+The cloud browser refused the loopback preview with ERR_BLOCKED_BY_CLIENT, so
+visual desktop/mobile and live ChatGPT rendering remain unproved.
+
+Independent review drove concrete regression fixes: independent durable deadline
+watchdogs, unknown-resume recovery, current-policy revalidation, exclusive service
+lease, reconnecting stale daemon proxies, one event listener per run, subject
+hashes that include index content without executing repository helpers, and
+background-terminal evidence before claim release. All native lifecycle fixture
+results remain labeled synthetic. No claim of live cancellation, observed child
+routing or authenticated skill execution follows from those tests.

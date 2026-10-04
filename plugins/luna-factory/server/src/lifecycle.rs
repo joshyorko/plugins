@@ -21,9 +21,9 @@ pub fn terminal_threads(expected: &[String], observed: &[Value]) -> bool {
 pub fn public_run(run: &Run) -> Value {
     json!({"id":run.id,"repository":run.request.repository,"objective":run.request.objective,
         "acceptance":run.request.acceptance,"non_goals":run.request.non_goals,"finish":run.request.finish,
-        "profile":run.request.profile,"capacity":run.request.capacity,"active_workers":run.owned_threads.len(),
+        "profile":run.request.profile,"capacity":run.request.capacity,"active_workers":run.active_threads.len(),"owned_workers":run.owned_threads.len(),
         "state":run.state,"current_subject":run.current_subject,"owner_thread":run.thread_id,"turn_id":run.turn_id,
-        "delta":run.delta,"remaining_gap":if run.state=="CONVERGED" {None} else {Some("Mandatory acceptance needs current owner verification")},
+        "delta":run.delta,"remaining_gap":run.remaining_gap,"skill_sha256":run.skill_sha256,
         "blocker":run.blocker,"deadline_at":run.deadline_at,"claim_held":run.claim_held,
         "repairs_used":run.repairs_used,"repair_limit":run.request.repair_attempts,"generation":run.generation,"updated_at":run.updated_at,
         "route":{"requested_model":"gpt-6-luna","requested_effort":run.configured_effort,
@@ -80,6 +80,66 @@ pub fn accept_owner_report(report: &Value, subject: &str, acceptance_count: usiz
     Ok(())
 }
 
+/// Only terminal command evidence closes process ownership. An idle thread or
+/// completed tool call with a still-running PTY is insufficient.
+fn observe_command(run: &mut Run, thread: &str, item: &Value) -> Result<()> {
+    if item["type"] != "commandExecution" {
+        return Ok(());
+    }
+    let id = item["id"].as_str().context("command_identity_missing")?;
+    ensure!(id.len() <= 256, "command_identity_too_large");
+    let key = format!("{thread}:{id}");
+    let terminal = item["status"] == "declined"
+        || (matches!(item["status"].as_str(), Some("completed" | "failed"))
+            && item["exitCode"].as_i64().is_some());
+    ensure!(
+        run.owned_commands.len() < 1000 || run.owned_commands.contains_key(&key),
+        "command_observation_bound_reached"
+    );
+    if let Some(process) = item["processId"].as_str() {
+        ensure!(process.len() <= 256, "process_identity_too_large");
+        let process = format!("{thread}:{process}");
+        run.command_processes.insert(key.clone(), process.clone());
+        if terminal {
+            for (item, pid) in &run.command_processes {
+                if pid == &process {
+                    run.owned_commands.insert(item.clone(), true);
+                }
+            }
+        }
+    }
+    // A later historical snapshot must not invalidate already-observed process exit.
+    let done = terminal || run.owned_commands.get(&key) == Some(&true);
+    run.owned_commands.insert(key, done);
+    Ok(())
+}
+
+pub fn safe_summary(text: &str, limit: usize) -> String {
+    let lower = text.to_ascii_lowercase();
+    if [
+        "-----begin",
+        "sk-",
+        "ghp_",
+        "github_pat_",
+        "bearer ",
+        "password=",
+        "password:",
+        "api_key=",
+        "api-key:",
+        "access_token=",
+        "secret=",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+    {
+        return "Sensitive details withheld. Review the native owner thread locally.".into();
+    }
+    text.chars()
+        .filter(|c| !c.is_control() || *c == '\n')
+        .take(limit)
+        .collect()
+}
+
 pub fn owner_output_schema() -> Value {
     json!({"type":"object","additionalProperties":false,"properties":{
         "state":{"type":"string","enum":["CONVERGED","QUIESCENT","NEEDS_INPUT","BLOCKED"]},
@@ -96,16 +156,28 @@ pub struct Factory {
     clients: Arc<Mutex<HashMap<String, NativeClient>>>,
     // Mutations serialize; status reads use only SQLite and never this lock/native client.
     mutation: Arc<Mutex<()>>,
+    monitors: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
+    _lease: Arc<std::fs::File>,
 }
 impl Factory {
     pub fn new(config: Config) -> Result<Self> {
         let mut store = Store::open(&config)?;
+        let lease = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(config.database.with_extension("lock"))?;
+        fs2::FileExt::try_lock_exclusive(&lease)
+            .context("another_luna_factory_service_owns_this_database")?;
         store.mark_interrupted()?;
         Ok(Self {
             config: Arc::new(config),
             store: Arc::new(Mutex::new(store)),
             clients: Arc::new(Mutex::new(HashMap::new())),
             mutation: Arc::new(Mutex::new(())),
+            monitors: Arc::new(Mutex::new(HashMap::new())),
+            _lease: Arc::new(lease),
         })
     }
     pub async fn get(&self, id: &str) -> Result<Value> {
@@ -161,14 +233,15 @@ impl Factory {
             return self.get(&admission.run.id).await;
         }
         let mut run = admission.run;
+        self.watch_deadline(run.id.clone(), run.deadline_at);
         let profile = &self.config.profiles[&run.request.profile];
         if profile.codex_profile.is_some() {
-            run.state = "BLOCKED".into();
+            run.state = "FAILED".into();
             run.blocker = Some(
                 "Installed app-server profile switching is unsupported; no fallback was attempted."
                     .into(),
             );
-            self.store.lock().await.save(&run)?;
+            self.store.lock().await.release_verified(&mut run)?;
             return self.get(&run.id).await;
         }
         run.configured_effort = Some(profile.effort.clone());
@@ -176,9 +249,16 @@ impl Factory {
         match self.launch(&mut run).await {
             Ok(()) => {}
             Err(_) => {
-                run.state = "BLOCKED".into();
                 run.blocker=Some("Native owner start could not be confirmed. Run doctor locally and inspect native Codex; no mutation is replayed automatically.".into());
-                self.store.lock().await.save(&run)?;
+                if run.dispatch_phase == "admitted" && run.thread_id.is_none() {
+                    run.state = "FAILED".into();
+                    run.delta =
+                        "Native preflight failed before any owner start was dispatched.".into();
+                    self.store.lock().await.release_verified(&mut run)?;
+                } else {
+                    run.state = "BLOCKED".into();
+                    self.store.lock().await.save(&run)?;
+                }
             }
         }
         drop(guard);
@@ -188,6 +268,17 @@ impl Factory {
         let client = self.connect().await?;
         let events = client.subscribe();
         let effort = &self.config.profiles[&run.request.profile].effort;
+        let skill =
+            std::fs::read(&self.config.skill_path).context("canonical_skill_unavailable")?;
+        ensure!(skill.len() <= 128 * 1024, "canonical_skill_too_large");
+        run.skill_sha256 = Some(format!(
+            "{:x}",
+            <sha2::Sha256 as sha2::Digest>::digest(skill)
+        ));
+        self.store.lock().await.save(run)?;
+        crate::native::validate_luna_route(&client.list_models().await?, effort)?;
+        run.dispatch_phase = "thread_start_pending".into();
+        self.store.lock().await.save(run)?;
         let started = client
             .start_thread(
                 Path::new(&run.canonical_root),
@@ -202,6 +293,7 @@ impl Factory {
                 .context("native_owner_id_missing")?
                 .into(),
         );
+        run.dispatch_phase = "owner_created".into();
         run.configured_model = route.configured_model;
         run.configured_effort = route.configured_effort;
         run.delta = "Native owner thread created. Execution routing remains unverified.".into();
@@ -211,6 +303,8 @@ impl Factory {
             .lock()
             .await
             .insert(run.id.clone(), client.clone());
+        run.dispatch_phase = "turn_start_pending".into();
+        self.store.lock().await.save(run)?;
         let turn = client
             .start_skill_turn(
                 run.thread_id.as_deref().unwrap(),
@@ -226,12 +320,13 @@ impl Factory {
                 .context("native_turn_id_missing")?
                 .into(),
         );
+        run.dispatch_phase = "active".into();
         run.state = "RUNNING".into();
         run.updated_at = now();
         run.blocker = None;
         run.delta = "Owner is working with the canonical Luna Factory skill.".into();
         self.store.lock().await.save(run)?;
-        self.monitor(run.id.clone(), events);
+        self.monitor(run.id.clone(), events).await;
         Ok(())
     }
     fn owner_prompt(&self, run: &Run) -> Result<String> {
@@ -248,27 +343,69 @@ impl Factory {
             serde_json::to_string(&run.request)?
         ))
     }
-    fn monitor(&self, id: String, mut receiver: broadcast::Receiver<Value>) {
+    // The deadline belongs to the durable run, not an event subscription or turn.
+    fn watch_deadline(&self, id: String, deadline: u64) {
         let factory = self.clone();
         tokio::spawn(async move {
-            let deadline = match factory.store.lock().await.get(&id) {
-                Ok(r) => r.deadline_at,
-                Err(_) => return,
-            };
-            let sleep = tokio::time::sleep(std::time::Duration::from_secs(
+            tokio::time::sleep(std::time::Duration::from_secs(
                 deadline.saturating_sub(now()),
-            ));
-            tokio::pin!(sleep);
+            ))
+            .await;
+            let _ = factory.cancel(&id).await;
+        });
+    }
+    /// Reconnect reads and deadline recovery only. Never starts/resumes inference.
+    pub async fn reconcile_startup(&self) -> Result<()> {
+        let runs = self.store.lock().await.list_all_claimed()?;
+        for mut run in runs {
+            self.watch_deadline(run.id.clone(), run.deadline_at);
+            if self.config.native_transport == "existing_daemon" && run.thread_id.is_some() {
+                match self.client_for_reconcile(&run.id).await {
+                    Ok(client) => {
+                        let events = client.subscribe();
+                        match self.observe_stopped(&client,&mut run).await {
+                            Ok(true)=>self.block(&run.id,"Native ownership reconciled idle. Resume the same run explicitly within its remaining limits.").await?,
+                            Ok(false)=>{run.state="RUNNING".into();run.blocker=None;run.delta="Reconnected to existing native execution; no inference was started.".into();self.store.lock().await.save(&run)?;self.monitor(run.id.clone(),events).await;},
+                            Err(_)=>self.block(&run.id,"Native ownership could not be reconciled. Repository claim remains held.").await?,
+                        }
+                    }
+                    Err(_) => {
+                        self.block(
+                            &run.id,
+                            "Existing native daemon is unavailable. Repository claim remains held.",
+                        )
+                        .await?
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    async fn monitor(&self, id: String, mut receiver: broadcast::Receiver<Value>) {
+        let factory = self.clone();
+        let key = id.clone();
+        let mut monitors = self.monitors.lock().await;
+        if let Some(old) = monitors.remove(&key) {
+            old.abort();
+        }
+        let handle = tokio::spawn(async move {
             loop {
-                tokio::select! {
-                    _=&mut sleep => {let _=factory.cancel(&id).await;break;}
-                    event=receiver.recv()=>match event {
-                        Ok(event)=> {if factory.observe(&id,event).await.unwrap_or(false){break;}},
-                        Err(_)=> {let _=factory.block(&id,"Native event stream was lost. Ownership is uncertain; reconcile before resuming.").await;break;}
+                match receiver.recv().await {
+                    Ok(event) => match factory.observe(&id, event).await {
+                        Ok(true) => break,
+                        Ok(false) => {}
+                        Err(_) => {
+                            let _=factory.block(&id,"Native event could not be reconciled. Claim retained; the run deadline remains active.").await;
+                        }
+                    },
+                    Err(_) => {
+                        let _=factory.block(&id,"Native event stream was lost. Ownership is uncertain; the run deadline remains active.").await;
+                        break;
                     }
                 }
             }
         });
+        monitors.insert(key, handle);
     }
     async fn block(&self, id: &str, reason: &str) -> Result<()> {
         let mut store = self.store.lock().await;
@@ -301,6 +438,11 @@ impl Factory {
             run.blocker=Some("Native Codex requires an approval or answer. Open the owner thread in Codex; this app cannot grant elevation.".into());
         }
         let item = &event["params"]["item"];
+        if let Some(thread) = thread
+            && matches!(method, "item/started" | "item/completed")
+        {
+            observe_command(&mut run, thread, item)?;
+        }
         if matches!(method, "item/started" | "item/completed")
             && item["type"] == "collabAgentToolCall"
             && item["tool"] == "spawnAgent"
@@ -319,6 +461,45 @@ impl Factory {
                 run.owned_threads.len()
             );
             store.receipt(&run,"native_child_spawn","Native collaboration event recorded child identity; route is requested, not observed.")?;
+        }
+        if item["type"] == "collabAgentToolCall" {
+            if let Some(states) = item["agentsStates"].as_object() {
+                for (child, state) in states {
+                    if run.owned_threads.contains(child) {
+                        run.active_threads.retain(|id| id != child);
+                        if matches!(state["status"].as_str(), Some("running" | "pendingInit")) {
+                            run.active_threads.push(child.clone());
+                        }
+                    }
+                }
+            }
+            if item["tool"] == "spawnAgent"
+                && item["model"]
+                    .as_str()
+                    .is_some_and(|model| model != "gpt-6-luna")
+            {
+                run.state = "CANCELLING".into();
+                run.blocker=Some("Native child requested an unapproved model. Stop requested; actual routing remains unverified.".into());
+            }
+        }
+        if method == "thread/status/changed"
+            && !is_owner
+            && let Some(child) = thread
+        {
+            run.active_threads.retain(|id| id != child);
+            if event["params"]["status"]["type"] == "active" {
+                run.active_threads.push(child.into());
+            }
+        }
+        if method == "turn/completed"
+            && !is_owner
+            && let Some(child) = thread
+        {
+            run.active_threads.retain(|id| id != child);
+        }
+        if run.active_threads.len() > run.request.capacity as usize {
+            run.state = "CANCELLING".into();
+            run.blocker = Some("Observed native worker capacity exceeded. Stop requested.".into());
         }
         if method == "item/completed" && item["type"] == "commandExecution" {
             store.receipt(
@@ -357,7 +538,10 @@ impl Factory {
     async fn finish_turn(&self, id: &str, turn: &Value) -> Result<()> {
         let _guard = self.mutation.lock().await;
         let mut run = self.store.lock().await.get(id)?;
-        if run.state == "CANCELLING" {
+        if !run.claim_held
+            || turn["id"].as_str() != run.turn_id.as_deref()
+            || run.state == "CANCELLING"
+        {
             return Ok(());
         }
         run.state = "VERIFYING".into();
@@ -379,7 +563,20 @@ impl Factory {
         }
         let subject = repository_subject(Path::new(&run.canonical_root))?;
         run.current_subject = subject.clone();
-        let report = turn["items"]
+        let mut complete_turn = turn.clone();
+        if complete_turn["items"]
+            .as_array()
+            .is_none_or(|items| !items.iter().any(|item| item["type"] == "agentMessage"))
+        {
+            let history=client.request("thread/items/list",json!({"threadId":run.thread_id,"turnId":run.turn_id,"limit":100,"sortDirection":"desc"})).await?;
+            let mut items = history["data"]
+                .as_array()
+                .context("native_final_items_missing")?
+                .clone();
+            items.reverse();
+            complete_turn["items"] = json!(items);
+        }
+        let report = complete_turn["items"]
             .as_array()
             .and_then(|items| {
                 items.iter().rev().find(|item| {
@@ -396,18 +593,44 @@ impl Factory {
         {
             let report = report.unwrap();
             run.state = report["state"].as_str().unwrap().into();
-            // Raw owner text is not copied to the workbench. The native thread owns its transcript.
-            run.delta = if run.state == "CONVERGED" {
-                "Owner verified every mandatory criterion for the current subject.".into()
-            } else {
-                "Owner reached a bounded stopping point; open native activity for the remaining decision.".into()
-            };
-            run.blocker = if report["blocker"].is_null() {
+            run.delta = safe_summary(
+                report["delta"]
+                    .as_str()
+                    .unwrap_or("Owner returned a result."),
+                2000,
+            );
+            run.remaining_gap = if run.state == "CONVERGED" {
                 None
             } else {
-                Some("Owner needs input. Review the native owner thread before continuing.".into())
+                Some(safe_summary(
+                    report["remaining_gap"]
+                        .as_str()
+                        .unwrap_or("Owner verification is incomplete."),
+                    2000,
+                ))
             };
+            run.blocker = report["blocker"]
+                .as_str()
+                .map(|text| safe_summary(text, 1000));
             self.store.lock().await.receipt(&run,"owner_acceptance",&format!("Owner report state {}; {} criterion receipts bound to current subject. Raw evidence retained in native thread.",run.state,report["acceptance"].as_array().map_or(0,Vec::len)))?;
+            if let Some(receipts) = report["acceptance"].as_array() {
+                for receipt in receipts {
+                    let summary = format!(
+                        "{}: {}. {}",
+                        receipt["id"].as_str().unwrap_or("criterion"),
+                        if receipt["passed"] == true {
+                            "passed"
+                        } else {
+                            "unproved"
+                        },
+                        safe_summary(receipt["evidence"].as_str().unwrap_or(""), 1000)
+                    );
+                    self.store
+                        .lock()
+                        .await
+                        .receipt(&run, "criterion_acceptance", &summary)?;
+                }
+            }
         } else {
             run.state = "BLOCKED".into();
             run.blocker=Some("Native turn ended without a valid, current-subject acceptance report. Execution is not convergence.".into());
@@ -438,8 +661,20 @@ impl Factory {
         let mut observed = Vec::new();
         for thread in &expected {
             observed.push(client.read_thread(thread).await?);
+            for item in client.thread_items(thread).await? {
+                observe_command(run, thread, &item)?;
+            }
         }
-        Ok(terminal_threads(&expected, &observed))
+        run.active_threads = observed
+            .iter()
+            .filter(|thread| {
+                thread["status"]["type"] == "active"
+                    && thread["id"].as_str() != run.thread_id.as_deref()
+            })
+            .filter_map(|thread| thread["id"].as_str().map(str::to_owned))
+            .collect();
+        self.store.lock().await.save(run)?;
+        Ok(terminal_threads(&expected, &observed) && run.owned_commands.values().all(|done| *done))
     }
     pub async fn cancel(&self, id: &str) -> Result<Value> {
         let _guard = self.mutation.lock().await;
@@ -453,13 +688,13 @@ impl Factory {
         let result = self.cancel_owned(&mut run).await;
         if result.is_err() || !result.unwrap_or(false) {
             run.state = "BLOCKED".into();
-            run.blocker=Some("Cancellation is unconfirmed. Known or unknown native survivors may still mutate; repository claim retained.".into());
+            run.blocker=Some("Cancellation is unconfirmed. Known or unknown native threads or terminal processes may still mutate; repository claim retained.".into());
             self.store.lock().await.save(&run)?;
         } else {
             run.state = "CANCELLED".into();
             run.blocker = None;
             run.delta =
-                "Owner and all known descendants were observed idle; mutation claim released."
+                "Owner and all known descendants were observed idle, with terminal command evidence; mutation claim released."
                     .into();
             self.store.lock().await.release_verified(&mut run)?;
         }
@@ -487,7 +722,13 @@ impl Factory {
     }
     async fn client_for_reconcile(&self, id: &str) -> Result<NativeClient> {
         if let Some(client) = self.clients.lock().await.get(id).cloned() {
-            return Ok(client);
+            if !client.is_closed() {
+                return Ok(client);
+            }
+            ensure!(
+                self.config.native_transport == "existing_daemon",
+                "stdio_process_lifetime_unknown_after_disconnect"
+            );
         }
         ensure!(
             self.config.native_transport == "existing_daemon",
@@ -497,9 +738,49 @@ impl Factory {
         self.clients.lock().await.insert(id.into(), client.clone());
         Ok(client)
     }
+    fn validate_current_authority(&self, run: &Run) -> Result<()> {
+        crate::store::validate_request(&self.config, &run.request)?;
+        let root = &self.config.repositories[&run.request.repository].root;
+        ensure!(
+            root.to_str() == Some(&run.canonical_root),
+            "repository_alias_was_remapped"
+        );
+        let identity = crate::store::git(
+            root,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?;
+        ensure!(
+            Path::new(&identity).canonicalize()?.to_str() == Some(&run.repository_identity),
+            "repository_identity_changed"
+        );
+        ensure!(
+            self.config.profiles[&run.request.profile]
+                .codex_profile
+                .is_none(),
+            "native_profile_override_unsupported"
+        );
+        ensure!(
+            run.configured_effort
+                .as_deref()
+                .is_none_or(|effort| effort == self.config.profiles[&run.request.profile].effort),
+            "runtime_profile_changed"
+        );
+        if let Some(expected) = &run.skill_sha256 {
+            let actual = format!(
+                "{:x}",
+                <sha2::Sha256 as sha2::Digest>::digest(std::fs::read(&self.config.skill_path)?)
+            );
+            ensure!(
+                &actual == expected,
+                "canonical_skill_changed; inspect before continuing"
+            );
+        }
+        Ok(())
+    }
     pub async fn steer(&self, id: &str, expected_turn: &str, message: &str) -> Result<Value> {
         let _guard = self.mutation.lock().await;
         let run = self.store.lock().await.get(id)?;
+        self.validate_current_authority(&run)?;
         ensure!(
             run.state == "RUNNING" && run.turn_id.as_deref() == Some(expected_turn),
             "stale_turn_or_not_running"
@@ -523,8 +804,18 @@ impl Factory {
         self.get(id).await
     }
     pub async fn resume(&self, id: &str) -> Result<Value> {
+        self.resume_with_input(id, None).await
+    }
+    pub async fn resume_with_input(&self, id: &str, message: Option<&str>) -> Result<Value> {
+        if let Some(message) = message {
+            ensure!(
+                !message.trim().is_empty() && message.len() <= 4000,
+                "invalid_operator_answer"
+            );
+        }
         let guard = self.mutation.lock().await;
         let mut run = self.store.lock().await.get(id)?;
+        self.validate_current_authority(&run)?;
         ensure!(
             [
                 "INTERRUPTED",
@@ -562,15 +853,32 @@ impl Factory {
         self.store.lock().await.save(&run)?;
         let events = client.subscribe();
         let effort = &self.config.profiles[&run.request.profile].effort;
-        let turn = client
+        let mut prompt = self.owner_prompt(&run)?;
+        if let Some(message) = message {
+            prompt.push_str(
+                "\nIn-scope operator answer; original authority and acceptance remain binding:\n",
+            );
+            prompt.push_str(message);
+        }
+        let result = client
             .start_skill_turn(
                 thread,
                 &self.config.skill_path,
-                &self.owner_prompt(&run)?,
+                &prompt,
                 effort,
                 Some(owner_output_schema()),
             )
-            .await?;
+            .await;
+        let turn = match result {
+            Ok(turn) => turn,
+            Err(_) => {
+                run.state = "BLOCKED".into();
+                run.blocker=Some("Resume outcome is uncertain. Reconcile the same owner; no inference will be replayed automatically.".into());
+                self.store.lock().await.save(&run)?;
+                self.monitor(id.into(), events).await;
+                return self.get(id).await;
+            }
+        };
         run.turn_id = Some(
             turn["turn"]["id"]
                 .as_str()
@@ -580,7 +888,7 @@ impl Factory {
         run.state = "RUNNING".into();
         run.delta = "Resumed the same owner with original authority and remaining budgets.".into();
         self.store.lock().await.save(&run)?;
-        self.monitor(id.into(), events);
+        self.monitor(id.into(), events).await;
         drop(guard);
         self.get(id).await
     }

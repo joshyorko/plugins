@@ -169,6 +169,10 @@ impl NativeClient {
         self.inner.events.subscribe()
     }
 
+    pub fn is_closed(&self) -> bool {
+        self.inner.closed.load(Ordering::Acquire)
+    }
+
     pub async fn request(&self, method: &str, params: Value) -> Result<Value> {
         ensure!(
             !method.is_empty() && method.len() <= 128,
@@ -563,7 +567,7 @@ impl NativeClient {
         validate_luna_route(&self.list_models().await?, effort)?;
         let response = self.request("thread/start", json!({
             "cwd":cwd, "model":LUNA_MODEL,
-            "config":{"model_reasoning_effort":effort, "agents.max_concurrent_threads_per_session":max_threads}
+            "config":{"model_reasoning_effort":effort, "agents.max_concurrent_threads_per_session":max_threads, "agents.default_subagent_model":LUNA_MODEL}
         })).await?;
         ensure!(
             response.get("model").and_then(Value::as_str) == Some(LUNA_MODEL),
@@ -645,6 +649,15 @@ impl NativeClient {
         .get("thread")
         .cloned()
         .context("native read omitted thread")
+    }
+
+    pub async fn thread_items(&self, thread_id: &str) -> Result<Vec<Value>> {
+        validate_id(thread_id)?;
+        self.pages(
+            "thread/items/list",
+            json!({"threadId":thread_id,"limit":100,"sortDirection":"asc"}),
+        )
+        .await
     }
 
     pub async fn active_turn_ids(&self, thread_id: &str) -> Result<Vec<String>> {

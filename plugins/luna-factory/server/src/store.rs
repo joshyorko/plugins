@@ -40,8 +40,16 @@ pub struct Run {
     pub base_head: String,
     pub current_subject: String,
     pub thread_id: Option<String>,
+    #[serde(default)]
+    pub dispatch_phase: String,
     pub turn_id: Option<String>,
     pub owned_threads: Vec<String>,
+    #[serde(default)]
+    pub active_threads: Vec<String>,
+    #[serde(default)]
+    pub owned_commands: std::collections::BTreeMap<String, bool>,
+    #[serde(default)]
+    pub command_processes: std::collections::BTreeMap<String, String>,
     pub generation: u64,
     pub repairs_used: u32,
     pub created_at: u64,
@@ -49,6 +57,10 @@ pub struct Run {
     pub deadline_at: u64,
     pub delta: String,
     pub blocker: Option<String>,
+    #[serde(default)]
+    pub remaining_gap: Option<String>,
+    #[serde(default)]
+    pub skill_sha256: Option<String>,
     pub observed_model: Option<String>,
     pub observed_effort: Option<String>,
     pub configured_model: Option<String>,
@@ -66,6 +78,12 @@ pub struct Store {
 
 pub fn git(root: &Path, args: &[&str]) -> Result<String> {
     let output = Command::new("git")
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
         .arg("-C")
         .arg(root)
         .args(args)
@@ -80,30 +98,78 @@ pub fn git(root: &Path, args: &[&str]) -> Result<String> {
 }
 pub fn repository_subject(root: &Path) -> Result<String> {
     let head = git(root, &["rev-parse", "HEAD"])?;
-    let status = git(root, &["status", "--porcelain=v1", "--untracked-files=all"])?;
-    let diff = git(root, &["diff", "HEAD", "--binary"])?;
-    let mut hash = Sha256::new();
-    hash.update(status);
-    hash.update(diff);
-    // Hash untracked file bytes without retaining or transmitting them.
+    let index = git(root, &["ls-files", "--stage", "-z"])?;
     let untracked = git(root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
-    for file in untracked.split('\0').filter(|s| !s.is_empty()) {
-        let path = root.join(file);
+    let mut hash = Sha256::new();
+    hash.update(b"luna-source-subject-v2\0");
+    hash.update(index.as_bytes());
+    let mut files = std::collections::BTreeSet::new();
+    for entry in index.split('\0').filter(|v| !v.is_empty()) {
+        let (metadata, path) = entry.split_once('\t').context("invalid_index_record")?;
+        // Nested repositories require their own approved alias and lifecycle claim.
         ensure!(
-            path.canonicalize()?.starts_with(root),
-            "untracked_symlink_escape"
+            !metadata.starts_with("160000 "),
+            "submodule_subject_requires_explicit_support"
         );
-        let metadata = std::fs::metadata(&path)?;
+        files.insert(path);
+    }
+    files.extend(untracked.split('\0').filter(|v| !v.is_empty()));
+    ensure!(files.len() <= 25000, "candidate_file_count_exceeded");
+    let mut total = 0u64;
+    for name in files {
+        let relative = Path::new(name);
         ensure!(
-            metadata.len() <= 8 * 1024 * 1024,
-            "untracked_file_too_large"
+            !relative.is_absolute()
+                && !relative
+                    .components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir)),
+            "invalid_git_path"
         );
-        hash.update(file);
-        hash.update(std::fs::read(path)?);
+        let path = root.join(relative);
+        let parent = crate::config::canonical_destination(
+            path.parent().context("candidate_parent_missing")?,
+        )?;
+        ensure!(parent.starts_with(root), "candidate_parent_symlink_escape");
+        hash.update((name.len() as u64).to_le_bytes());
+        hash.update(name.as_bytes());
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                hash.update(b"missing\0");
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        };
+        if metadata.file_type().is_symlink() {
+            hash.update(b"symlink\0");
+            hash.update(std::fs::read_link(&path)?.as_os_str().as_encoded_bytes());
+            continue;
+        }
+        ensure!(metadata.is_file(), "nonregular_candidate_file");
+        total = total
+            .checked_add(metadata.len())
+            .context("candidate_size_overflow")?;
+        ensure!(total <= 512 * 1024 * 1024, "candidate_bytes_exceeded");
+        hash.update(b"file\0");
+        hash.update(metadata.len().to_le_bytes());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            hash.update((metadata.permissions().mode() & 0o111).to_le_bytes());
+        }
+        let mut file = std::fs::File::open(path)?;
+        let mut buffer = [0u8; 65536];
+        loop {
+            let count = std::io::Read::read(&mut file, &mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            hash.update(&buffer[..count]);
+        }
     }
     Ok(format!("{head}:{:x}", hash.finalize()))
 }
-fn validate_request(config: &Config, request: &StartRequest) -> Result<()> {
+pub(crate) fn validate_request(config: &Config, request: &StartRequest) -> Result<()> {
     config.validate()?;
     ensure!(valid_alias(&request.repository), "unknown_repository");
     let repo = config
@@ -160,11 +226,19 @@ impl Store {
             .database
             .parent()
             .context("database_parent_missing")?;
+        let parent_existed = parent.exists();
         std::fs::create_dir_all(parent)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+            if parent_existed {
+                ensure!(
+                    std::fs::metadata(parent)?.permissions().mode() & 0o077 == 0,
+                    "state_directory_must_be_private"
+                );
+            } else {
+                std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+            }
         }
         let connection = Connection::open(&config.database)?;
         #[cfg(unix)]
@@ -237,8 +311,12 @@ impl Store {
             base_head: git(root, &["rev-parse", "HEAD"])?,
             current_subject: repository_subject(root)?,
             thread_id: None,
+            dispatch_phase: "admitted".into(),
             turn_id: None,
             owned_threads: vec![],
+            active_threads: vec![],
+            owned_commands: std::collections::BTreeMap::new(),
+            command_processes: std::collections::BTreeMap::new(),
             generation: 1,
             repairs_used: 0,
             created_at: timestamp,
@@ -246,6 +324,8 @@ impl Store {
             deadline_at: timestamp + request.wall_seconds,
             delta: "Run admitted. Native owner has not started.".into(),
             blocker: None,
+            remaining_gap: Some("Mandatory acceptance needs current owner verification".into()),
+            skill_sha256: None,
             observed_model: None,
             observed_effort: None,
             configured_model: None,
@@ -286,9 +366,21 @@ impl Store {
         rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
     }
     pub fn save(&mut self, run: &Run) -> Result<()> {
+        let previous = self.get(&run.id)?;
         ensure!(
-            self.get(&run.id)?.request.idempotency_key == run.request.idempotency_key,
-            "immutable_run_request"
+            serde_json::to_value(&previous.request)? == serde_json::to_value(&run.request)?
+                && previous.canonical_root == run.canonical_root
+                && previous.repository_identity == run.repository_identity
+                && previous.base_head == run.base_head
+                && previous.deadline_at == run.deadline_at,
+            "immutable_run_contract"
+        );
+        ensure!(
+            previous
+                .thread_id
+                .as_ref()
+                .is_none_or(|id| run.thread_id.as_ref() == Some(id)),
+            "immutable_owner_identity"
         );
         self.connection.execute(
             "UPDATE runs SET state=?2,payload=?3 WHERE id=?1",

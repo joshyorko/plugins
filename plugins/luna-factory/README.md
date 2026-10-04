@@ -89,3 +89,36 @@ npm run build --prefix plugins/luna-factory/ui
 Also run the [live acceptance checklist](docs/package.md#evidence-required-before-release). Record blocked and unproved checks explicitly. Protocol fixtures and local UI tests cannot prove an authenticated owner/worker run, descendant cancellation, ChatGPT entrypoint rendering, or tunnel reconnect behavior.
 
 The [canonical skill](skills/luna-factory/SKILL.md), [routing policy](skills/luna-factory/references/routing-and-evidence.md), and [skill evals](skills/luna-factory/references/evals.md) remain the semantic reference. The service enforces deterministic boundaries around that policy.
+
+## Reconnect and cancellation limits
+
+For an already running operator-owned Codex daemon, set `native_transport` to
+`existing_daemon`. Optionally set `native_socket` to its existing absolute control
+socket path. The runtime uses `codex app-server proxy`; it does not create,
+restart or configure that daemon. This lets the native execution lifetime remain
+independent of Luna Factory's HTTP service. The default `stdio` transport owns its
+app-server process and fails closed after a restart when its old process lifetime
+cannot be established.
+
+State storage must be in a dedicated private directory outside repositories.
+One service holds an exclusive file lease. Recovery restores deadlines and
+performs read-only native reconciliation, without starting a turn. Resume rejects
+revoked/remapped repositories, changed profiles/skill content and reduced limits.
+
+A successful interrupt and idle owner/worker threads do not prove a background
+terminal exited. The service retains bounded command identities and requires
+terminal command evidence before releasing a claim. Unknown processes keep the
+run blocked. The installed native protocol does not yet have a proven direct
+termination path for agent-owned background terminals. Do not substitute
+`command/exec/terminate`: its IDs belong to separate connection-scoped commands.
+There is no force-unlock endpoint. This boundary still requires live operator
+proof, even when synthetic lifecycle tests pass.
+
+Source subjects hash the Git HEAD, staged index inventory and raw tracked and
+untracked file bytes. Repository diff/textconv/clean helpers are not executed.
+Subjects reject submodules pending explicit support, more than 25,000 files and
+more than 512 MiB of candidate bytes. Those are fail-closed capability limits.
+Luna defaults are pinned in native owner/child configuration. The native protocol
+has no proved pre-spawn model allowlist; canonical policy remains responsible for
+explicit child choices and actual routing is unverified unless native telemetry
+establishes it. This is still a draft product, not a completed live acceptance.

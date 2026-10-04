@@ -1,0 +1,26 @@
+{
+  "name": "luna-factory-workbench",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "dev": "vite --host 127.0.0.1",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "1.7.5",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@openai/mcp-extensions": "0.1.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.5.2",
+    "jsdom": "26.1.0",
+    "typescript": "5.9.3",
+    "vite": "6.4.3",
+    "vitest": "4.1.11"
+  }
+}

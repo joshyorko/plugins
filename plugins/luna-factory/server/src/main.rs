@@ -128,6 +128,7 @@ async fn main() -> Result<()> {
             );
             let listen = config.listen;
             let factory = Factory::new(config)?;
+            factory.reconcile_startup().await?;
             let token = CancellationToken::new();
             let router = luna_factoryd::http::router(factory, html, token.child_token());
             let listener = tokio::net::TcpListener::bind(listen).await?;

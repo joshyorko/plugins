@@ -1,0 +1,67 @@
+// @vitest-environment jsdom
+import { describe, expect, it } from "vitest";
+import { renderWorkbench, type Editor } from "../src/view";
+import { WorkbenchController } from "../src/controller";
+import { fixtureRun, fixtureWorkbench } from "./fixtures";
+
+function render(editor: Editor = null, run = fixtureRun()) {
+  const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
+  controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [run], selected_run: run } });
+  controller.setConnected(true);
+  const root = document.createElement("div");
+  renderWorkbench(root, controller.state, editor, false);
+  return { root, controller };
+}
+describe("accessible workbench", () => {
+  it("puts change, remaining gap, and actual blocker before evidence", () => {
+    const { root } = render(null, fixtureRun({ state: "NEEDS_INPUT", blocker: "Choose whether to reduce the scope" }));
+    expect(root.textContent).toContain("Choose whether to reduce the scope");
+    const main = root.querySelector("main");
+    expect(main?.textContent?.indexOf("What changed")).toBeLessThan(main?.textContent?.indexOf("Evidence") ?? 0);
+    expect(root.querySelector('[data-action="steer"]')).not.toBeNull();
+    expect(root.textContent).not.toContain("Force");
+  });
+  it("escapes server and repository strings as text", () => {
+    const { root } = render(null, fixtureRun({ objective: '<img src=x onerror="alert(1)">' }));
+    expect(root.querySelector("img")).toBeNull();
+    expect(root.textContent).toContain("<img");
+  });
+  it("provides real labeled form controls and bounded approved options", () => {
+    const { root } = render("start");
+    expect(root.querySelector('form[data-form="start"]')).not.toBeNull();
+    for (const field of root.querySelectorAll("input,select,textarea")) expect(root.querySelector(`label[for="${field.id}"]`)).not.toBeNull();
+    expect(root.querySelector('select[name="repository"]')?.textContent).toContain("plugins");
+    expect(root.querySelector('input[name="capacity"]')?.getAttribute("max")).toBe("4");
+  });
+  it("retains typed form drafts on status refresh", () => {
+    const { root, controller } = render("steer");
+    const input = root.querySelector("textarea");
+    if (!input) throw new Error("Missing correction field");
+    input.value = "Keep the current acceptance criteria";
+    renderWorkbench(root, controller.state, "steer", false);
+    expect(root.querySelector("textarea")?.value).toBe("Keep the current acceptance criteria");
+  });
+  it("does not imply stopped descendants while cancellation is pending", () => {
+    const { root } = render(null, fixtureRun({ state: "CANCELLING", claim_held: true }));
+    expect(root.textContent).toContain("Repository claim held");
+    expect(root.querySelector('[data-action="resume"]')).toBeNull();
+  });
+  it("allows NEEDS_INPUT answers without an active turn and explains same-run continuation", () => {
+    const run = fixtureRun({ state: "NEEDS_INPUT", turn_id: null, blocker: "Choose the bounded scope" });
+    const { root } = render(null, run);
+    expect(root.querySelector('[data-action="steer"]')?.textContent).toBe("Answer the owner");
+    const form = render("steer", run).root;
+    expect(form.querySelector('button[type="submit"]')?.hasAttribute("disabled")).toBe(false);
+    expect(form.textContent).toContain("same run and owner thread");
+    expect(form.textContent).not.toContain("Sent to the current turn only");
+  });
+  it("shows no invented runs or repository access when empty", () => {
+    const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
+    controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [], capabilities: { ...fixtureWorkbench.capabilities, repositories: [] } } });
+    const root = document.createElement("div");
+    renderWorkbench(root, controller.state, null, false);
+    expect(root.textContent).toContain("No runs yet");
+    expect(root.textContent).toContain("No repositories configured");
+    expect(root.querySelector('[data-action="start"]')?.hasAttribute("disabled")).toBe(true);
+  });
+});
