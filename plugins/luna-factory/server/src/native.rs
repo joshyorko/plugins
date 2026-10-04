@@ -595,7 +595,30 @@ impl NativeClient {
         effort: &str,
         output_schema: Option<Value>,
     ) -> Result<Value> {
+        self.start_skill_turn_with_id(
+            thread_id,
+            skill_path,
+            objective,
+            effort,
+            output_schema,
+            None,
+        )
+        .await
+    }
+
+    pub async fn start_skill_turn_with_id(
+        &self,
+        thread_id: &str,
+        skill_path: &Path,
+        objective: &str,
+        effort: &str,
+        output_schema: Option<Value>,
+        dispatch_id: Option<&str>,
+    ) -> Result<Value> {
         validate_id(thread_id)?;
+        if let Some(dispatch_id) = dispatch_id {
+            validate_id(dispatch_id)?;
+        }
         let input = canonical_skill_input(skill_path, objective)?;
         validate_luna_route(&self.list_models().await?, effort)?;
         let thread = self.read_thread(thread_id).await?;
@@ -611,6 +634,9 @@ impl NativeClient {
             json!({"threadId":thread_id, "input":input, "model":LUNA_MODEL, "effort":effort});
         if let Some(schema) = output_schema {
             params["outputSchema"] = schema;
+        }
+        if let Some(dispatch_id) = dispatch_id {
+            params["clientUserMessageId"] = json!(dispatch_id);
         }
         self.request("turn/start", params).await
     }
@@ -702,6 +728,53 @@ impl NativeClient {
             .into_iter()
             .map(|entry| entry.item)
             .collect())
+    }
+
+    pub async fn find_turn(&self, thread_id: &str, turn_id: &str) -> Result<Option<Value>> {
+        validate_id(thread_id)?;
+        validate_id(turn_id)?;
+        let turns=self.pages("thread/turns/list",json!({"threadId":thread_id,"limit":100,"itemsView":"summary","sortDirection":"desc"})).await?;
+        let matching: Vec<_> = turns
+            .into_iter()
+            .filter(|turn| turn["id"].as_str() == Some(turn_id))
+            .collect();
+        ensure!(matching.len() <= 1, "native turn identity is ambiguous");
+        if let Some(turn) = matching.first() {
+            ensure!(
+                matches!(
+                    turn["status"].as_str(),
+                    Some("inProgress" | "completed" | "failed" | "interrupted")
+                ),
+                "native turn status is unknown"
+            );
+        }
+        Ok(matching.into_iter().next())
+    }
+
+    /// Correlation is evidence for locating an accepted turn, not permission to
+    /// repeat turn/start and not an assumption that the native API deduplicates.
+    pub async fn find_dispatch_turn(
+        &self,
+        thread_id: &str,
+        dispatch_id: &str,
+    ) -> Result<Option<Value>> {
+        validate_id(dispatch_id)?;
+        let mut turns = HashSet::new();
+        for entry in self.thread_item_entries(thread_id, None).await? {
+            if entry.item["type"] == "userMessage"
+                && entry.item["clientId"].as_str() == Some(dispatch_id)
+            {
+                turns.insert(entry.turn_id);
+            }
+        }
+        ensure!(
+            turns.len() <= 1,
+            "native dispatch correlation is ambiguous; do not replay"
+        );
+        match turns.into_iter().next() {
+            Some(turn) => self.find_turn(thread_id, &turn).await,
+            None => Ok(None),
+        }
     }
 
     pub async fn active_turn_ids(&self, thread_id: &str) -> Result<Vec<String>> {

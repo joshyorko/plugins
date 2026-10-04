@@ -304,16 +304,37 @@ impl Factory {
             .await
             .insert(run.id.clone(), client.clone());
         run.dispatch_phase = "turn_start_pending".into();
+        run.dispatch_id = Some(uuid::Uuid::new_v4().to_string());
         self.store.lock().await.save(run)?;
-        let turn = client
-            .start_skill_turn(
+        self.store.lock().await.receipt(
+            run,
+            "native_dispatch",
+            &format!(
+                "Generation {} dispatch {} persisted before turn/start",
+                run.generation,
+                run.dispatch_id.as_deref().unwrap()
+            ),
+        )?;
+        let result = client
+            .start_skill_turn_with_id(
                 run.thread_id.as_deref().unwrap(),
                 &self.config.skill_path,
                 &self.owner_prompt(run)?,
                 effort,
                 Some(owner_output_schema()),
+                run.dispatch_id.as_deref(),
             )
-            .await?;
+            .await;
+        let turn = match result {
+            Ok(turn) => turn,
+            Err(_) => {
+                run.state = "BLOCKED".into();
+                run.blocker=Some("Native turn acknowledgement was not confirmed. Recover its persisted dispatch before any new inference.".into());
+                self.store.lock().await.save(run)?;
+                self.monitor(run.id.clone(), events).await;
+                return Ok(());
+            }
+        };
         run.turn_id = Some(
             turn["turn"]["id"]
                 .as_str()
@@ -359,9 +380,30 @@ impl Factory {
         let runs = self.store.lock().await.list_all_claimed()?;
         for mut run in runs {
             self.watch_deadline(run.id.clone(), run.deadline_at);
+            if self.validate_current_authority(&run).is_err() {
+                self.block(
+                    &run.id,
+                    "Current operator configuration no longer authorizes continuation of this run.",
+                )
+                .await?;
+                continue;
+            }
             if self.config.native_transport == "existing_daemon" && run.thread_id.is_some() {
                 match self.client_for_reconcile(&run.id).await {
                     Ok(client) => {
+                        let _guard = self.mutation.lock().await;
+                        run = self.store.lock().await.get(&run.id)?;
+                        if !run.claim_held {
+                            continue;
+                        }
+                        match self.recover_dispatch_locked(&mut run, &client).await {
+                            Ok(true) => continue,
+                            Ok(false) => {}
+                            Err(_) => {
+                                self.block(&run.id,"Native dispatch recovery is unavailable or ambiguous. Claim retained; no inference is replayed.").await?;
+                                continue;
+                            }
+                        }
                         let events = client.subscribe();
                         match self.observe_stopped(&client,&mut run).await {
                             Ok(true)=>self.block(&run.id,"Native ownership reconciled idle. Resume the same run explicitly within its remaining limits.").await?,
@@ -438,6 +480,21 @@ impl Factory {
             run.blocker=Some("Native Codex requires an approval or answer. Open the owner thread in Codex; this app cannot grant elevation.".into());
         }
         let item = &event["params"]["item"];
+        if is_owner
+            && item["type"] == "userMessage"
+            && run.dispatch_id.is_some()
+            && item["clientId"].as_str() == run.dispatch_id.as_deref()
+        {
+            let turn = event["params"]["turnId"]
+                .as_str()
+                .context("correlated_turn_id_missing")?;
+            ensure!(
+                run.turn_id.as_deref().is_none_or(|known| known == turn),
+                "conflicting_dispatch_turn_identity"
+            );
+            run.turn_id = Some(turn.into());
+            run.dispatch_phase = "active".into();
+        }
         if let Some(thread) = thread
             && matches!(method, "item/started" | "item/completed")
         {
@@ -537,6 +594,9 @@ impl Factory {
     }
     async fn finish_turn(&self, id: &str, turn: &Value) -> Result<()> {
         let _guard = self.mutation.lock().await;
+        self.finish_turn_locked(id, turn).await
+    }
+    async fn finish_turn_locked(&self, id: &str, turn: &Value) -> Result<()> {
         let mut run = self.store.lock().await.get(id)?;
         if !run.claim_held
             || turn["id"].as_str() != run.turn_id.as_deref()
@@ -637,6 +697,7 @@ impl Factory {
             run.blocker=Some("Native turn ended without a valid, current-subject acceptance report. Execution is not convergence.".into());
         }
         run.updated_at = now();
+        run.dispatch_phase = "terminal_observed".into();
         let mut store = self.store.lock().await;
         if ["CONVERGED", "QUIESCENT"].contains(&run.state.as_str()) {
             store.release_verified(&mut run)?;
@@ -693,6 +754,7 @@ impl Factory {
             self.store.lock().await.save(&run)?;
         } else {
             run.state = "CANCELLED".into();
+            run.dispatch_phase = "terminal_observed".into();
             run.blocker = None;
             run.delta =
                 "Owner and all known descendants were observed idle, with terminal command evidence; mutation claim released."
@@ -804,6 +866,49 @@ impl Factory {
             .await?;
         self.get(id).await
     }
+    /// Reconcile a persisted dispatch using native client-message correlation.
+    /// true means this invocation recovered/blocked existing work and must not
+    /// send another turn/start. It never treats a missing row as proof of failure.
+    async fn recover_dispatch_locked(&self, run: &mut Run, client: &NativeClient) -> Result<bool> {
+        if !matches!(run.dispatch_phase.as_str(), "active" | "turn_start_pending") {
+            return Ok(false);
+        }
+        let owner = run.thread_id.as_deref().context("owner_identity_unknown")?;
+        let found = if let Some(turn) = run.turn_id.as_deref() {
+            client.find_turn(owner, turn).await?
+        } else if let Some(dispatch) = run.dispatch_id.as_deref() {
+            client.find_dispatch_turn(owner, dispatch).await?
+        } else {
+            None
+        };
+        let Some(turn) = found else {
+            run.state = "BLOCKED".into();
+            run.blocker=Some("No unique native turn was found for the persisted dispatch. Outcome remains unknown; no inference is replayed.".into());
+            self.store.lock().await.save(run)?;
+            return Ok(true);
+        };
+        run.turn_id = Some(
+            turn["id"]
+                .as_str()
+                .context("recovered_turn_id_missing")?
+                .into(),
+        );
+        run.dispatch_phase = "active".into();
+        run.updated_at = now();
+        if turn["status"] == "inProgress" {
+            run.state = "RUNNING".into();
+            run.blocker = None;
+            run.delta = "Recovered the existing native turn. No inference was started.".into();
+            self.store.lock().await.save(run)?;
+            self.monitor(run.id.clone(), client.subscribe()).await;
+        } else {
+            self.store.lock().await.save(run)?;
+            self.finish_turn_locked(&run.id, &turn).await?;
+            *run = self.store.lock().await.get(&run.id)?;
+        }
+        Ok(true)
+    }
+
     pub async fn resume(&self, id: &str) -> Result<Value> {
         self.resume_with_input(id, None).await
     }
@@ -828,6 +933,15 @@ impl Factory {
             .contains(&run.state.as_str()),
             "run_not_resumable"
         );
+        let client = self.client_for_reconcile(id).await?;
+        match self.recover_dispatch_locked(&mut run, &client).await {
+            Ok(true) => return self.get(id).await,
+            Ok(false) => {}
+            Err(_) => {
+                self.block(id,"Native dispatch recovery is unavailable or ambiguous. Claim retained; no inference is replayed.").await?;
+                return self.get(id).await;
+            }
+        }
         ensure!(now() < run.deadline_at, "time_budget_exhausted");
         ensure!(
             run.repairs_used < run.request.repair_attempts,
@@ -835,7 +949,6 @@ impl Factory {
         );
         // A released claim cannot be silently stolen from another run.
         self.store.lock().await.reclaim(&mut run)?;
-        let client = self.client_for_reconcile(id).await?;
         ensure!(
             self.observe_stopped(&client, &mut run).await?,
             "owned_execution_not_stopped"
@@ -851,7 +964,19 @@ impl Factory {
         run.current_subject = repository_subject(Path::new(&run.canonical_root))?;
         run.state = "STARTING".into();
         run.blocker = None;
+        run.dispatch_phase = "turn_start_pending".into();
+        run.dispatch_id = Some(uuid::Uuid::new_v4().to_string());
+        run.turn_id = None;
         self.store.lock().await.save(&run)?;
+        self.store.lock().await.receipt(
+            &run,
+            "native_dispatch",
+            &format!(
+                "Generation {} dispatch {} persisted before turn/start",
+                run.generation,
+                run.dispatch_id.as_deref().unwrap()
+            ),
+        )?;
         let events = client.subscribe();
         let effort = &self.config.profiles[&run.request.profile].effort;
         let mut prompt = self.owner_prompt(&run)?;
@@ -862,12 +987,13 @@ impl Factory {
             prompt.push_str(message);
         }
         let result = client
-            .start_skill_turn(
+            .start_skill_turn_with_id(
                 thread,
                 &self.config.skill_path,
                 &prompt,
                 effort,
                 Some(owner_output_schema()),
+                run.dispatch_id.as_deref(),
             )
             .await;
         let turn = match result {
@@ -886,6 +1012,7 @@ impl Factory {
                 .context("resume_turn_missing")?
                 .into(),
         );
+        run.dispatch_phase = "active".into();
         run.state = "RUNNING".into();
         run.delta = "Resumed the same owner with original authority and remaining budgets.".into();
         self.store.lock().await.save(&run)?;

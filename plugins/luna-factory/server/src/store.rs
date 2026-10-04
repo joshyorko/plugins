@@ -42,6 +42,8 @@ pub struct Run {
     pub thread_id: Option<String>,
     #[serde(default)]
     pub dispatch_phase: String,
+    #[serde(default)]
+    pub dispatch_id: Option<String>,
     pub turn_id: Option<String>,
     pub owned_threads: Vec<String>,
     #[serde(default)]
@@ -312,6 +314,7 @@ impl Store {
             current_subject: repository_subject(root)?,
             thread_id: None,
             dispatch_phase: "admitted".into(),
+            dispatch_id: None,
             turn_id: None,
             owned_threads: vec![],
             active_threads: vec![],

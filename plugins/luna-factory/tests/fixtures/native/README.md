@@ -98,3 +98,19 @@ Codex 0.159.2 `thread/items/list` returns `ThreadItemEntry` records with require
 validates and unwraps that envelope, and rejects wrong-turn data before using
 items as process-exit or acceptance evidence. The committed schema audit records
 the actual installed entry schema. Synthetic history fixtures use the same shape.
+
+## Lost acknowledgement correlation
+
+`turn/start.clientUserMessageId` is persisted before dispatch. Native user-message
+history exposes it as `ThreadItem.userMessage.clientId`, inside the turn/item
+history envelope. This is a correlation key, not a claim that `turn/start` is
+idempotent. Recovery finds a unique accepted turn and reads its status/result
+without reissuing `turn/start`. Missing, ambiguous or unavailable history keeps
+the claim blocked. The runtime does not infer failed execution from a timeout.
+
+The official current app-server turn-start test verifies `clientUserMessageId`
+becomes `userMessage.clientId`:
+https://github.com/openai/codex/blob/main/codex-rs/app-server/tests/suite/v2/turn_start.rs
+The installed 0.159.2 schemas also expose both fields. Synthetic fixtures test
+completed-but-unacknowledged dispatch, restart, missing correlation and ambiguity;
+these do not establish native live execution proof.

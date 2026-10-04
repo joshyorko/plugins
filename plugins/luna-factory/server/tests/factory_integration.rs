@@ -228,3 +228,109 @@ async fn operator_answer_resumes_same_owner_without_expanding_authority() {
     );
     factory.cancel(id).await.unwrap();
 }
+
+fn completed_report(dir: &tempfile::TempDir, factory: &Factory) {
+    let subject =
+        luna_factoryd::store::repository_subject(&factory.config.repositories["fixture"].root)
+            .unwrap();
+    std::fs::write(dir.path().join("report.json"),json!({"state":"CONVERGED","subject":subject,"acceptance":[{"id":"A1","passed":true,"evidence":"Synthetic completed native turn"}],"delta":"Recovered the completed owner result","remaining_gap":"","blocker":null}).to_string()).unwrap();
+}
+
+#[tokio::test]
+async fn lost_ack_completed_turn_is_recovered_without_replaying_inference() {
+    let (dir, factory, request) = setup();
+    completed_report(&dir, &factory);
+    std::fs::write(dir.path().join("mode"), "lost_ack_completed").unwrap();
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    assert_eq!(run["state"], "BLOCKED");
+    let recovered = factory.resume(id).await.unwrap();
+    assert_eq!(recovered["state"], "CONVERGED");
+    assert_eq!(recovered["turn_id"], "turn-1");
+    assert_eq!(recovered["repairs_used"], 0);
+    assert_eq!(recovered["deadline_at"], run["deadline_at"]);
+    assert_eq!(
+        calls(&dir)
+            .iter()
+            .filter(|r| r["method"] == "turn/start")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn missing_dispatch_correlation_keeps_claim_without_a_new_turn() {
+    let (dir, base, request) = setup();
+    let mut config = (*base.config).clone();
+    config.database = dir.path().join("recovery-state/runs.sqlite");
+    config.native_transport = "existing_daemon".into();
+    let mut store = luna_factoryd::store::Store::open(&config).unwrap();
+    let mut run = store.admit(&config, &request).unwrap().run;
+    run.thread_id = Some("owner".into());
+    run.dispatch_phase = "turn_start_pending".into();
+    run.state = "BLOCKED".into();
+    let mut value = serde_json::to_value(&run).unwrap();
+    value["dispatch_id"] = json!("missing-dispatch");
+    run = serde_json::from_value(value).unwrap();
+    store.save(&run).unwrap();
+    drop(store);
+    let factory = Factory::new(config).unwrap();
+    let result = factory.resume(&run.id).await.unwrap();
+    assert_eq!(result["state"], "BLOCKED");
+    assert_eq!(result["claim_held"], true);
+    assert!(!calls(&dir).iter().any(|r| r["method"] == "turn/start"));
+}
+
+#[tokio::test]
+async fn restart_recovers_a_completed_dispatch_without_starting_a_thread_or_turn() {
+    let (dir, base, request) = setup();
+    completed_report(&dir, &base);
+    let mut config = (*base.config).clone();
+    config.database = dir.path().join("restart-state/runs.sqlite");
+    config.native_transport = "existing_daemon".into();
+    let mut store = luna_factoryd::store::Store::open(&config).unwrap();
+    let mut run = store.admit(&config, &request).unwrap().run;
+    run.thread_id = Some("owner".into());
+    run.dispatch_id = Some("persisted-dispatch".into());
+    run.dispatch_phase = "turn_start_pending".into();
+    store.save(&run).unwrap();
+    drop(store);
+    std::fs::write(dir.path().join("mode"), "lost_ack_completed").unwrap();
+    std::fs::write(
+        dir.path().join("native_history.json"),
+        json!([{"id":"turn-1","status":"completed","client_id":"persisted-dispatch"}]).to_string(),
+    )
+    .unwrap();
+    let factory = Factory::new(config).unwrap();
+    factory.reconcile_startup().await.unwrap();
+    let recovered = factory.get(&run.id).await.unwrap();
+    assert_eq!(recovered["state"], "CONVERGED");
+    assert_eq!(recovered["repairs_used"], 0);
+    assert_eq!(recovered["deadline_at"], run.deadline_at);
+    assert!(
+        !calls(&dir)
+            .iter()
+            .any(|r| r["method"] == "thread/start" || r["method"] == "turn/start")
+    );
+}
+
+#[tokio::test]
+async fn ambiguous_recovery_blocks_one_run_without_preventing_service_startup() {
+    let (dir, base, request) = setup();
+    let mut config = (*base.config).clone();
+    config.database = dir.path().join("ambiguous-state/runs.sqlite");
+    config.native_transport = "existing_daemon".into();
+    let mut store = luna_factoryd::store::Store::open(&config).unwrap();
+    let mut run = store.admit(&config, &request).unwrap().run;
+    run.thread_id = Some("owner".into());
+    run.dispatch_id = Some("duplicate-client-id".into());
+    run.dispatch_phase = "turn_start_pending".into();
+    store.save(&run).unwrap();
+    drop(store);
+    std::fs::write(dir.path().join("native_history.json"),json!([{"id":"turn-1","status":"interrupted","client_id":"duplicate-client-id"},{"id":"turn-2","status":"interrupted","client_id":"duplicate-client-id"}]).to_string()).unwrap();
+    let factory = Factory::new(config).unwrap();
+    assert!(factory.reconcile_startup().await.is_ok());
+    assert_eq!(factory.get(&run.id).await.unwrap()["state"], "BLOCKED");
+    assert!(factory.resume(&run.id).await.is_ok());
+    assert!(!calls(&dir).iter().any(|r| r["method"] == "turn/start"));
+}

@@ -64,3 +64,12 @@ hashes that include index content without executing repository helpers, and
 background-terminal evidence before claim release. All native lifecycle fixture
 results remain labeled synthetic. No claim of live cancellation, observed child
 routing or authenticated skill execution follows from those tests.
+
+## Lost acknowledgement recovery
+
+Native turn dispatch now has a persisted client-message correlation ID. A lost
+response leaves that dispatch pending rather than authorizing another inference
+call. Resume/restart can recover the same native turn and subject-bound owner
+result. A recovered completion spends no additional repair budget; missing or
+ambiguous correlation keeps the run blocked and does not prevent other service
+status reads. Native history is decoded using the installed turn/item envelope.

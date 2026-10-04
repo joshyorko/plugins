@@ -260,3 +260,26 @@ async fn native_history_from_another_turn_cannot_be_acceptance_evidence() {
     );
     c.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn dispatch_correlation_uses_client_id_not_item_id_or_latest_turn() {
+    let c = client().await;
+    let recovered = c
+        .find_dispatch_turn("correlation-owner", "dispatch-one")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered["id"], "turn-one");
+    assert!(
+        c.find_dispatch_turn("correlation-owner", "unknown-dispatch")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        c.find_dispatch_turn("ambiguous-correlation", "dispatch-one")
+            .await
+            .is_err()
+    );
+    c.shutdown().await.unwrap();
+}

@@ -73,6 +73,10 @@ for line in sys.stdin:
     if method == "thread/items/list":
         item={"id":"cmd-1","type":"commandExecution","processId":"owned-pty","status":"completed","exitCode":None}
         result={"data":[item] if message["params"]["threadId"]=="malformed-history" else [{"turnId":"turn-one","item":item}]}
+    if method == "thread/items/list" and message["params"]["threadId"] in ("correlation-owner","ambiguous-correlation"):
+        result={"data":[{"turnId":"turn-one","item":{"id":"server-item-7","type":"userMessage","clientId":"dispatch-one","content":[]}}]}
+        if message["params"]["threadId"]=="ambiguous-correlation":
+            result["data"].append({"turnId":"turn-two","item":{"id":"server-item-8","type":"userMessage","clientId":"dispatch-one","content":[]}})
     if method == "thread/turns/list":
         result = {"data": [{"id": "turn-one", "status": "inProgress"}, {"id": "old-turn", "status": "completed"}]}
     emit({"id": request_id, "result": result})
