@@ -61,4 +61,6 @@ for line in sys.stdin:
         result = {"data": [{"id": f"turn-{turn_number}", "status": "inProgress"}] if active.get(params["threadId"]) else []}
     elif method == "turn/interrupt":
         active[params["threadId"]] = False
+    if method == "thread/items/list":
+        result["data"]=[{"turnId":f"turn-{turn_number}","item":item} for item in result["data"]]
     emit({"id": message["id"], "result": result})

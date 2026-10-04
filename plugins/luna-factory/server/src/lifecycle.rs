@@ -568,13 +568,14 @@ impl Factory {
             .as_array()
             .is_none_or(|items| !items.iter().any(|item| item["type"] == "agentMessage"))
         {
-            let history=client.request("thread/items/list",json!({"threadId":run.thread_id,"turnId":run.turn_id,"limit":100,"sortDirection":"desc"})).await?;
-            let mut items = history["data"]
-                .as_array()
-                .context("native_final_items_missing")?
-                .clone();
-            items.reverse();
-            complete_turn["items"] = json!(items);
+            complete_turn["items"] = json!(
+                client
+                    .turn_items(
+                        run.thread_id.as_deref().context("owner_identity_unknown")?,
+                        run.turn_id.as_deref().context("owner_turn_unknown")?
+                    )
+                    .await?
+            );
         }
         let report = complete_turn["items"]
             .as_array()

@@ -233,3 +233,30 @@ async fn cancelling_partial_write_invalidates_transport() {
     );
     c.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn native_history_envelopes_are_unwrapped_and_turn_fenced() {
+    let c = client().await;
+    let items = c.thread_items("history-owner").await.unwrap();
+    assert_eq!(items[0]["type"], "commandExecution");
+    assert_eq!(items[0]["processId"], "owned-pty");
+    c.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn malformed_native_history_is_never_silently_accepted_as_empty_evidence() {
+    let c = client().await;
+    assert!(c.thread_items("malformed-history").await.is_err());
+    c.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn native_history_from_another_turn_cannot_be_acceptance_evidence() {
+    let c = client().await;
+    assert!(
+        c.turn_items("history-owner", "a-different-turn")
+            .await
+            .is_err()
+    );
+    c.shutdown().await.unwrap();
+}

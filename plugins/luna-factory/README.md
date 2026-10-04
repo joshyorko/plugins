@@ -20,6 +20,20 @@ cargo build --locked --manifest-path plugins/luna-factory/server/Cargo.toml
 
 The executable is `plugins/luna-factory/server/target/debug/luna-factoryd`; the UI build produces `plugins/luna-factory/ui/dist/index.html`. A release build can use `--release` and the corresponding `target/release/` path. Use the checked-in UI and Rust lockfiles for repeatable dependency resolution.
 
+## Stage one installable package
+
+Use the [local package and service guide](docs/local-service.md) to stage the built
+runtime, self-contained UI, canonical skill and manifests together. The staging
+helper verifies versions, input freshness and checksums. It does not install or
+activate a service, register an app, or copy operator configuration/credentials.
+
+```bash
+python3 plugins/luna-factory/scripts/package_runtime.py \
+  --binary plugins/luna-factory/server/target/release/luna-factoryd \
+  --ui plugins/luna-factory/ui/dist/index.html \
+  --output /absolute/path/to/new/luna-factory-0.2.0
+```
+
 ## Configure an operator instance
 
 Create a private JSON file outside every target repository. Replace the example absolute paths with real paths on the operator machine:

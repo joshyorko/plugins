@@ -24,6 +24,13 @@ use tokio::{
     time::timeout,
 };
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeHistoryItem {
+    pub turn_id: String,
+    pub item: Value,
+}
+
 pub const LUNA_MODEL: &str = "gpt-6-luna";
 const MAX_PENDING: usize = 128;
 const MAX_PAGES: usize = 100;
@@ -651,13 +658,50 @@ impl NativeClient {
         .context("native read omitted thread")
     }
 
-    pub async fn thread_items(&self, thread_id: &str) -> Result<Vec<Value>> {
+    pub async fn thread_item_entries(
+        &self,
+        thread_id: &str,
+        turn_id: Option<&str>,
+    ) -> Result<Vec<NativeHistoryItem>> {
         validate_id(thread_id)?;
-        self.pages(
-            "thread/items/list",
-            json!({"threadId":thread_id,"limit":100,"sortDirection":"asc"}),
-        )
-        .await
+        let mut params = json!({"threadId":thread_id,"limit":100,"sortDirection":"asc"});
+        if let Some(turn_id) = turn_id {
+            validate_id(turn_id)?;
+            params["turnId"] = json!(turn_id);
+        }
+        let rows = self.pages("thread/items/list", params).await?;
+        rows.into_iter()
+            .map(|row| {
+                let entry: NativeHistoryItem = serde_json::from_value(row)
+                    .context("native history omitted the required turnId/item envelope")?;
+                validate_id(&entry.turn_id)?;
+                ensure!(
+                    turn_id.is_none_or(|expected| entry.turn_id == expected),
+                    "native history returned an item from another turn"
+                );
+                ensure!(
+                    entry.item.is_object() && entry.item["type"].as_str().is_some(),
+                    "native history item has no type"
+                );
+                Ok(entry)
+            })
+            .collect()
+    }
+    pub async fn thread_items(&self, thread_id: &str) -> Result<Vec<Value>> {
+        Ok(self
+            .thread_item_entries(thread_id, None)
+            .await?
+            .into_iter()
+            .map(|entry| entry.item)
+            .collect())
+    }
+    pub async fn turn_items(&self, thread_id: &str, turn_id: &str) -> Result<Vec<Value>> {
+        Ok(self
+            .thread_item_entries(thread_id, Some(turn_id))
+            .await?
+            .into_iter()
+            .map(|entry| entry.item)
+            .collect())
     }
 
     pub async fn active_turn_ids(&self, thread_id: &str) -> Result<Vec<String>> {

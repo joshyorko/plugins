@@ -22,7 +22,7 @@ TIMEOUT = 20
 MODEL = "gpt-6-luna"
 EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
 METHODS = ("initialize", "model/list", "skills/list", "thread/start", "thread/resume",
-           "thread/read", "thread/list", "thread/loaded/list", "thread/turns/list",
+           "thread/read", "thread/list", "thread/loaded/list", "thread/turns/list", "thread/items/list",
            "turn/start", "turn/steer", "turn/interrupt")
 SCHEMAS = ("v1/InitializeParams", "v2/ModelListParams", "v2/ModelListResponse",
            "v2/SkillsListParams", "v2/ThreadStartParams", "v2/ThreadStartResponse",
@@ -30,7 +30,7 @@ SCHEMAS = ("v1/InitializeParams", "v2/ModelListParams", "v2/ModelListResponse",
            "v2/TurnInterruptParams", "v2/ThreadReadParams", "v2/ThreadListParams",
            "v2/ThreadLoadedListResponse", "v2/ThreadTurnsListParams",
            "v2/TurnCompletedNotification", "v2/ItemCompletedNotification",
-           "v2/ThreadStatusChangedNotification")
+           "v2/ThreadStatusChangedNotification", "v2/ThreadItemsListResponse")
 
 
 def catalog_projection(catalog: dict) -> dict:
@@ -67,7 +67,9 @@ def schema_evidence(directory: Path) -> dict:
     completed = json.loads((directory / "v2/TurnCompletedNotification.json").read_text())
     event_items = [item for item in completed["definitions"]["ThreadItem"]["oneOf"]
                    if item.get("title") in {"AgentMessageThreadItem", "CollabAgentToolCallThreadItem"}]
-    return {"native_event_item_schemas": event_items,
+    history=json.loads((directory / "v2/ThreadItemsListResponse.json").read_text())
+    return {"native_history_item_entry_schema":history["definitions"]["ThreadItemEntry"],
+            "native_event_item_schemas": event_items,
             "message_phase_schema": completed["definitions"]["MessagePhase"],
             "methods": {method: method in available for method in METHODS},
             "schemas": schemas, "native_skill_input_schema": skills[0] if skills else None}

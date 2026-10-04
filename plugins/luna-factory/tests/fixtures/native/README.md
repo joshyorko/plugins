@@ -90,3 +90,11 @@ LUNA_FACTORY_LIVE_AUDIT=1 LUNA_FACTORY_CODEX_BIN=/path/to/codex \
 Server-originated approval requests pass through the bounded internal event
 channel. They are never automatically approved. Raw native events/results are
 not safe public tool/UI payloads; the control plane must select and redact them.
+
+## History envelope correction
+
+Codex 0.159.2 `thread/items/list` returns `ThreadItemEntry` records with required
+`turnId` and `item` fields. They are not raw `ThreadItem` values. The adapter
+validates and unwraps that envelope, and rejects wrong-turn data before using
+items as process-exit or acceptance evidence. The committed schema audit records
+the actual installed entry schema. Synthetic history fixtures use the same shape.

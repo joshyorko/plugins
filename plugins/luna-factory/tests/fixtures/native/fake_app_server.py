@@ -70,6 +70,9 @@ for line in sys.stdin:
         result = {"data": [{"id": "persisted-child", "parentThreadId": "owner"}]}
     if method == "thread/loaded/list":
         result = {"data": ["owner", "ephemeral-child"]}
+    if method == "thread/items/list":
+        item={"id":"cmd-1","type":"commandExecution","processId":"owned-pty","status":"completed","exitCode":None}
+        result={"data":[item] if message["params"]["threadId"]=="malformed-history" else [{"turnId":"turn-one","item":item}]}
     if method == "thread/turns/list":
         result = {"data": [{"id": "turn-one", "status": "inProgress"}, {"id": "old-turn", "status": "completed"}]}
     emit({"id": request_id, "result": result})
