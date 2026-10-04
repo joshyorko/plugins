@@ -36,8 +36,14 @@ def build_codex_marketplace(catalog: dict) -> dict:
     plugins = []
     for plugin in catalog["plugins"]:
         plugin_root = ROOT / "plugins" / plugin["name"]
-        codex_manifest = load_json(plugin_root / ".codex-plugin" / "plugin.json")
-        interface = codex_manifest.get("interface", {})
+        portable_manifest = load_json(plugin_root / "plugin.json")
+        openai_extension = portable_manifest.get("extensions", {}).get("com.openai")
+        if openai_extension is not None:
+            # The portable extension replaces the compatibility overlay as a whole.
+            interface = openai_extension.get("interface", {})
+        else:
+            codex_manifest = load_json(plugin_root / ".codex-plugin" / "plugin.json")
+            interface = codex_manifest.get("interface", {})
         plugins.append(
             {
                 "name": plugin["name"],

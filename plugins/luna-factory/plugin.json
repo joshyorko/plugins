@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "luna-factory",
-  "version": "0.1.0",
-  "description": "Luna-first orchestration for economical delegation, bounded escalation, and evidence-backed completion.",
+  "version": "0.2.0",
+  "description": "Luna-first orchestration with a local Rust control plane, durable runs, and an MCP Apps workbench.",
   "author": {
     "name": "Josh Yorko",
     "email": "joshua.yorko@gmail.com",
@@ -17,6 +17,33 @@
     "multi-agent",
     "orchestration",
     "delegation",
-    "verification"
-  ]
+    "verification",
+    "mcp",
+    "mcp-apps",
+    "rust"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Luna Factory",
+        "shortDescription": "Luna runs and control",
+        "longDescription": "One Luna Factory plugin combines the canonical Luna-first orchestration skill, a local Rust MCP runtime, and an MCP Apps workbench. Start bounded runs in approved repositories, inspect durable progress and evidence, and steer, stop, or resume the native Codex owner. Direct skill invocation remains available; using the runtime requires an explicit request. Local operator configuration and supported Codex capabilities are required. ChatGPT connectivity requires the official Secure MCP Tunnel and account-specific setup.",
+        "developerName": "Josh Yorko",
+        "category": "Developer Tools",
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
+        "websiteURL": "https://github.com/joshyorko/plugins",
+        "privacyPolicyURL": "https://github.com/joshyorko/plugins",
+        "termsOfServiceURL": "https://github.com/joshyorko/plugins",
+        "defaultPrompt": [
+          "Use $luna-factory to own this objective and delegate economical READY work.",
+          "Use the Luna Factory runtime to start a bounded run in an approved repository.",
+          "Open Luna Factory and show my active runs and any decision that needs me."
+        ],
+        "brandColor": "#7C3AED"
+      }
+    }
+  }
 }

@@ -97,7 +97,7 @@
     },
     {
       "name": "luna-factory",
-      "description": "Luna-first orchestration for economical delegation, bounded escalation, and evidence-backed completion.",
+      "description": "Luna-first orchestration with a local Rust control plane, durable runs, and an MCP Apps workbench.",
       "tags": [
         "codex",
         "luna",
@@ -105,12 +105,15 @@
         "orchestration",
         "delegation",
         "verification",
-        "developer-tools"
+        "developer-tools",
+        "mcp",
+        "mcp-apps",
+        "rust"
       ],
       "interface": {
         "displayName": "Luna Factory",
-        "shortDescription": "Luna-first, evidence-driven orchestration.",
-        "longDescription": "A native Codex orchestration workflow that keeps the current agent responsible for the outcome, delegates only economical READY work to Luna workers, verifies execution and acceptance separately, and reserves Terra or Sol for explicit, bounded exceptions.",
+        "shortDescription": "Luna runs and control",
+        "longDescription": "One Luna Factory plugin combines the canonical Luna-first orchestration skill, a local Rust MCP runtime, and an MCP Apps workbench. Start bounded runs in approved repositories, inspect durable progress and evidence, and steer, stop, or resume the native Codex owner. Direct skill invocation remains available; using the runtime requires an explicit request. Local operator configuration and supported Codex capabilities are required. ChatGPT connectivity requires the official Secure MCP Tunnel and account-specific setup.",
         "developerName": "Josh Yorko",
         "category": "Developer Tools",
         "capabilities": [
@@ -121,7 +124,9 @@
         "privacyPolicyURL": "https://github.com/joshyorko/plugins",
         "termsOfServiceURL": "https://github.com/joshyorko/plugins",
         "defaultPrompt": [
-          "Use $luna-factory to own this objective and delegate economical READY work."
+          "Use $luna-factory to own this objective and delegate economical READY work.",
+          "Use the Luna Factory runtime to start a bounded run in an approved repository.",
+          "Open Luna Factory and show my active runs and any decision that needs me."
         ],
         "brandColor": "#7C3AED"
       },

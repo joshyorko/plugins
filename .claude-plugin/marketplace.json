@@ -44,7 +44,7 @@
     {
       "name": "luna-factory",
       "source": "./plugins/luna-factory",
-      "description": "Luna-first orchestration for economical delegation, bounded escalation, and evidence-backed completion.",
+      "description": "Luna-first orchestration with a local Rust control plane, durable runs, and an MCP Apps workbench.",
       "category": "development",
       "tags": [
         "codex",
@@ -53,7 +53,10 @@
         "orchestration",
         "delegation",
         "verification",
-        "developer-tools"
+        "developer-tools",
+        "mcp",
+        "mcp-apps",
+        "rust"
       ]
     },
     {
