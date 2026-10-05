@@ -14,7 +14,7 @@ function render(editor: Editor = null, run = fixtureRun()) {
 }
 describe("accessible workbench", () => {
   it("puts change, remaining gap, and actual blocker before evidence", () => {
-    const { root } = render(null, fixtureRun({ state: "NEEDS_INPUT", blocker: "Choose whether to reduce the scope" }));
+    const { root } = render(null, fixtureRun({ state: "NEEDS_INPUT", blocker: "Choose whether to reduce the scope", pending_decision: { id: "decision-1", question: "Choose whether to reduce the scope" } }));
     expect(root.textContent).toContain("Choose whether to reduce the scope");
     const main = root.querySelector("main");
     expect(main?.textContent?.indexOf("What changed")).toBeLessThan(main?.textContent?.indexOf("Evidence") ?? 0);
@@ -41,13 +41,23 @@ describe("accessible workbench", () => {
     renderWorkbench(root, controller.state, "steer", false);
     expect(root.querySelector("textarea")?.value).toBe("Keep the current acceptance criteria");
   });
+  it("does not carry an old answer into a replacement decision", () => {
+    const run = fixtureRun({ state: "NEEDS_INPUT", pending_decision: { id: "decision-1", question: "Use option A?" } });
+    const { root, controller } = render("steer", run);
+    const input = root.querySelector("textarea");
+    if (!input) throw new Error("Missing answer field");
+    input.value = "Yes, option A";
+    controller.state.runs = [fixtureRun({ state: "NEEDS_INPUT", pending_decision: { id: "decision-2", question: "Delete the optional file?" } })];
+    renderWorkbench(root, controller.state, "steer", false);
+    expect(root.querySelector("textarea")?.value).toBe("");
+  });
   it("does not imply stopped descendants while cancellation is pending", () => {
     const { root } = render(null, fixtureRun({ state: "CANCELLING", claim_held: true }));
     expect(root.textContent).toContain("Repository claim held");
     expect(root.querySelector('[data-action="resume"]')).toBeNull();
   });
   it("allows NEEDS_INPUT answers without an active turn and explains same-run continuation", () => {
-    const run = fixtureRun({ state: "NEEDS_INPUT", turn_id: null, blocker: "Choose the bounded scope" });
+    const run = fixtureRun({ state: "NEEDS_INPUT", turn_id: null, blocker: "Choose the bounded scope", pending_decision: { id: "decision-1", question: "Choose the bounded scope" } });
     const { root } = render(null, run);
     expect(root.querySelector('[data-action="steer"]')?.textContent).toBe("Answer the owner");
     const form = render("steer", run).root;

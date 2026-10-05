@@ -13,6 +13,7 @@ export const runSchema = z.object({
   active_workers: z.number().int().nonnegative().max(64), state: z.enum(states),
   current_subject: text, owner_thread: nullableText, turn_id: nullableText,
   delta: text, remaining_gap: nullableText, blocker: nullableText,
+  pending_decision: z.object({ id: z.string().min(1).max(128), question: text }).nullish(),
   deadline_at: timestamp, claim_held: z.boolean(),
   updated_at: timestamp.optional(), generation: z.number().int().nonnegative().optional(),
   route: z.object({

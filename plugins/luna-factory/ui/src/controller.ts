@@ -97,9 +97,10 @@ export class WorkbenchController {
     const message = input.trim();
     if (!run) throw new Error("Select a run before answering the owner");
     if (!message || message.length > 4000) throw new Error("Enter an answer or correction of at most 4000 characters");
-    if (run.state === "NEEDS_INPUT") {
-      return this.mutate("resume_factory_run", { run_id: run.id, message });
+    if (run.pending_decision) {
+      return this.mutate("resume_factory_run", { run_id: run.id, message, expected_decision_id: run.pending_decision.id });
     }
+    if (run.state === "NEEDS_INPUT") throw new Error("This approval or input must be handled in native Codex. The workbench cannot approve it.");
     if (!["RUNNING", "VERIFYING"].includes(run.state) || !run.turn_id) throw new Error("No active owner turn. Refresh this run before steering.");
     return this.mutate("steer_factory_run", { run_id: run.id, expected_turn_id: run.turn_id, message });
   }

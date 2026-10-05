@@ -151,3 +151,13 @@ work through the normal verified-cancellation path. Child evidence never
 overwrites the owner's route. Missing notifications do not prove a matching
 route, and effective effort, downstream provider and billing remain unknown.
 Provider configuration changes on resume are rejected before another turn.
+
+Completed owner decisions have a durable `pending_decision` with an `id` and
+bounded question. Send that ID as `expected_decision_id` with `message` to
+`resume_factory_run`. An answer continues the same owner without spending repair
+budget. Identical ID/answer retries return the current run without another
+dispatch, including after restart; changing an already accepted answer conflicts.
+The UI binds its answer form to that decision and clears an old draft when a new
+decision appears. Native security approvals remain in Codex. Connection loss
+does not erase a completed decision, and replayed child-failure events spend the
+repair budget only once per native thread/turn.

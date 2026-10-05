@@ -49,6 +49,7 @@ struct List {
 struct Resume {
     run_id: String,
     message: Option<String>,
+    expected_decision_id: Option<String>,
 }
 fn default_limit() -> u32 {
     20
@@ -94,7 +95,11 @@ impl McpServer {
             "resume_factory_run" => {
                 let params: Resume = parse(args)?;
                 self.factory
-                    .resume_with_input(&params.run_id, params.message.as_deref())
+                    .resume_with_decision(
+                        &params.run_id,
+                        params.message.as_deref(),
+                        params.expected_decision_id.as_deref(),
+                    )
                     .await
             }
             "read_factory_settings" => {

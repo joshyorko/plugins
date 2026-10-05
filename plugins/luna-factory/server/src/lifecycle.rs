@@ -1,7 +1,7 @@
 use crate::{
     config::Config,
     native::{NativeClient, NativeTerminal, configured_route, observed_reroute, thread_is_idle},
-    store::{Run, StartRequest, Store, now, repository_subject},
+    store::{PendingDecision, Run, StartRequest, Store, now, repository_subject},
 };
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
@@ -25,6 +25,7 @@ pub fn public_run(run: &Run) -> Value {
         "state":run.state,"current_subject":run.current_subject,"owner_thread":run.thread_id,"turn_id":run.turn_id,
         "delta":run.delta,"remaining_gap":run.remaining_gap,"skill_sha256":run.skill_sha256,
         "blocker":run.blocker,"deadline_at":run.deadline_at,"claim_held":run.claim_held,
+        "pending_decision":run.pending_decision,
         "repairs_used":run.repairs_used,"repair_limit":run.request.repair_attempts,"generation":run.generation,"updated_at":run.updated_at,
         "route":{"requested_model":"gpt-6-luna","requested_effort":run.requested_effort,
             "configured_model":run.configured_model,"configured_effort":run.configured_effort,
@@ -461,6 +462,11 @@ impl Factory {
                         }
                         let events = client.subscribe();
                         match self.observe_stopped(&client,&mut run).await {
+                            Ok(true) if run.pending_decision.is_some()=>{
+                                run.state="NEEDS_INPUT".into();
+                                run.blocker=run.pending_decision.as_ref().map(|decision|decision.question.clone());
+                                self.store.lock().await.save(&run)?;
+                            },
                             Ok(true)=>self.block(&run.id,"Native ownership reconciled idle. Resume the same run explicitly within its remaining limits.").await?,
                             Ok(false)=>{run.state="RUNNING".into();run.blocker=None;run.delta="Reconnected to existing native execution; no inference was started.".into();self.store.lock().await.save(&run)?;self.monitor(run.id.clone(),events).await;},
                             Err(_)=>self.block(&run.id,"Native ownership could not be reconciled. Repository claim remains held.").await?,
@@ -518,6 +524,15 @@ impl Factory {
             return self.observe_routing_mismatch(id, &event["params"]).await;
         }
         if method == "luna_factory/transportClosed" {
+            let mut store = self.store.lock().await;
+            let mut run = store.get(id)?;
+            if run.pending_decision.is_some() && run.dispatch_phase == "terminal_observed" {
+                run.delta = "Native connection closed. The completed decision is preserved; ownership will be reconciled before its answer starts work.".into();
+                run.updated_at = now();
+                store.save(&run)?;
+                return Ok(true);
+            }
+            drop(store);
             self.block(
                 id,
                 "Native connection closed. Ownership is uncertain; no automatic replay.",
@@ -628,7 +643,26 @@ impl Factory {
         }
         if method == "turn/completed" && !is_owner && event["params"]["turn"]["status"] == "failed"
         {
-            run.repairs_used = run.repairs_used.saturating_add(1);
+            let turn = event["params"]["turn"]["id"]
+                .as_str()
+                .context("native_failure_identity_missing")?;
+            ensure!(
+                !turn.is_empty() && turn.len() <= 256 && !turn.chars().any(char::is_control),
+                "invalid_native_failure_identity"
+            );
+            let failure = (
+                thread
+                    .context("native_failure_identity_missing")?
+                    .to_owned(),
+                turn.to_owned(),
+            );
+            ensure!(
+                run.counted_failures.len() < 1000 || run.counted_failures.contains(&failure),
+                "native_failure_observation_bound_reached"
+            );
+            if run.counted_failures.insert(failure) {
+                run.repairs_used = run.repairs_used.saturating_add(1);
+            }
             if run.repairs_used > run.request.repair_attempts {
                 run.state = "CANCELLING".into();
                 run.blocker = Some("Observed native failure repair budget exhausted.".into());
@@ -779,6 +813,17 @@ impl Factory {
             run.blocker = report["blocker"]
                 .as_str()
                 .map(|text| safe_summary(text, 1000));
+            run.pending_decision = if run.state == "NEEDS_INPUT" {
+                Some(PendingDecision {
+                    id: format!("{}-{}", run.id, run.generation),
+                    question: run
+                        .blocker
+                        .clone()
+                        .unwrap_or_else(|| "The owner needs an in-scope answer.".into()),
+                })
+            } else {
+                None
+            };
             self.store.lock().await.receipt(&run,"owner_acceptance",&format!("Owner report state {}; {} criterion receipts bound to current subject. Raw evidence retained in native thread.",run.state,report["acceptance"].as_array().map_or(0,Vec::len)))?;
             if let Some(receipts) = report["acceptance"].as_array() {
                 for receipt in receipts {
@@ -859,6 +904,7 @@ impl Factory {
             return self.get(id).await;
         }
         run.state = "CANCELLING".into();
+        run.pending_decision = None;
         run.delta="Stop requested. Repository ownership remains held until every owned execution is observed stopped.".into();
         self.store.lock().await.save(&run)?;
         let result = self.cancel_owned(&mut run).await;
@@ -1070,6 +1116,14 @@ impl Factory {
         self.resume_with_input(id, None).await
     }
     pub async fn resume_with_input(&self, id: &str, message: Option<&str>) -> Result<Value> {
+        self.resume_with_decision(id, message, None).await
+    }
+    pub async fn resume_with_decision(
+        &self,
+        id: &str,
+        message: Option<&str>,
+        expected_decision_id: Option<&str>,
+    ) -> Result<Value> {
         if let Some(message) = message {
             ensure!(
                 !message.trim().is_empty() && message.len() <= 4000,
@@ -1079,6 +1133,31 @@ impl Factory {
         let guard = self.mutation.lock().await;
         let mut run = self.store.lock().await.get(id)?;
         self.validate_current_authority(&run)?;
+        let answer_fingerprint = message.map(|message| {
+            format!(
+                "{:x}",
+                <sha2::Sha256 as sha2::Digest>::digest(message.as_bytes())
+            )
+        });
+        if let Some(expected) = expected_decision_id {
+            ensure!(
+                expected.len() <= 128 && !expected.is_empty(),
+                "invalid_decision_id"
+            );
+            if let Some(previous) = run.answered_decisions.get(expected) {
+                ensure!(
+                    answer_fingerprint.as_ref() == Some(previous),
+                    "decision_answer_idempotency_conflict"
+                );
+                return self.get(id).await;
+            }
+            ensure!(
+                run.pending_decision
+                    .as_ref()
+                    .is_some_and(|decision| decision.id == expected),
+                "stale_decision_id"
+            );
+        }
         ensure!(
             [
                 "INTERRUPTED",
@@ -1104,9 +1183,17 @@ impl Factory {
         // Native approval requests are still active dispatches and are recovered
         // above; supplying text on a blocked/cancelled run is not a budget bypass.
         let answering_decision =
-            run.state == "NEEDS_INPUT" && run.dispatch_phase == "terminal_observed";
+            run.pending_decision.is_some() && run.dispatch_phase == "terminal_observed";
         if answering_decision {
             ensure!(message.is_some(), "operator_answer_required");
+            ensure!(
+                expected_decision_id.is_some(),
+                "expected_decision_id_required"
+            );
+            ensure!(
+                run.answered_decisions.len() < 100,
+                "decision_history_bound_reached"
+            );
         } else {
             ensure!(
                 run.repairs_used < run.request.repair_attempts,
@@ -1142,6 +1229,11 @@ impl Factory {
         run.observed_effort = None;
         if !answering_decision {
             run.repairs_used += 1;
+        } else if let Some(decision) = run.pending_decision.take() {
+            run.answered_decisions.insert(
+                decision.id,
+                answer_fingerprint.context("operator_answer_required")?,
+            );
         }
         run.generation += 1;
         run.current_subject = repository_subject(Path::new(&run.canonical_root))?;

@@ -126,11 +126,18 @@ describe("workbench state and MCP lifecycle", () => {
   it("answers completed NEEDS_INPUT turns by resuming the same run with input", async () => {
     const call = vi.fn<Bridge["call"]>().mockResolvedValue({ structuredContent: fixtureRun({ state: "RUNNING", turn_id: "new-turn" }) });
     const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
-    controller.receiveInitial({ structuredContent: fixtureRun({ state: "NEEDS_INPUT", turn_id: null }) });
+    controller.receiveInitial({ structuredContent: { ...fixtureRun({ state: "NEEDS_INPUT", turn_id: null }), pending_decision: { id: "decision-1", question: "Keep the migration local?" } } });
     expect(await controller.sendOwnerInput("  Keep the migration local  ")).toBe(true);
-    expect(call).toHaveBeenCalledWith("resume_factory_run", { run_id: "run-123", message: "Keep the migration local" });
+    expect(call).toHaveBeenCalledWith("resume_factory_run", { run_id: "run-123", message: "Keep the migration local", expected_decision_id: "decision-1" });
     expect(controller.selected?.owner_thread).toBe("owner-123");
     expect(controller.selected?.turn_id).toBe("new-turn");
+  });
+  it("does not submit native approvals as decision answers", async () => {
+    const call = vi.fn<Bridge["call"]>();
+    const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
+    controller.receiveInitial({ structuredContent: fixtureRun({ state: "NEEDS_INPUT", blocker: "Approval required in Codex" }) });
+    await expect(controller.sendOwnerInput("Approve")).rejects.toThrow("native Codex");
+    expect(call).not.toHaveBeenCalled();
   });
   it("continues to fence active-turn corrections with the current turn ID", async () => {
     const { controller, call } = setup();

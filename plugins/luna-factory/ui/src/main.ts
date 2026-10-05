@@ -124,7 +124,7 @@ app.addEventListener("hostcontextchanged", applyHostContext);
 if (fixturePreview) {
   const { fixtureWorkbench, fixtureRun } = await import("../test/fixtures");
   controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [
-    fixtureRun({ id: "review-301", objective: "Make review recovery safe after reconnect", state: "NEEDS_INPUT", active_workers: 0, blocker: "The requested scope includes a protected migration. Keep it local or remove the migration?", delta: "Recovery checks pass. One scope decision is holding the final candidate.", remaining_gap: "Resolve the migration scope with the owner." }),
+    fixtureRun({ id: "review-301", pending_decision: { id: "review-301-decision-1", question: "Keep the protected migration local or remove it?" }, objective: "Make review recovery safe after reconnect", state: "NEEDS_INPUT", active_workers: 0, blocker: "The requested scope includes a protected migration. Keep it local or remove the migration?", delta: "Recovery checks pass. One scope decision is holding the final candidate.", remaining_gap: "Resolve the migration scope with the owner." }),
     fixtureRun(),
     fixtureRun({ id: "sample-204", repository: "sample-service", objective: "Preserve job progress across restarts", state: "RUNNING", delta: "The owner reproduced the restart gap. Two bounded workers are testing the fix.", active_workers: 2 }),
     fixtureRun({ id: "friday-41", repository: "friday", objective: "Tighten the nightly handoff", state: "CONVERGED", active_workers: 0, claim_held: false, blocker: null, remaining_gap: null, delta: "Owner accepted the current subject. The requested pull request is ready." }),

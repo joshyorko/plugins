@@ -101,9 +101,9 @@ pub fn tool_definitions() -> Vec<Tool> {
         definition(
             "resume_factory_run",
             "Resume factory run",
-            "Reconcile the same native thread with preserved authority and limits. Optionally include an in-scope operator answer.",
+            "Reconcile the same native thread with preserved authority and limits. To answer a completed decision, include message and the current pending_decision.id as expected_decision_id. Identical answer retries never dispatch twice.",
             object(
-                json!({"run_id":id,"message":{"type":"string","minLength":1,"maxLength":4000}}),
+                json!({"run_id":id,"message":{"type":"string","minLength":1,"maxLength":4000},"expected_decision_id":{"type":"string","minLength":1,"maxLength":128}}),
                 &["run_id"],
             ),
             false,

@@ -31,6 +31,12 @@ pub struct StartRequest {
     pub idempotency_key: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingDecision {
+    pub id: String,
+    pub question: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Run {
     pub id: String,
     pub request: StartRequest,
@@ -56,6 +62,12 @@ pub struct Run {
     pub terminal_stop_attempts: std::collections::BTreeMap<String, String>,
     pub generation: u64,
     pub repairs_used: u32,
+    #[serde(default)]
+    pub counted_failures: std::collections::BTreeSet<(String, String)>,
+    #[serde(default)]
+    pub pending_decision: Option<PendingDecision>,
+    #[serde(default)]
+    pub answered_decisions: std::collections::BTreeMap<String, String>,
     pub created_at: u64,
     pub updated_at: u64,
     pub deadline_at: u64,
@@ -76,6 +88,23 @@ pub struct Run {
     #[serde(default)]
     pub route_observations: Vec<crate::native::NativeRouteObservation>,
     pub claim_held: bool,
+}
+
+fn decode_run(payload: &str) -> Result<Run> {
+    let mut run: Run = serde_json::from_str(payload)?;
+    // Upgrade pre-decision-ID rows from their accepted, terminal owner result.
+    // Active native approval requests never qualify for this migration.
+    if run.pending_decision.is_none()
+        && run.state == "NEEDS_INPUT"
+        && run.dispatch_phase == "terminal_observed"
+        && let Some(question) = run.blocker.clone()
+    {
+        run.pending_decision = Some(PendingDecision {
+            id: format!("{}-{}", run.id, run.generation),
+            question,
+        });
+    }
+    Ok(run)
 }
 #[derive(Debug)]
 pub struct Admission {
@@ -307,7 +336,7 @@ impl Store {
         {
             ensure!(old_fingerprint == fingerprint, "idempotency_conflict");
             return Ok(Admission {
-                run: serde_json::from_str(&old)?,
+                run: decode_run(&old)?,
                 created: false,
             });
         }
@@ -342,6 +371,9 @@ impl Store {
             terminal_stop_attempts: std::collections::BTreeMap::new(),
             generation: 1,
             repairs_used: 0,
+            counted_failures: std::collections::BTreeSet::new(),
+            pending_decision: None,
+            answered_decisions: std::collections::BTreeMap::new(),
             created_at: timestamp,
             updated_at: timestamp,
             deadline_at: timestamp + request.wall_seconds,
@@ -382,14 +414,14 @@ impl Store {
             .query_row("SELECT payload FROM runs WHERE id=?1", [id], |r| r.get(0))
             .optional()?
             .context("run_not_found")?;
-        Ok(serde_json::from_str(&value)?)
+        decode_run(&value)
     }
     pub fn list(&self, limit: u32) -> Result<Vec<Run>> {
         let mut stmt = self
             .connection
             .prepare("SELECT payload FROM runs ORDER BY rowid DESC LIMIT ?1")?;
         let rows = stmt.query_map([limit.clamp(1, 100)], |r| r.get::<_, String>(0))?;
-        rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
+        rows.map(|r| decode_run(&r?)).collect()
     }
     pub fn save(&mut self, run: &Run) -> Result<()> {
         let previous = self.get(&run.id)?;
@@ -398,6 +430,7 @@ impl Store {
                 && previous.canonical_root == run.canonical_root
                 && previous.repository_identity == run.repository_identity
                 && previous.base_head == run.base_head
+                && previous.requested_effort == run.requested_effort
                 && previous.deadline_at == run.deadline_at,
             "immutable_run_contract"
         );
@@ -420,8 +453,14 @@ impl Store {
     pub fn mark_interrupted(&mut self) -> Result<()> {
         let runs = self.list_all_claimed()?;
         for mut run in runs {
-            run.state = "INTERRUPTED".into();
-            run.blocker = Some("Runtime restarted. Reconcile native ownership before resuming; no mutation is replayed.".into());
+            if let Some(decision) = &run.pending_decision {
+                run.state = "NEEDS_INPUT".into();
+                run.blocker = Some(decision.question.clone());
+                run.delta = "Runtime restarted. The pending decision is preserved; native ownership will be reconciled before continuing.".into();
+            } else {
+                run.state = "INTERRUPTED".into();
+                run.blocker = Some("Runtime restarted. Reconcile native ownership before resuming; no mutation is replayed.".into());
+            }
             run.updated_at = now();
             self.save(&run)?;
         }
@@ -432,7 +471,7 @@ impl Store {
             .connection
             .prepare("SELECT runs.payload FROM runs JOIN claims ON claims.run_id=runs.id")?;
         stmt.query_map([], |r| r.get::<_, String>(0))?
-            .map(|r| Ok(serde_json::from_str(&r?)?))
+            .map(|r| decode_run(&r?))
             .collect()
     }
     /// Only the lifecycle reconciler may call this after observing every owned thread stopped.

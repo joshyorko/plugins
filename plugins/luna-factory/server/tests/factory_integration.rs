@@ -279,9 +279,10 @@ async fn operator_decisions_with_zero_repair_budget_continue_once_on_the_same_ow
     let id = run["id"].as_str().unwrap().to_owned();
     let deadline = run["deadline_at"].clone();
     for generation in 2..=3 {
-        request_operator_decision(&dir, &factory, &run).await;
+        let decision = request_operator_decision(&dir, &factory, &run).await;
+        let decision_id = decision["pending_decision"]["id"].as_str().unwrap();
         run = factory
-            .resume_with_input(&id, Some("Omit the optional migration"))
+            .resume_with_decision(&id, Some("Omit the optional migration"), Some(decision_id))
             .await
             .expect("answering a decision is not a repair attempt");
         assert_eq!(run["state"], "RUNNING");
@@ -290,11 +291,12 @@ async fn operator_decisions_with_zero_repair_budget_continue_once_on_the_same_ow
         assert_eq!(run["repairs_used"], 0);
         assert_eq!(run["deadline_at"], deadline);
         assert_eq!(run["finish"], "local_candidate");
-        assert!(
-            factory
-                .resume_with_input(&id, Some("Omit the optional migration"))
-                .await
-                .is_err(),
+        let replay = factory
+            .resume_with_decision(&id, Some("Omit the optional migration"), Some(decision_id))
+            .await
+            .unwrap();
+        assert_eq!(
+            replay["generation"], generation,
             "a duplicate answer must not dispatch another turn"
         );
         assert_eq!(
@@ -317,9 +319,13 @@ async fn decision_answer_preserves_an_exhausted_repair_budget() {
     factory.cancel(id).await.unwrap();
     let repair = factory.resume(id).await.unwrap();
     assert_eq!(repair["repairs_used"], 1);
-    request_operator_decision(&dir, &factory, &repair).await;
+    let decision = request_operator_decision(&dir, &factory, &repair).await;
     let answered = factory
-        .resume_with_input(id, Some("Keep the accepted scope"))
+        .resume_with_decision(
+            id,
+            Some("Keep the accepted scope"),
+            decision["pending_decision"]["id"].as_str(),
+        )
         .await
         .expect("decision continuation must preserve the exhausted repair counter");
     assert_eq!(answered["repairs_used"], 1);

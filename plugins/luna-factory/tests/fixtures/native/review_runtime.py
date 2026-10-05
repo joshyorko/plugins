@@ -3,6 +3,9 @@
 import json
 import pathlib
 import sys
+import time
+import os
+import threading
 
 home = pathlib.Path(__file__).parent
 state_path = home / "native-state.json"
@@ -10,6 +13,13 @@ state = json.loads(state_path.read_text()) if state_path.exists() else {
     "active": {"owner": False, "child": False}, "turn": 0, "closed_once": False
 }
 flooded = False
+
+def close_when_requested():
+    while not (home / 'close-transport').exists():
+        time.sleep(0.01)
+    os._exit(0)
+threading.Thread(target=close_when_requested, daemon=True).start()
+
 
 
 def emit(value):
@@ -36,6 +46,9 @@ for line in sys.stdin:
         result = {"thread": {"id": "owner"}, "model": "gpt-6-luna", "reasoningEffort": "high"}
     elif method == "turn/start":
         state["turn"] += 1
+        if mode == "failure_before_resume_ack" and state["turn"] > 1:
+            emit({"method":"turn/completed","params":{"threadId":"child","turn":{"id":"second-distinct-child-failure","status":"failed","items":[]}}})
+            time.sleep(0.2)
         state["active"] = {"owner": True, "child": True}
         emit({"method": "item/completed", "params": {"threadId": "owner", "turnId": f'turn-{state["turn"]}', "item": {"type": "collabAgentToolCall", "tool": "spawnAgent", "receiverThreadIds": ["child"]}}})
         result = {"turn": {"id": f'turn-{state["turn"]}', "status": "inProgress"}}
@@ -52,6 +65,10 @@ for line in sys.stdin:
         result = {"data": [{"id": f'turn-{state["turn"]}', "status": "inProgress"}] if state["active"].get(params["threadId"]) else []}
     elif method == "turn/interrupt":
         state["active"][params["threadId"]] = False
+    elif method == "turn/steer" and mode == "finish":
+        state["active"] = {"owner": False, "child": False}
+        report = json.loads((home / "report.json").read_text())
+        emit({"method":"turn/completed","params":{"threadId":"owner","turn":{"id":f'turn-{state["turn"]}',"status":"completed","items":[{"id":"final","type":"agentMessage","phase":"final_answer","text":json.dumps(report)}]}}})
     elif method == "turn/steer" and mode == "child_failure":
         state["active"]["child"] = False
         emit({"method": "turn/completed", "params": {"threadId": "child", "turn": {"id": "child-failure", "status": "failed", "items": []}}})
