@@ -173,6 +173,24 @@ fn exact_subject_changes_when_index_changes_under_same_worktree() {
         luna_factoryd::store::repository_subject(root).unwrap()
     );
 }
+
+#[test]
+fn exact_subject_preserves_whitespace_in_untracked_filenames() {
+    for name in [
+        " leading.txt",
+        "\tleading.txt",
+        "\nleading.txt",
+        "trailing.txt ",
+    ] {
+        let (_temp, config, _request) = setup();
+        let root = &config.repositories["test"].root;
+        std::fs::write(root.join(name), "accepted content").unwrap();
+        let before = luna_factoryd::store::repository_subject(root).unwrap();
+        std::fs::write(root.join(name), "changed content").unwrap();
+        let after = luna_factoryd::store::repository_subject(root).unwrap();
+        assert_ne!(before, after, "candidate bytes were missed for {name:?}");
+    }
+}
 #[cfg(unix)]
 #[test]
 fn repository_helpers_cannot_execute_or_hide_candidate_changes() {

@@ -50,6 +50,22 @@ pub fn accept_owner_report(report: &Value, subject: &str, acceptance_count: usiz
         .as_array()
         .context("missing_acceptance_receipts")?;
     ensure!(receipts.len() <= 32, "too_many_acceptance_receipts");
+    let mut criterion_ids = std::collections::HashSet::new();
+    for receipt in receipts {
+        let id = receipt["id"].as_str().context("invalid_criterion_id")?;
+        ensure!(
+            (1..=acceptance_count).any(|index| id == format!("A{index}"))
+                && criterion_ids.insert(id),
+            "invalid_or_duplicate_criterion_id"
+        );
+        ensure!(
+            receipt["passed"].is_boolean()
+                && receipt["evidence"]
+                    .as_str()
+                    .is_some_and(|evidence| evidence.len() <= 1000),
+            "invalid_criterion_receipt"
+        );
+    }
     if state == "CONVERGED" {
         ensure!(
             receipts.len() == acceptance_count,
@@ -776,10 +792,11 @@ impl Factory {
                         },
                         safe_summary(receipt["evidence"].as_str().unwrap_or(""), 1000)
                     );
-                    self.store
-                        .lock()
-                        .await
-                        .receipt(&run, "criterion_acceptance", &summary)?;
+                    self.store.lock().await.receipt(
+                        &run,
+                        "criterion_acceptance",
+                        &safe_summary(&summary, 1200),
+                    )?;
                 }
             }
         } else {

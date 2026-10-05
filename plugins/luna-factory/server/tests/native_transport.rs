@@ -17,7 +17,10 @@ async fn client() -> NativeClient {
         Path::new("/usr/bin/python3"),
         &["-u".into(), script.to_string_lossy().into_owned()],
         NativeOptions {
-            request_timeout: Duration::from_millis(150),
+            // Process startup under a busy CI runner is not the timeout behavior
+            // under test. Keep the actual no-reply request bounded without a
+            // subsecond Python initialization race.
+            request_timeout: Duration::from_secs(2),
             max_frame_bytes: 8192,
             event_capacity: 8,
         },

@@ -87,6 +87,12 @@ pub struct Store {
 }
 
 pub fn git(root: &Path, args: &[&str]) -> Result<String> {
+    Ok(String::from_utf8(git_output(root, args)?)?
+        .trim()
+        .to_owned())
+}
+
+fn git_output(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let output = Command::new("git")
         .args([
             "-c",
@@ -104,12 +110,17 @@ pub fn git(root: &Path, args: &[&str]) -> Result<String> {
         output.stdout.len() < 1024 * 1024,
         "repository_output_too_large"
     );
-    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+    Ok(output.stdout)
 }
 pub fn repository_subject(root: &Path) -> Result<String> {
     let head = git(root, &["rev-parse", "HEAD"])?;
-    let index = git(root, &["ls-files", "--stage", "-z"])?;
-    let untracked = git(root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
+    // NUL-delimited filenames are data, not line-oriented command output.
+    // Trimming here silently drops bytes from a leading-whitespace filename.
+    let index = String::from_utf8(git_output(root, &["ls-files", "--stage", "-z"])?)?;
+    let untracked = String::from_utf8(git_output(
+        root,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )?)?;
     let mut hash = Sha256::new();
     hash.update(b"luna-source-subject-v2\0");
     hash.update(index.as_bytes());

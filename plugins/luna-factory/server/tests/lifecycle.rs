@@ -64,3 +64,24 @@ fn bounded_owner_summaries_withhold_synthetic_credentials() {
         "A1 passed, one decision remains"
     );
 }
+
+#[test]
+fn all_owner_report_states_validate_bounded_unique_criterion_ids() {
+    for state in ["NEEDS_INPUT", "BLOCKED", "QUIESCENT", "CONVERGED"] {
+        let valid = json!({"state":state,"subject":"abc:123","acceptance":[{"id":"A1","passed":false,"evidence":"Unproved"}],"delta":"One gap remains","remaining_gap":"Select the bounded option","blocker":"Which option?"});
+        for id in ["ghp_SYNTHETIC_TEST_SECRET_ONLY", "A0", "A2", "A01", ""] {
+            let mut invalid = valid.clone();
+            invalid["acceptance"][0]["id"] = json!(id);
+            assert!(
+                accept_owner_report(&invalid, "abc:123", 1).is_err(),
+                "accepted {id:?} in {state}"
+            );
+        }
+        let mut duplicate = valid.clone();
+        duplicate["acceptance"] = json!([valid["acceptance"][0], valid["acceptance"][0]]);
+        assert!(
+            accept_owner_report(&duplicate, "abc:123", 2).is_err(),
+            "duplicate criterion accepted in {state}"
+        );
+    }
+}
