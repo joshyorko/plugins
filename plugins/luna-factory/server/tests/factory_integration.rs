@@ -236,6 +236,125 @@ fn completed_report(dir: &tempfile::TempDir, factory: &Factory) {
     std::fs::write(dir.path().join("report.json"),json!({"state":"CONVERGED","subject":subject,"acceptance":[{"id":"A1","passed":true,"evidence":"Synthetic completed native turn"}],"delta":"Recovered the completed owner result","remaining_gap":"","blocker":null}).to_string()).unwrap();
 }
 
+async fn request_operator_decision(
+    dir: &tempfile::TempDir,
+    factory: &Factory,
+    run: &Value,
+) -> Value {
+    let subject =
+        luna_factoryd::store::repository_subject(&factory.config.repositories["fixture"].root)
+            .unwrap();
+    std::fs::write(
+        dir.path().join("report.json"),
+        json!({"state":"NEEDS_INPUT","subject":subject,"acceptance":[],
+            "delta":"One operator decision remains","remaining_gap":"Select the bounded option",
+            "blocker":"Should the optional migration be omitted?"})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("mode"), "finish").unwrap();
+    let id = run["id"].as_str().unwrap();
+    factory
+        .steer(id, run["turn_id"].as_str().unwrap(), "Return the decision")
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let current = factory.get(id).await.unwrap();
+            if current["state"] == "NEEDS_INPUT" {
+                return current;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn operator_decisions_with_zero_repair_budget_continue_once_on_the_same_owner() {
+    let (dir, factory, mut request) = setup();
+    request.repair_attempts = 0;
+    let mut run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap().to_owned();
+    let deadline = run["deadline_at"].clone();
+    for generation in 2..=3 {
+        request_operator_decision(&dir, &factory, &run).await;
+        run = factory
+            .resume_with_input(&id, Some("Omit the optional migration"))
+            .await
+            .expect("answering a decision is not a repair attempt");
+        assert_eq!(run["state"], "RUNNING");
+        assert_eq!(run["owner_thread"], "owner");
+        assert_eq!(run["generation"], generation);
+        assert_eq!(run["repairs_used"], 0);
+        assert_eq!(run["deadline_at"], deadline);
+        assert_eq!(run["finish"], "local_candidate");
+        assert!(
+            factory
+                .resume_with_input(&id, Some("Omit the optional migration"))
+                .await
+                .is_err(),
+            "a duplicate answer must not dispatch another turn"
+        );
+        assert_eq!(
+            calls(&dir)
+                .iter()
+                .filter(|call| call["method"] == "turn/start")
+                .count(),
+            generation as usize
+        );
+    }
+    factory.cancel(&id).await.unwrap();
+}
+
+#[tokio::test]
+async fn decision_answer_preserves_an_exhausted_repair_budget() {
+    let (dir, factory, mut request) = setup();
+    request.repair_attempts = 1;
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    factory.cancel(id).await.unwrap();
+    let repair = factory.resume(id).await.unwrap();
+    assert_eq!(repair["repairs_used"], 1);
+    request_operator_decision(&dir, &factory, &repair).await;
+    let answered = factory
+        .resume_with_input(id, Some("Keep the accepted scope"))
+        .await
+        .expect("decision continuation must preserve the exhausted repair counter");
+    assert_eq!(answered["repairs_used"], 1);
+    factory.cancel(id).await.unwrap();
+    assert_eq!(
+        factory
+            .resume_with_input(id, Some("A message is not a repair-budget bypass"))
+            .await
+            .unwrap_err()
+            .to_string(),
+        "repair_budget_exhausted"
+    );
+}
+
+#[tokio::test]
+async fn unanswered_decision_does_not_dispatch_or_consume_a_repair() {
+    let (dir, factory, request) = setup();
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    request_operator_decision(&dir, &factory, &run).await;
+    assert_eq!(
+        factory.resume(id).await.unwrap_err().to_string(),
+        "operator_answer_required"
+    );
+    assert_eq!(factory.get(id).await.unwrap()["repairs_used"], 0);
+    assert_eq!(
+        calls(&dir)
+            .iter()
+            .filter(|call| call["method"] == "turn/start")
+            .count(),
+        1
+    );
+    factory.cancel(id).await.unwrap();
+}
+
 #[tokio::test]
 async fn lost_ack_completed_turn_is_recovered_without_replaying_inference() {
     let (dir, factory, request) = setup();

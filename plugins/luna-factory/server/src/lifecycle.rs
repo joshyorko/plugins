@@ -1026,10 +1026,19 @@ impl Factory {
             }
         }
         ensure!(now() < run.deadline_at, "time_budget_exhausted");
-        ensure!(
-            run.repairs_used < run.request.repair_attempts,
-            "repair_budget_exhausted"
-        );
+        // Only a completed, accepted owner decision is an answer continuation.
+        // Native approval requests are still active dispatches and are recovered
+        // above; supplying text on a blocked/cancelled run is not a budget bypass.
+        let answering_decision =
+            run.state == "NEEDS_INPUT" && run.dispatch_phase == "terminal_observed";
+        if answering_decision {
+            ensure!(message.is_some(), "operator_answer_required");
+        } else {
+            ensure!(
+                run.repairs_used < run.request.repair_attempts,
+                "repair_budget_exhausted"
+            );
+        }
         // A released claim cannot be silently stolen from another run.
         self.store.lock().await.reclaim(&mut run)?;
         ensure!(
@@ -1042,7 +1051,9 @@ impl Factory {
             response["thread"]["id"].as_str() == Some(thread),
             "resume_changed_owner_identity"
         );
-        run.repairs_used += 1;
+        if !answering_decision {
+            run.repairs_used += 1;
+        }
         run.generation += 1;
         run.current_subject = repository_subject(Path::new(&run.canonical_root))?;
         run.state = "STARTING".into();
