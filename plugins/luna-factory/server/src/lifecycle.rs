@@ -702,10 +702,13 @@ impl Factory {
             }
         } else {
             let client = self.client_for_reconcile(id).await?;
-            if !client
-                .active_turn_ids(&observation.thread_id)
+            // A child can complete after emitting telemetry but before this
+            // read. Correlate the exact owned turn, not only active turns.
+            // Its evidence stays separate from the current owner's route.
+            if client
+                .find_turn(&observation.thread_id, &observation.turn_id)
                 .await?
-                .contains(&observation.turn_id)
+                .is_none()
             {
                 return Ok(false);
             }

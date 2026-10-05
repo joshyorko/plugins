@@ -391,6 +391,7 @@ async fn reroute_notifications_preserve_exact_turn_evidence_and_stop_owned_work(
     for (mode, thread, turn) in [
         ("reroute_owner", "owner", "turn-1"),
         ("reroute_child", "child", "child-turn-1"),
+        ("reroute_child_completed", "child", "child-turn-1"),
     ] {
         let (dir, factory, request) = setup();
         let run = factory.start(request).await.unwrap();
@@ -444,7 +445,12 @@ async fn reroute_notifications_preserve_exact_turn_evidence_and_stop_owned_work(
 
 #[tokio::test]
 async fn unrelated_stale_or_invalid_reroutes_cannot_contaminate_current_evidence() {
-    for mode in ["reroute_unrelated", "reroute_stale", "reroute_invalid"] {
+    for mode in [
+        "reroute_unrelated",
+        "reroute_stale",
+        "reroute_invalid",
+        "reroute_child_unknown",
+    ] {
         let (dir, factory, request) = setup();
         let run = factory.start(request).await.unwrap();
         let id = run["id"].as_str().unwrap();

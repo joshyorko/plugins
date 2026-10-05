@@ -67,8 +67,14 @@ for line in sys.stdin:
         emit({"method":"turn/completed","params":{"threadId":"owner","turn":{"id":f"turn-{turn_number}","status":"completed","items":[]}}})
     elif method == "turn/steer" and mode.startswith("reroute_"):
         route={"threadId":"owner", "turnId":f"turn-{turn_number}", "fromModel":"gpt-6-luna", "toModel":"gpt-6-sol", "reason":"highRiskCyberActivity"}
-        if mode == "reroute_child":
+        if mode in ("reroute_child", "reroute_child_completed", "reroute_child_unknown"):
             route.update(threadId="child", turnId=f"child-turn-{turn_number}")
+            if mode == "reroute_child_unknown":
+                route["turnId"] = "missing-child-turn"
+            if mode == "reroute_child_completed":
+                # The queued event is genuine, but history has advanced by the
+                # time the runtime handles it and asks for correlation.
+                active["child"] = False
         elif mode == "reroute_unrelated":
             route["threadId"]="unrelated"
         elif mode == "reroute_stale":
@@ -101,6 +107,8 @@ for line in sys.stdin:
         result = {"data": [{"id": "background-item", "type": "commandExecution", "processId": "background-process", "status": "completed", "exitCode": 0 if mode == "process_exited" else None}] if mode in ("background", "process_exited") and params["threadId"] == "child" else []}
     elif method == "thread/turns/list":
         result = {"data":[{"id":turn["id"],"status":turn["status"]} for turn in history] if params["threadId"]=="owner" else ([{"id":f"child-turn-{turn_number}","status":"inProgress"}] if active.get(params["threadId"]) else [])}
+        if mode == "reroute_child_completed" and params["threadId"] == "child":
+            result = {"data": [{"id": f"child-turn-{turn_number}", "status": "completed"}]}
     elif method == "turn/interrupt":
         active[params["threadId"]] = False
         if params["threadId"]=="owner" and history:
