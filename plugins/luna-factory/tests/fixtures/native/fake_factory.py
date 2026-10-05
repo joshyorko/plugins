@@ -32,9 +32,9 @@ for line in sys.stdin:
     elif method == "model/list":
         result = {"data": [{"model": "gpt-6-luna", "supportedReasoningEfforts": [{"reasoningEffort": "high"}]}]}
     elif method == "thread/start":
-        result = {"thread": {"id": "owner"}, "model": "gpt-6-luna", "reasoningEffort": "high"}
+        result = {"thread": {"id": "owner"}, "model": "gpt-6-luna", "reasoningEffort": "high", "modelProvider": "inherited-fixture"}
     elif method == "thread/resume":
-        result = {"thread": {"id": params["threadId"]}, "model": "gpt-6-luna", "reasoningEffort": "high"}
+        result = {"thread": {"id": params["threadId"]}, "model": "gpt-6-luna", "reasoningEffort": "high", "modelProvider": "different-fixture" if mode == "provider_drift" else "inherited-fixture"}
     elif method == "turn/start":
         if mode == "fail_resume" and turn_number > 0:
             emit({"id": message["id"], "error": {"code": -32000, "message": "synthetic failure"}})
@@ -65,6 +65,18 @@ for line in sys.stdin:
         report = json.loads((home / "report.json").read_text())
         emit({"method":"item/completed","params":{"threadId":"owner","turnId":f"turn-{turn_number}","item":{"id":"final","type":"agentMessage","phase":"final_answer","text":json.dumps(report)}}})
         emit({"method":"turn/completed","params":{"threadId":"owner","turn":{"id":f"turn-{turn_number}","status":"completed","items":[]}}})
+    elif method == "turn/steer" and mode.startswith("reroute_"):
+        route={"threadId":"owner", "turnId":f"turn-{turn_number}", "fromModel":"gpt-6-luna", "toModel":"gpt-6-sol", "reason":"highRiskCyberActivity"}
+        if mode == "reroute_child":
+            route.update(threadId="child", turnId=f"child-turn-{turn_number}")
+        elif mode == "reroute_unrelated":
+            route["threadId"]="unrelated"
+        elif mode == "reroute_stale":
+            route["turnId"]="old-turn"
+        elif mode == "reroute_invalid":
+            route["toModel"]="https://synthetic.invalid/sk-synthetic-secret"
+        emit({"method":"model/rerouted","params":route})
+        emit({"method":"model/rerouted","params":route})
     elif method == "thread/items/list" and mode == "finish" and params["threadId"] == "owner":
         result = {"data":[{"id":"final","type":"agentMessage","phase":"final_answer","text":(home / "report.json").read_text()}]}
     elif method == "thread/backgroundTerminals/list":

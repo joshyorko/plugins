@@ -142,3 +142,12 @@ Luna defaults are pinned in native owner/child configuration. The native protoco
 has no proved pre-spawn model allowlist; canonical policy remains responsible for
 explicit child choices and actual routing is unverified unless native telemetry
 establishes it. This is still a draft product, not a completed live acceptance.
+
+Codex 0.159.2 reports thread model, effort and provider as configuration, not
+per-turn execution evidence. The workbench keeps requested effort and inherited
+provider configuration separate. It records `model/rerouted` notifications only
+for a current owned thread/turn, persists that mismatch evidence and stops owned
+work through the normal verified-cancellation path. Child evidence never
+overwrites the owner's route. Missing notifications do not prove a matching
+route, and effective effort, downstream provider and billing remain unknown.
+Provider configuration changes on resume are rejected before another turn.

@@ -15,7 +15,14 @@ export const runSchema = z.object({
   delta: text, remaining_gap: nullableText, blocker: nullableText,
   deadline_at: timestamp, claim_held: z.boolean(),
   updated_at: timestamp.optional(), generation: z.number().int().nonnegative().optional(),
-  route: z.object({ requested_model: nullableText, requested_effort: nullableText, configured_model: nullableText, configured_effort: nullableText, observed_model: nullableText, observed_effort: nullableText }),
+  route: z.object({
+    requested_model: nullableText, requested_effort: nullableText,
+    configured_model: nullableText, configured_effort: nullableText,
+    observed_model: nullableText, observed_effort: nullableText,
+    requested_provider: nullableText.optional(), configured_provider: nullableText.optional(),
+    observed_provider: nullableText.optional(), observed_model_source: nullableText.optional(),
+    reroutes: z.array(z.object({ thread_id: text, turn_id: text, from_model: text, to_model: text, reason: text, source: z.literal("model/rerouted") })).max(100).optional(),
+  }),
   receipts: z.array(z.object({ subject: text, kind: z.string().max(64), summary: z.string().max(2000), created_at: timestamp })).max(100),
 });
 export type RunView = z.infer<typeof runSchema>;

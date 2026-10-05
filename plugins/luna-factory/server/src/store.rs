@@ -69,6 +69,12 @@ pub struct Run {
     pub observed_effort: Option<String>,
     pub configured_model: Option<String>,
     pub configured_effort: Option<String>,
+    #[serde(default)]
+    pub requested_effort: Option<String>,
+    #[serde(default)]
+    pub configured_provider: Option<String>,
+    #[serde(default)]
+    pub route_observations: Vec<crate::native::NativeRouteObservation>,
     pub claim_held: bool,
 }
 #[derive(Debug)]
@@ -336,6 +342,9 @@ impl Store {
             observed_effort: None,
             configured_model: None,
             configured_effort: None,
+            requested_effort: Some(config.profiles[&request.profile].effort.clone()),
+            configured_provider: None,
+            route_observations: Vec::new(),
             claim_held: true,
         };
         tx.execute(

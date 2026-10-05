@@ -415,22 +415,59 @@ pub struct NativeRoute {
     pub observed_effort: Option<String>,
 }
 
+/// Native execution-side evidence is currently limited to a reported reroute.
+/// It proves this turn used a different model, not every call or its billing path.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NativeRouteObservation {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub from_model: String,
+    pub to_model: String,
+    pub reason: String,
+    pub source: String,
+}
+
+fn route_label(value: &Value) -> Option<String> {
+    let text = value.as_str()?;
+    (!text.is_empty()
+        && text.len() <= 128
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        && !["sk-", "ghp_", "gho_", "github_pat_"]
+            .iter()
+            .any(|prefix| text.starts_with(prefix)))
+    .then(|| text.to_owned())
+}
+
+pub fn observed_reroute(params: &Value) -> Result<NativeRouteObservation> {
+    let label = |key: &str| route_label(&params[key]).context("invalid_native_route_evidence");
+    let observation = NativeRouteObservation {
+        thread_id: label("threadId")?,
+        turn_id: label("turnId")?,
+        from_model: label("fromModel")?,
+        to_model: label("toModel")?,
+        reason: label("reason")?,
+        source: "model/rerouted".into(),
+    };
+    ensure!(
+        observation.from_model != observation.to_model,
+        "invalid_native_route_evidence"
+    );
+    ensure!(
+        observation.reason == "highRiskCyberActivity",
+        "unsupported_native_reroute_reason"
+    );
+    Ok(observation)
+}
+
 pub fn configured_route(response: &Value, effort: &str) -> NativeRoute {
     NativeRoute {
         requested_model: LUNA_MODEL.into(),
         requested_effort: effort.into(),
-        configured_model: response
-            .get("model")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        configured_effort: response
-            .get("reasoningEffort")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        configured_provider: response
-            .get("modelProvider")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        configured_model: route_label(&response["model"]),
+        configured_effort: route_label(&response["reasoningEffort"]),
+        configured_provider: route_label(&response["modelProvider"]),
         observed_model: None,
         observed_effort: None,
     }

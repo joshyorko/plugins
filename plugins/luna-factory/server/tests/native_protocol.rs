@@ -47,6 +47,18 @@ fn configured_route_never_becomes_observed_execution_telemetry() {
     assert_eq!(route.configured_model.as_deref(), Some(LUNA_MODEL));
     assert_eq!(route.observed_model, None);
     assert_eq!(route.observed_effort, None);
+    assert_eq!(
+        route.configured_provider.as_deref(),
+        Some("trusted-profile")
+    );
+    let mismatch = configured_route(
+        &json!({"model":"gpt-6-sol","reasoningEffort":"low","modelProvider":"https://private.invalid/sk-synthetic-secret"}),
+        "high",
+    );
+    assert_eq!(mismatch.requested_effort, "high");
+    assert_eq!(mismatch.configured_effort.as_deref(), Some("low"));
+    assert_eq!(mismatch.configured_provider, None);
+    assert_eq!(mismatch.observed_model, None);
 }
 
 #[test]

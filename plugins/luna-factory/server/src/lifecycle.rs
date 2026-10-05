@@ -1,6 +1,6 @@
 use crate::{
     config::Config,
-    native::{NativeClient, NativeTerminal, configured_route, thread_is_idle},
+    native::{NativeClient, NativeTerminal, configured_route, observed_reroute, thread_is_idle},
     store::{Run, StartRequest, Store, now, repository_subject},
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -26,9 +26,12 @@ pub fn public_run(run: &Run) -> Value {
         "delta":run.delta,"remaining_gap":run.remaining_gap,"skill_sha256":run.skill_sha256,
         "blocker":run.blocker,"deadline_at":run.deadline_at,"claim_held":run.claim_held,
         "repairs_used":run.repairs_used,"repair_limit":run.request.repair_attempts,"generation":run.generation,"updated_at":run.updated_at,
-        "route":{"requested_model":"gpt-6-luna","requested_effort":run.configured_effort,
+        "route":{"requested_model":"gpt-6-luna","requested_effort":run.requested_effort,
             "configured_model":run.configured_model,"configured_effort":run.configured_effort,
-            "observed_model":run.observed_model,"observed_effort":run.observed_effort}})
+            "requested_provider":"inherited","configured_provider":run.configured_provider,
+            "observed_model":run.observed_model,"observed_effort":run.observed_effort,
+            "observed_provider":null,"observed_model_source":run.observed_model.as_ref().map(|_|"model/rerouted"),
+            "reroutes":run.route_observations}})
 }
 
 /// The owner keeps semantic judgment. The runtime fences its report to the exact
@@ -237,6 +240,7 @@ impl Factory {
             "repositories":self.config.repositories.iter().map(|(alias,repo)|json!({"alias":alias,"max_finish":repo.max_finish})).collect::<Vec<_>>(),
             "profiles":self.config.profiles.iter().map(|(alias,profile)|json!({"alias":alias,"effort":profile.effort,"supported":profile.codex_profile.is_none()})).collect::<Vec<_>>(),
             "limits":self.config.limits,"observed_routing":"unverified","status_inference_calls":0,
+            "routing_telemetry":{"model":"turn-bound model/rerouted mismatch notifications only","effort":"unavailable","provider":"configuration only; downstream execution and billing unverified"},
             "live_proof":"Live owner/worker, native ChatGPT and tunnel acceptance must be recorded on the operator runtime."})
     }
     pub async fn workbench(&self, id: Option<&str>) -> Result<Value> {
@@ -330,6 +334,7 @@ impl Factory {
         run.dispatch_phase = "owner_created".into();
         run.configured_model = route.configured_model;
         run.configured_effort = route.configured_effort;
+        run.configured_provider = route.configured_provider;
         run.delta = "Native owner thread created. Execution routing remains unverified.".into();
         // Persist owner identity before the inference side effect. No retry on uncertainty.
         self.store.lock().await.save(run)?;
@@ -493,6 +498,9 @@ impl Factory {
     }
     async fn observe(&self, id: &str, event: Value) -> Result<bool> {
         let method = event["method"].as_str().unwrap_or("");
+        if method == "model/rerouted" {
+            return self.observe_routing_mismatch(id, &event["params"]).await;
+        }
         if method == "luna_factory/transportClosed" {
             self.block(
                 id,
@@ -625,6 +633,54 @@ impl Factory {
             return Ok(!self.store.lock().await.get(id)?.claim_held);
         }
         Ok(false)
+    }
+    async fn observe_routing_mismatch(&self, id: &str, params: &Value) -> Result<bool> {
+        let guard = self.mutation.lock().await;
+        let mut run = self.store.lock().await.get(id)?;
+        let thread = params["threadId"].as_str();
+        let owner = thread == run.thread_id.as_deref();
+        if !run.claim_held
+            || !thread
+                .is_some_and(|thread| owner || run.owned_threads.iter().any(|id| id == thread))
+        {
+            return Ok(false);
+        }
+        let observation = observed_reroute(params)?;
+        if owner {
+            if run.turn_id.as_deref() != Some(&observation.turn_id) {
+                return Ok(false);
+            }
+        } else {
+            let client = self.client_for_reconcile(id).await?;
+            if !client
+                .active_turn_ids(&observation.thread_id)
+                .await?
+                .contains(&observation.turn_id)
+            {
+                return Ok(false);
+            }
+        }
+        if run.route_observations.contains(&observation) {
+            return Ok(false);
+        }
+        ensure!(
+            run.route_observations.len() < 100,
+            "routing_evidence_bound_reached"
+        );
+        if owner {
+            run.observed_model = Some(observation.to_model.clone());
+        }
+        run.route_observations.push(observation);
+        run.state = "CANCELLING".into();
+        run.blocker = Some("Native execution reported a model reroute. Stop requested; effort and downstream provider remain unverified.".into());
+        run.updated_at = now();
+        let mut store = self.store.lock().await;
+        store.save(&run)?;
+        store.receipt(&run, "routing_mismatch", "Native model/rerouted evidence recorded for the exact owned thread and turn; stopping owned execution without changing provider or security policy.")?;
+        drop(store);
+        drop(guard);
+        self.cancel(id).await?;
+        Ok(true)
     }
     async fn finish_turn(&self, id: &str, turn: &Value) -> Result<()> {
         let _guard = self.mutation.lock().await;
@@ -906,8 +962,9 @@ impl Factory {
             "native_profile_override_unsupported"
         );
         ensure!(
-            run.configured_effort
+            run.requested_effort
                 .as_deref()
+                .or(run.configured_effort.as_deref())
                 .is_none_or(|effort| effort == self.config.profiles[&run.request.profile].effort),
             "runtime_profile_changed"
         );
@@ -1051,6 +1108,21 @@ impl Factory {
             response["thread"]["id"].as_str() == Some(thread),
             "resume_changed_owner_identity"
         );
+        let route = configured_route(
+            &response,
+            &self.config.profiles[&run.request.profile].effort,
+        );
+        ensure!(
+            run.configured_provider
+                .as_ref()
+                .is_none_or(|provider| route.configured_provider.as_ref() == Some(provider)),
+            "native_provider_configuration_changed"
+        );
+        run.configured_model = route.configured_model;
+        run.configured_effort = route.configured_effort;
+        run.configured_provider = route.configured_provider;
+        run.observed_model = None;
+        run.observed_effort = None;
         if !answering_decision {
             run.repairs_used += 1;
         }

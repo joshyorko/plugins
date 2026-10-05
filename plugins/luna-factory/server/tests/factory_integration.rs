@@ -356,6 +356,107 @@ async fn unanswered_decision_does_not_dispatch_or_consume_a_repair() {
 }
 
 #[tokio::test]
+async fn inherited_provider_is_reported_as_configuration_and_cannot_silently_drift() {
+    let (dir, factory, request) = setup();
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    assert_eq!(run["route"]["configured_provider"], "inherited-fixture");
+    assert_eq!(run["route"]["requested_provider"], "inherited");
+    assert_eq!(run["route"]["observed_provider"], Value::Null);
+    assert_eq!(run["route"]["observed_model"], Value::Null);
+    factory.cancel(id).await.unwrap();
+    std::fs::write(dir.path().join("mode"), "provider_drift").unwrap();
+    assert_eq!(
+        factory.resume(id).await.unwrap_err().to_string(),
+        "native_provider_configuration_changed"
+    );
+    assert_eq!(factory.get(id).await.unwrap()["repairs_used"], 0);
+    assert_eq!(
+        calls(&dir)
+            .iter()
+            .filter(|call| call["method"] == "turn/start")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn reroute_notifications_preserve_exact_turn_evidence_and_stop_owned_work() {
+    for (mode, thread, turn) in [
+        ("reroute_owner", "owner", "turn-1"),
+        ("reroute_child", "child", "child-turn-1"),
+    ] {
+        let (dir, factory, request) = setup();
+        let run = factory.start(request).await.unwrap();
+        let id = run["id"].as_str().unwrap();
+        std::fs::write(dir.path().join("mode"), mode).unwrap();
+        factory
+            .steer(id, "turn-1", "Keep the approved route")
+            .await
+            .unwrap();
+        let stopped = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let current = factory.get(id).await.unwrap();
+                if current["state"] == "CANCELLED" {
+                    return current;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("an observed route mismatch must stop owned work");
+        let evidence = stopped["route"]["reroutes"].as_array().unwrap();
+        assert_eq!(
+            evidence.len(),
+            1,
+            "duplicate native telemetry must be idempotent"
+        );
+        assert_eq!(evidence[0]["thread_id"], thread);
+        assert_eq!(evidence[0]["turn_id"], turn);
+        assert_eq!(evidence[0]["source"], "model/rerouted");
+        assert_eq!(evidence[0]["to_model"], "gpt-6-sol");
+        assert_eq!(
+            stopped["route"]["observed_model"],
+            if thread == "owner" {
+                json!("gpt-6-sol")
+            } else {
+                Value::Null
+            }
+        );
+        assert_eq!(stopped["route"]["observed_effort"], Value::Null);
+        assert_eq!(stopped["route"]["observed_provider"], Value::Null);
+        let stored = luna_factoryd::store::Store::open(&factory.config)
+            .unwrap()
+            .get(id)
+            .unwrap();
+        assert_eq!(
+            luna_factoryd::lifecycle::public_run(&stored)["route"],
+            stopped["route"]
+        );
+    }
+}
+
+#[tokio::test]
+async fn unrelated_stale_or_invalid_reroutes_cannot_contaminate_current_evidence() {
+    for mode in ["reroute_unrelated", "reroute_stale", "reroute_invalid"] {
+        let (dir, factory, request) = setup();
+        let run = factory.start(request).await.unwrap();
+        let id = run["id"].as_str().unwrap();
+        std::fs::write(dir.path().join("mode"), mode).unwrap();
+        factory
+            .steer(id, "turn-1", "Keep the approved route")
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let current = factory.get(id).await.unwrap();
+        assert_eq!(current["route"]["observed_model"], Value::Null);
+        assert_eq!(current["route"]["reroutes"], json!([]));
+        assert!(!current.to_string().contains("sk-synthetic-secret"));
+        factory.cancel(id).await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn lost_ack_completed_turn_is_recovered_without_replaying_inference() {
     let (dir, factory, request) = setup();
     completed_report(&dir, &factory);

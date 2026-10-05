@@ -64,4 +64,23 @@ describe("accessible workbench", () => {
     expect(root.textContent).toContain("No repositories configured");
     expect(root.querySelector('[data-action="start"]')?.hasAttribute("disabled")).toBe(true);
   });
+  it("explains unavailable effective routing without implying future telemetry", () => {
+    const { root } = render();
+    expect(root.textContent).toContain("No execution-side model evidence");
+    expect(root.textContent).toContain("Effort telemetry unavailable");
+    expect(root.textContent).not.toContain("Not yet observed");
+  });
+  it("keeps provider configuration and exact-turn mismatch evidence distinct", () => {
+    const run = fixtureRun();
+    run.route.configured_provider = "headroom-fixture";
+    run.route.observed_model = "gpt-6-sol";
+    run.route.observed_model_source = "model/rerouted";
+    run.route.reroutes = [{ thread_id: "owner-123", turn_id: "turn-123", from_model: "gpt-6-luna", to_model: "gpt-6-sol", source: "model/rerouted", reason: "highRiskCyberActivity" }];
+    const { root } = render(null, run);
+    expect(root.textContent).toContain("headroom-fixture");
+    expect(root.textContent).toContain("downstream execution and billing unverified");
+    expect(root.textContent).toContain("1 native model mismatch recorded");
+    expect(root.textContent).toContain("owner-123, turn-123");
+    expect(root.textContent).toContain("Effort telemetry unavailable");
+  });
 });
