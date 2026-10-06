@@ -1,8 +1,9 @@
 # Control alignment implementation plan
 
 > For agentic workers: use `superpowers:executing-plans` task by task.
-> The existing Plugins owner is the only implementation/integration writer;
-> bounded Luna workers provide read-only source/design/acceptance reviews.
+> The existing Plugins owner is the sole integrator. One isolated Rust writer owns
+> server/core/store/lifecycle; one disjoint writer owns ui/. Bounded read-only
+> donor and adversarial reviewers do not write product code.
 
 **Goal:** Put revision-fenced task admission, observed evidence and safe operator
 actions on the standalone runtime's production path without changing execution
@@ -15,6 +16,7 @@ model supplies the same action availability to MCP guards and the ChatGPT UI.
 
 **Tech stack:** Existing Rust/rmcp/SQLite, native Codex, TypeScript/MCP Apps.
 **Spec:** [Control adoption](control-adoption.md).
+**Wire boundary:** [Control/presentation contract](control-wire.md).
 
 ## Global constraints
 
@@ -26,6 +28,11 @@ model supplies the same action availability to MCP guards and the ChatGPT UI.
 - No real factory run on Josh's behalf; preserve recoverable 6cc2062 live state.
 - Serialize heavy checks, use the existing two-CPU/four-GiB container/cache and
   check disk headroom. No broad cleanup/prune.
+- All Dakota container/image/release/full Rust/expensive whole-suite work acquires
+  the shared exclusive nonblocking `heavy-slot.lock`. If busy, do source/light
+  work instead of polling. GitHub is the visible tested-checkpoint surface; private
+  file handoffs remain machine coordination. The enabled experimental internal
+  board has no exposed usable read/post operations in this thread/subagents.
 
 ## Review focus
 
