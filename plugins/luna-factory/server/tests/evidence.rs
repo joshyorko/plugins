@@ -124,3 +124,88 @@ fn symlink_and_nonregular_files_are_rejected() {
     spec.path = Some(".".into());
     assert!(reconcile_report(&mut control, &report(&spec), dir.path()).is_err());
 }
+#[test]
+fn new_dispatch_requires_explicit_reattestation_and_denies_old_active_or_unknown_attempts() {
+    use luna_factoryd::control::{Event, EventEnvelope, TaskState};
+    let (dir, mut control, spec) = setup();
+    let mut task = control.tasks["objective"].clone();
+    task.id = "second-task".into();
+    task.necessity = "owner_declared_necessary".into();
+    task.state = TaskState::Ready;
+    control.tasks.insert(task.id.clone(), task);
+    reconcile_report(&mut control, &report(&spec), dir.path()).unwrap();
+    control.selected_task = "second-task".into();
+    let revision = control.revision;
+    control = reduce(
+        &control,
+        &EventEnvelope {
+            id: "second-dispatch".into(),
+            expected_revision: revision,
+            event: Event::Dispatch {
+                id: "second-dispatch".into(),
+                generation: 2,
+                repair: true,
+            },
+        },
+    )
+    .unwrap();
+    control = reduce(
+        &control,
+        &EventEnvelope {
+            id: "second-return".into(),
+            expected_revision: control.revision,
+            event: Event::Returned {
+                id: "second-dispatch".into(),
+            },
+        },
+    )
+    .unwrap();
+    control.settlement = luna_factoryd::control::Settlement::Stopped;
+    let mut second = spec.clone();
+    second.id = "second-check".into();
+    second.binding.task_id = "second-task".into();
+    second.binding.attempt_id = "second-dispatch".into();
+    second.binding.dispatch_generation = 2;
+    let packet = serde_json::json!({"checks":[second],"acceptance":[{"id":"A1","passed":true,"accepted":true,"evidence":"Only B explicitly checked","check_refs":["file-1","second-check"]}]});
+    reconcile_report(&mut control, &packet, dir.path()).unwrap();
+    assert!(
+        !control.converged(),
+        "old A fact was credited without re-attestation"
+    );
+    let mut current = packet.clone();
+    current["checks"] = serde_json::json!([spec, second]);
+    reconcile_report(&mut control, &current, dir.path()).unwrap();
+    assert!(control.converged());
+    for phase in ["active", "intent_unknown"] {
+        let mut unknown = control.clone();
+        unknown.attempts[0].phase = phase.into();
+        assert!(
+            !luna_factoryd::evidence::binding_current(&unknown, &spec.binding),
+            "accepted {phase}"
+        );
+    }
+    let mut newer = control.clone();
+    let mut replacement = newer.attempts[0].clone();
+    replacement.id = "newer-same-task".into();
+    replacement.dispatch_generation = 3;
+    newer.dispatch_generation = 3;
+    newer.attempts.push(replacement);
+    assert!(
+        !luna_factoryd::evidence::binding_current(&newer, &spec.binding),
+        "accepted superseded task attempt"
+    );
+    let mut changed = control.clone();
+    changed
+        .assumptions
+        .insert("required".into(), "changed".into());
+    assert!(!luna_factoryd::evidence::binding_current(
+        &changed,
+        &spec.binding
+    ));
+    let mut moved = control.clone();
+    moved.current_subject = "moved".into();
+    assert!(!luna_factoryd::evidence::binding_current(
+        &moved,
+        &spec.binding
+    ));
+}

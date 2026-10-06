@@ -488,6 +488,12 @@ impl Control {
         {
             self.diagnosis = None;
         }
+        for check in &mut self.checks {
+            if check.kind == "file_sha256" && check.outcome == "passed" {
+                check.outcome = "unverified".into();
+                check.reason = "explicit_reattestation_required".into();
+            }
+        }
         for criterion in &mut self.criteria {
             criterion.accepted = false;
             criterion.reason = reason.into();
@@ -672,6 +678,13 @@ pub fn reduce(current: &Control, envelope: &EventEnvelope) -> Result<Control> {
                 task.subject = next.current_subject.clone();
                 task.assumptions = next.assumptions.clone();
             }
+            ensure!(
+                next.tasks[&selected]
+                    .effects
+                    .iter()
+                    .any(|effect| effect == "native_owner_turn"),
+                "native_owner_turn_not_permitted"
+            );
             admit_task(&next, &next.tasks[&selected])?;
             next.attempts.push(Attempt {
                 id: id.clone(),

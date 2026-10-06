@@ -1488,3 +1488,128 @@ async fn optional_rejected_discovery_does_not_reopen_a_verified_objective() {
             .any(|task| task["id"] == "optional-note" && task["state"] == "blocked")
     );
 }
+#[tokio::test]
+async fn sequential_necessary_tasks_finish_only_after_explicit_current_reattestation() {
+    use sha2::{Digest, Sha256};
+    let (dir, factory, request) = setup();
+    let root = &factory.config.repositories["fixture"].root;
+    std::fs::write(root.join("read-only-proof.txt"), "stable predicate").unwrap();
+    let subject = luna_factoryd::store::repository_subject(root).unwrap();
+    let digest = format!("{:x}", Sha256::digest(b"stable predicate"));
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    let candidates:Vec<_>=["task-a","task-b"].iter().map(|id|json!({"id":id,"title":"Necessary read-only work","criterion_ids":["A1"],"dependencies":[],"assumptions":{},"necessary":true,"effects":["native_owner_turn"]})).collect();
+    std::fs::write(dir.path().join("report.json"),json!({"state":"NEEDS_INPUT","subject":subject,"acceptance":[],"checks":[],"candidates":candidates,"selected_task":"task-a","delta":"Select A then B","remaining_gap":"Both own proofs required","blocker":"Continue A?"}).to_string()).unwrap();
+    std::fs::write(dir.path().join("mode"), "finish").unwrap();
+    factory.steer(id, "turn-1", "Return tasks").await.unwrap();
+    async fn wait(factory: &Factory, id: &str, state: &str) -> Value {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let result = factory.get(id).await.unwrap();
+                if result["state"] == state {
+                    break result;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap()
+    }
+    let first = wait(&factory, id, "NEEDS_INPUT").await;
+    let a = factory
+        .resume_with_decision(
+            id,
+            Some("Continue A"),
+            first["pending_decision"]["id"].as_str(),
+        )
+        .await
+        .unwrap();
+    let a_attempt = a["control"]["attempts"].as_array().unwrap().last().unwrap()["id"].clone();
+    let a_check = json!({"id":"a-check","kind":"file_sha256","path":"read-only-proof.txt","sha256":digest,"native_item":null,"binding":{"task_id":"task-a","attempt_id":a_attempt,"intent_generation":1,"dispatch_generation":2,"subject":subject,"assumptions":{}}});
+    std::fs::write(dir.path().join("report.json"),json!({"state":"NEEDS_INPUT","subject":subject,"acceptance":[{"id":"A1","passed":true,"accepted":true,"evidence":"A predicate is observed; B still necessary","check_refs":["a-check"]}],"checks":[a_check],"candidates":[],"selected_task":"task-b","delta":"A observed; B remains","remaining_gap":"B needs scoped proof","blocker":"Continue B?"}).to_string()).unwrap();
+    factory
+        .steer(id, a["turn_id"].as_str().unwrap(), "Return A and select B")
+        .await
+        .unwrap();
+    let next = wait(&factory, id, "NEEDS_INPUT").await;
+    let b = factory
+        .resume_with_decision(
+            id,
+            Some("Continue B"),
+            next["pending_decision"]["id"].as_str(),
+        )
+        .await
+        .unwrap();
+    let b_attempt = b["control"]["attempts"].as_array().unwrap().last().unwrap()["id"].clone();
+    let b_check = json!({"id":"b-check","kind":"file_sha256","path":"read-only-proof.txt","sha256":digest,"native_item":null,"binding":{"task_id":"task-b","attempt_id":b_attempt,"intent_generation":1,"dispatch_generation":3,"subject":subject,"assumptions":{}}});
+    std::fs::write(dir.path().join("report.json"),json!({"state":"CONVERGED","subject":subject,"acceptance":[{"id":"A1","passed":true,"accepted":true,"evidence":"Both current task-scoped predicates explicitly rechecked","check_refs":["a-check","b-check"]}],"checks":[a_check,b_check],"candidates":[],"selected_task":"task-b","delta":"Both necessary tasks verified","remaining_gap":"","blocker":null}).to_string()).unwrap();
+    factory
+        .steer(
+            id,
+            b["turn_id"].as_str().unwrap(),
+            "Explicitly re-attest A and B",
+        )
+        .await
+        .unwrap();
+    let done = wait(&factory, id, "CONVERGED").await;
+    assert_eq!(done["claim_held"], false);
+    for task in ["task-a", "task-b"] {
+        assert!(
+            done["control"]["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["id"] == task && item["state"] == "done")
+        );
+    }
+}
+#[tokio::test]
+async fn read_only_check_task_never_permits_native_owner_turn() {
+    let (dir, factory, request) = setup();
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    let subject =
+        luna_factoryd::store::repository_subject(&factory.config.repositories["fixture"].root)
+            .unwrap();
+    std::fs::write(dir.path().join("report.json"),json!({"state":"NEEDS_INPUT","subject":subject,"acceptance":[],"checks":[],"candidates":[{"id":"file-only","title":"Only a file check","criterion_ids":["A1"],"dependencies":[],"assumptions":{},"necessary":true,"effects":["read_only_file_check"]}],"selected_task":"file-only","delta":"Only file effects permitted","remaining_gap":"No native turn permit","blocker":"Continue?"}).to_string()).unwrap();
+    std::fs::write(dir.path().join("mode"), "finish").unwrap();
+    factory
+        .steer(id, "turn-1", "Return effect bounds")
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let result = factory.get(id).await.unwrap();
+            if result["state"] == "NEEDS_INPUT" {
+                break result;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        result["presentation"]["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|action| action["kind"] == "answer")
+            .unwrap()["allowed"],
+        false
+    );
+    let count = calls(&dir).len();
+    assert!(
+        factory
+            .resume_with_decision(
+                id,
+                Some("Keep effects read-only"),
+                result["pending_decision"]["id"].as_str()
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("native_owner_turn_not_permitted")
+    );
+    assert_eq!(calls(&dir).len(), count);
+    factory.cancel(id).await.unwrap();
+}

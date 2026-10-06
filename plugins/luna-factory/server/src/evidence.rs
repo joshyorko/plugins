@@ -78,19 +78,24 @@ pub fn binding_current(control: &Control, binding: &Binding) -> bool {
     control.settlement == crate::control::Settlement::Stopped
         && binding.subject == control.current_subject
         && binding.intent_generation == control.intent_generation
-        && binding.dispatch_generation == control.dispatch_generation
-        && binding
-            .assumptions
+        && control
+            .tasks
+            .get(&binding.task_id)
+            .is_some_and(|task| task.subject == binding.subject && task.claim == "owned")
+        && binding.assumptions == control.assumptions
+        && control
+            .attempts
             .iter()
-            .all(|(id, value)| control.assumptions.get(id) == Some(value))
-        && control.attempts.last().is_some_and(|attempt| {
-            attempt.id == binding.attempt_id
-                && attempt.task_id == binding.task_id
-                && attempt.intent_generation == binding.intent_generation
-                && attempt.dispatch_generation == binding.dispatch_generation
-                && attempt.assumptions == binding.assumptions
-                && matches!(attempt.phase.as_str(), "returned" | "stopped")
-        })
+            .rev()
+            .find(|attempt| attempt.task_id == binding.task_id)
+            .is_some_and(|attempt| {
+                attempt.id == binding.attempt_id
+                    && attempt.task_id == binding.task_id
+                    && attempt.intent_generation == binding.intent_generation
+                    && attempt.dispatch_generation == binding.dispatch_generation
+                    && attempt.assumptions == binding.assumptions
+                    && matches!(attempt.phase.as_str(), "returned" | "stopped")
+            })
 }
 pub fn criterion_current(control: &Control, criterion: &Criterion) -> bool {
     criterion.accepted

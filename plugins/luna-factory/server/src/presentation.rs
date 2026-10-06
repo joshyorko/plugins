@@ -51,6 +51,10 @@ pub fn project(run: &Run, control: &Control, timestamp: u64) -> Value {
                     task.assumptions = control.assumptions.clone();
                 }
                 task.state != crate::control::TaskState::Blocked
+                    && task
+                        .effects
+                        .iter()
+                        .any(|effect| effect == "native_owner_turn")
                     && crate::control::admit_task(control, &task).is_ok()
             });
     let time = run.deadline_at.saturating_sub(timestamp);

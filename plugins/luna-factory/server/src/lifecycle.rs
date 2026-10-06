@@ -1729,6 +1729,18 @@ impl Factory {
             "task_selection_blocked"
         );
         ensure!(
+            run.control
+                .as_ref()
+                .unwrap()
+                .tasks
+                .get(&run.control.as_ref().unwrap().selected_task)
+                .is_some_and(|task| task
+                    .effects
+                    .iter()
+                    .any(|effect| effect == "native_owner_turn")),
+            "native_owner_turn_not_permitted"
+        );
+        ensure!(
             !matches!(
                 run.observed_claim,
                 crate::store::ObservedClaim::Foreign | crate::store::ObservedClaim::Unknown
