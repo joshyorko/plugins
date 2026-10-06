@@ -9,10 +9,10 @@ pub fn public_control(run: &Run, control: &Control) -> Value {
     let criteria: Vec<_>=control.criteria.iter().enumerate().map(|(i,c)|json!({"id":c.id,"description":run.request.acceptance[i],
         "status":if criterion_current(control,c){"proven"}else if c.reason=="failed_or_contradictory_check"{"failed"}else{"unproved"},
         "reason":if criterion_current(control,c){Value::Null}else{json!(c.reason)},"check_refs":c.check_refs})).collect();
-    let tasks: Vec<_>=control.tasks.values().map(|t|json!({"id":t.id,"title":if t.id=="objective"{run.request.objective.as_str()}else{"Observed native child"},
+    let tasks: Vec<_>=control.tasks.values().map(|t|json!({"id":t.id,"title":if t.id=="objective"{run.request.objective.as_str()}else{t.title.as_str()},
         "criterion_ids":t.criteria,"dependencies":t.dependencies,"state":t.state,
-        "admission":if t.necessity=="unverified_native_child"{"unverified"}else{"admitted"},
-        "reason":if t.necessity=="unverified_native_child"{json!("native_child_policy_unverified")}else{Value::Null},
+        "admission":if t.necessity=="unverified_native_child"{"unverified"}else if t.state==crate::control::TaskState::Blocked{"rejected"}else{"admitted"},
+        "reason":if t.necessity=="unverified_native_child"{json!("native_child_policy_unverified")}else{json!(t.reason)},
         "owner_thread":if t.id=="objective"{run.thread_id.as_ref()}else{t.native_thread.as_ref()},
         "attempt_ids":control.attempts.iter().filter(|a|a.task_id==t.id).map(|a|&a.id).collect::<Vec<_>>()})).collect();
     let attempts: Vec<_>=control.attempts.iter().map(|a|json!({"id":a.id,"task_id":a.task_id,"intent_generation":a.intent_generation,
@@ -23,31 +23,55 @@ pub fn public_control(run: &Run, control: &Control) -> Value {
         "criteria":criteria,"tasks":tasks,"attempts":attempts,"effects":effects,"child_policy":control.child_policy})
 }
 pub fn project(run: &Run, control: &Control, timestamp: u64) -> Value {
-    let active = run.dispatch_phase == "active"
-        && run.turn_id.is_some()
-        && matches!(
-            run.state.as_str(),
-            "RUNNING" | "NEEDS_INPUT" | "VERIFYING" | "CANCELLING"
-        );
-    let stopped = run.dispatch_phase == "terminal_observed";
+    let active = control.settlement == crate::control::Settlement::Live;
+    let stopped = control.settlement == crate::control::Settlement::Stopped;
     let unknown = control.unknown_effect()
         || matches!(
-            run.dispatch_phase.as_str(),
-            "thread_start_pending" | "turn_start_pending"
+            run.observed_claim,
+            crate::store::ObservedClaim::Foreign | crate::store::ObservedClaim::Unknown
         );
+    let selection_allowed = control.selection_blocker.is_none()
+        && control
+            .tasks
+            .get(&control.selected_task)
+            .is_some_and(|task| {
+                let mut task = task.clone();
+                if control.selected_task == "objective" {
+                    task.subject = control.current_subject.clone();
+                    task.assumptions = control.assumptions.clone();
+                }
+                task.state != crate::control::TaskState::Blocked
+                    && crate::control::admit_task(control, &task).is_ok()
+            });
     let time = run.deadline_at.saturating_sub(timestamp);
     let repairs = run.request.repair_attempts.saturating_sub(run.repairs_used);
     let needs_diagnosis = control.no_progress_attempts >= 2 && control.diagnosis.is_none();
     let decision = run.pending_decision.is_some() && stopped;
-    let verified = run.state == "CONVERGED" && control.converged() && stopped && !run.claim_held;
+    let verified = control.run_control == crate::control::RunControl::Converged
+        && control.converged()
+        && stopped
+        && !run.claim_held
+        && run.observed_claim == crate::store::ObservedClaim::Released;
     let resumable = matches!(
-        run.state.as_str(),
-        "INTERRUPTED" | "BLOCKED" | "NEEDS_INPUT" | "QUIESCENT" | "CANCELLED"
+        control.run_control,
+        crate::control::RunControl::Interrupted
+            | crate::control::RunControl::Blocked
+            | crate::control::RunControl::NeedsInput
+            | crate::control::RunControl::Quiescent
+            | crate::control::RunControl::Cancelled
     ) && stopped
         && !active
         && !unknown
-        && time > 0;
-    let resume_reason = if control.delivery_unknown() {
+        && time > 0
+        && selection_allowed;
+    let resume_reason = if !selection_allowed {
+        "task_selection_blocked"
+    } else if matches!(
+        run.observed_claim,
+        crate::store::ObservedClaim::Foreign | crate::store::ObservedClaim::Unknown
+    ) {
+        "foreign_or_unknown_claim"
+    } else if control.delivery_unknown() {
         "delivery_certification_unsupported"
     } else if active {
         "owned_execution_active"
@@ -90,7 +114,10 @@ pub fn project(run: &Run, control: &Control, timestamp: u64) -> Value {
         "Correct the owner",
         "current_owned_turn",
         Some("steer_factory_run"),
-        run.state == "RUNNING" && active && time > 0 && !unknown,
+        control.run_control == crate::control::RunControl::Running
+            && active
+            && time > 0
+            && !unknown,
     );
     let cancel = descriptor(
         "cancel",
@@ -121,13 +148,27 @@ pub fn project(run: &Run, control: &Control, timestamp: u64) -> Value {
         } else {
             "inspect_native_evidence"
         },
-        None,
+        Some("get_factory_run"),
         true,
     );
-    let primary = if active {
+    let primary = if control.run_control == crate::control::RunControl::NeedsInput
+        && run.pending_decision.is_none()
+    {
+        descriptor(
+            "inspect",
+            "Open native Codex",
+            "native_approval_requires_native_ui",
+            Some("get_factory_run"),
+            true,
+        )
+    } else if active {
         wait.clone()
     } else if unknown || (!stopped && run.claim_held) {
-        reconcile.clone()
+        if reconcile["allowed"] == true {
+            reconcile.clone()
+        } else {
+            inspect.clone()
+        }
     } else if decision {
         answer.clone()
     } else if resume["allowed"] == true {
@@ -160,12 +201,12 @@ pub fn project(run: &Run, control: &Control, timestamp: u64) -> Value {
     } else {
         ("unverified", "Execution or effect outcome remains unknown")
     };
-    let workers:Vec<_>=run.owned_threads.iter().map(|id|json!({"thread_id":id,"liveness":if run.active_threads.contains(id){"active"}else if stopped{"idle"}else{"unknown"}})).collect();
+    let workers:Vec<_>=run.owned_threads.iter().map(|id|json!({"thread_id":id,"liveness":match control.child_liveness.get(id).copied().unwrap_or_default(){crate::control::Settlement::Live=>"active",crate::control::Settlement::Stopped=>"idle",crate::control::Settlement::Unknown=>"unknown"}})).collect();
     json!({"revision":control.revision,"primary_action":primary,"actions":[wait,refresh,answer,steer,cancel,resume,reconcile,inspect],
         "criteria":{"proven":proven,"failed":failed,"unproved":control.criteria.len()-proven-failed,"mandatory":control.criteria.len()},
-        "result":{"kind":kind,"label":label},"owner":{"thread_id":run.thread_id,"turn_id":run.turn_id,"liveness":if active{"active"}else if stopped{"idle"}else{"unknown"}},
+        "result":{"kind":kind,"label":label},"owner":{"thread_id":run.thread_id,"turn_id":run.turn_id,"liveness":match control.owner_liveness {crate::control::Settlement::Live=>"active",crate::control::Settlement::Stopped=>"idle",crate::control::Settlement::Unknown=>"unknown"}},
         "workers":workers,"budget":{"time_remaining_seconds":time,"repair_attempts_remaining":repairs,"repairs_used":run.repairs_used},
-        "claim":{"held":run.claim_held,"status":if run.claim_held{"owned"}else{"released"}},
+        "claim":{"held":run.claim_held,"status":match run.observed_claim {crate::store::ObservedClaim::Owned=>"owned",crate::store::ObservedClaim::Released=>"released",crate::store::ObservedClaim::Foreign=>"foreign",crate::store::ObservedClaim::Unknown=>"unknown"}},
         "deliverable":{"kind":if run.request.finish=="pr"{"pr_ready"}else{&run.request.finish},"status":if verified&&run.request.finish=="local_candidate"{"verified"}else{"unproved"},"subject":control.current_subject,"reference":null}})
 }
 pub fn authorize_action(

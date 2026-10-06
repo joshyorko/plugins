@@ -3,7 +3,68 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
+fn objective_task() -> String {
+    "objective".into()
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RunControl {
+    Starting,
+    Running,
+    NeedsInput,
+    Verifying,
+    Blocked,
+    Interrupted,
+    Cancelling,
+    Cancelled,
+    Quiescent,
+    Converged,
+    Failed,
+    #[default]
+    Unknown,
+}
+impl RunControl {
+    pub fn legacy(self) -> &'static str {
+        match self {
+            Self::Starting => "STARTING",
+            Self::Running => "RUNNING",
+            Self::NeedsInput => "NEEDS_INPUT",
+            Self::Verifying => "VERIFYING",
+            Self::Blocked | Self::Unknown => "BLOCKED",
+            Self::Interrupted => "INTERRUPTED",
+            Self::Cancelling => "CANCELLING",
+            Self::Cancelled => "CANCELLED",
+            Self::Quiescent => "QUIESCENT",
+            Self::Converged => "CONVERGED",
+            Self::Failed => "FAILED",
+        }
+    }
+    pub fn from_legacy(value: &str) -> Result<Self> {
+        Ok(match value {
+            "STARTING" => Self::Starting,
+            "RUNNING" => Self::Running,
+            "NEEDS_INPUT" => Self::NeedsInput,
+            "VERIFYING" => Self::Verifying,
+            "BLOCKED" => Self::Blocked,
+            "INTERRUPTED" => Self::Interrupted,
+            "CANCELLING" => Self::Cancelling,
+            "CANCELLED" => Self::Cancelled,
+            "QUIESCENT" => Self::Quiescent,
+            "CONVERGED" => Self::Converged,
+            "FAILED" => Self::Failed,
+            _ => anyhow::bail!("invalid_run_control"),
+        })
+    }
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Settlement {
+    #[default]
+    Unknown,
+    Live,
+    Stopped,
+}
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskState {
@@ -36,6 +97,10 @@ pub struct Task {
     pub claim: String,
     pub state: TaskState,
     pub native_thread: Option<String>,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -122,6 +187,18 @@ pub struct Control {
     pub child_policy: String,
     pub migrated: bool,
     #[serde(default)]
+    pub run_control: RunControl,
+    #[serde(default)]
+    pub settlement: Settlement,
+    #[serde(default)]
+    pub owner_liveness: Settlement,
+    #[serde(default)]
+    pub child_liveness: BTreeMap<String, Settlement>,
+    #[serde(default = "objective_task")]
+    pub selected_task: String,
+    #[serde(default)]
+    pub selection_blocker: Option<String>,
+    #[serde(default)]
     pub effects: Vec<Effect>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,6 +246,13 @@ pub enum Event {
     Candidate {
         task: Task,
     },
+    CandidateRejected {
+        task: Task,
+        reason: String,
+    },
+    SelectTask {
+        id: String,
+    },
 }
 
 pub fn bounded_id(id: &str) -> bool {
@@ -215,6 +299,12 @@ impl Control {
             replan_used: false,
             child_policy: "cooperative_unverified".into(),
             migrated: false,
+            run_control: RunControl::Starting,
+            settlement: Settlement::Unknown,
+            owner_liveness: Settlement::Unknown,
+            child_liveness: BTreeMap::new(),
+            selected_task: objective_task(),
+            selection_blocker: None,
             effects: vec![],
         };
         let task = Task {
@@ -228,6 +318,8 @@ impl Control {
             claim: "owned".into(),
             state: TaskState::Candidate,
             native_thread: None,
+            title: "Bounded objective".into(),
+            reason: None,
         };
         control.tasks.insert(task.id.clone(), task);
         admit_task(&control, &control.tasks["objective"])?;
@@ -266,7 +358,17 @@ impl Control {
                     && bounded_id(id)
                     && task.criteria.len() <= 32
                     && task.dependencies.len() <= 128
+                    && task.dependencies.iter().all(|id| bounded_id(id))
+                    && task.title.len() <= 4000
+                    && task
+                        .reason
+                        .as_ref()
+                        .is_none_or(|reason| reason.len() <= 256)
                     && task.assumptions.len() <= 64
+                    && task
+                        .assumptions
+                        .iter()
+                        .all(|(key, value)| bounded_id(key) && bounded_id(value))
                     && bounded_id(&task.subject)
                     && task.necessity.len() <= 1000
                     && task.effects.len() <= 32
@@ -308,6 +410,27 @@ impl Control {
                     && matches!(effect.status.as_str(), "unknown" | "settled")),
             "invalid_effect_state"
         );
+        ensure!(
+            self.selection_blocker
+                .as_ref()
+                .is_none_or(|reason| reason.len() <= 256)
+                && bounded_id(&self.selected_task)
+                && (self.tasks.contains_key(&self.selected_task)
+                    || self.selection_blocker.is_some()),
+            "invalid_task_selection"
+        );
+        ensure!(
+            self.revision <= 9_007_199_254_740_991 && self.child_liveness.len() <= 128,
+            "control_bound_exceeded"
+        );
+        if self.run_control == RunControl::Converged {
+            ensure!(
+                self.converged()
+                    && self.settlement == Settlement::Stopped
+                    && !self.unknown_effect(),
+                "unproved_convergence_state"
+            );
+        }
         Ok(())
     }
     pub fn certified_count(&self) -> usize {
@@ -347,6 +470,16 @@ impl Control {
         })
     }
     pub fn invalidate(&mut self, reason: &str) {
+        if self.run_control == RunControl::Converged {
+            self.run_control = RunControl::Quiescent;
+        }
+        if self
+            .diagnosis
+            .as_ref()
+            .is_some_and(|diagnosis| diagnosis.basis == "observed_checks")
+        {
+            self.diagnosis = None;
+        }
         for criterion in &mut self.criteria {
             criterion.accepted = false;
             criterion.reason = reason.into();
@@ -359,6 +492,9 @@ impl Control {
     }
     pub fn observe_child(&mut self, thread: &str, returned: bool) -> Result<()> {
         ensure!(bounded_id(thread), "invalid_child_identity");
+        self.child_liveness
+            .entry(thread.into())
+            .or_insert(Settlement::Unknown);
         let id = format!("child:{thread}");
         ensure!(
             self.tasks.len() < 128 || self.tasks.contains_key(&id),
@@ -375,6 +511,8 @@ impl Control {
             claim: "unknown".into(),
             state: TaskState::Candidate,
             native_thread: Some(thread.into()),
+            title: "Observed native child".into(),
+            reason: Some("native_child_policy_unverified".into()),
         });
         if returned {
             task.state = TaskState::Verify;
@@ -512,13 +650,24 @@ pub fn reduce(current: &Control, envelope: &EventEnvelope) -> Result<Control> {
                 );
                 next.repairs_used += 1;
             }
-            let task = next.tasks.get_mut("objective").unwrap();
-            task.subject = next.current_subject.clone();
-            task.assumptions = next.assumptions.clone();
-            admit_task(&next, &next.tasks["objective"])?;
+            ensure!(
+                next.attempts.is_empty() || next.settlement == Settlement::Stopped,
+                "native_cessation_unproved"
+            );
+            ensure!(next.selection_blocker.is_none(), "task_selection_blocked");
+            let selected = next.selected_task.clone();
+            let task = next
+                .tasks
+                .get_mut(&selected)
+                .ok_or_else(|| anyhow::anyhow!("selected_task_unavailable"))?;
+            if selected == "objective" {
+                task.subject = next.current_subject.clone();
+                task.assumptions = next.assumptions.clone();
+            }
+            admit_task(&next, &next.tasks[&selected])?;
             next.attempts.push(Attempt {
                 id: id.clone(),
-                task_id: "objective".into(),
+                task_id: selected.clone(),
                 parent: next.attempts.last().map(|a| a.id.clone()),
                 intent_generation: next.intent_generation,
                 dispatch_generation: *generation,
@@ -530,7 +679,10 @@ pub fn reduce(current: &Control, envelope: &EventEnvelope) -> Result<Control> {
                 diagnosis: next.diagnosis.take(),
             });
             next.dispatch_generation = *generation;
-            next.tasks.get_mut("objective").unwrap().state = TaskState::Ready;
+            next.run_control = RunControl::Starting;
+            next.settlement = Settlement::Unknown;
+            next.owner_liveness = Settlement::Unknown;
+            next.tasks.get_mut(&selected).unwrap().state = TaskState::Ready;
             next.invalidate("new_dispatch_requires_verification");
         }
         Event::Acknowledged { id, turn_id } => {
@@ -559,7 +711,9 @@ pub fn reduce(current: &Control, envelope: &EventEnvelope) -> Result<Control> {
                 .find(|a| &a.id == id)
                 .ok_or_else(|| anyhow::anyhow!("attempt_not_found"))?;
             attempt.phase = "returned".into();
-            next.tasks.get_mut("objective").unwrap().state = TaskState::Verify;
+            next.run_control = RunControl::Verifying;
+            let task_id = attempt.task_id.clone();
+            next.tasks.get_mut(&task_id).unwrap().state = TaskState::Verify;
         }
         Event::Subject { subject } => {
             ensure!(bounded_id(subject), "invalid_subject");
@@ -619,6 +773,35 @@ pub fn reduce(current: &Control, envelope: &EventEnvelope) -> Result<Control> {
                 "delivery_certification_unsupported"
             );
             effect.status = "settled".into();
+        }
+        Event::CandidateRejected { task, reason } => {
+            ensure!(
+                bounded_id(&task.id)
+                    && reason.len() <= 256
+                    && next.tasks.len() < 128
+                    && !next.tasks.contains_key(&task.id),
+                "candidate_record_denied"
+            );
+            let mut task = task.clone();
+            task.state = TaskState::Blocked;
+            task.reason = Some(reason.clone());
+            next.tasks.insert(task.id.clone(), task);
+        }
+        Event::SelectTask { id } => {
+            let task = next
+                .tasks
+                .get(id)
+                .ok_or_else(|| anyhow::anyhow!("selected_task_unavailable"))?;
+            ensure!(
+                matches!(
+                    task.state,
+                    TaskState::Ready | TaskState::Verify | TaskState::Done
+                ),
+                "selected_task_not_admitted"
+            );
+            admit_task(&next, task)?;
+            next.selected_task = id.clone();
+            next.selection_blocker = None;
         }
         Event::Candidate { task } => {
             ensure!(

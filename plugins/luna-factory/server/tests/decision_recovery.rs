@@ -105,7 +105,8 @@ async fn terminal_decision_survives_factory_startup() {
     run.thread_id = Some("owner".into());
     run.turn_id = Some("turn-1".into());
     run.dispatch_phase = "terminal_observed".into();
-    run.state = "NEEDS_INPUT".into();
+    run.control.as_mut().unwrap().settlement = luna_factoryd::control::Settlement::Stopped;
+    run.set_state(luna_factoryd::control::RunControl::NeedsInput);
     run.blocker = Some("Should the optional migration be omitted?".into());
     // Imported pre-dispatch-ID terminal identity retains its observed generation,
     // but supplies no invented attempt or acceptance proof.
@@ -135,7 +136,8 @@ async fn terminal_decision_survives_reconcile_and_remains_answerable_with_zero_r
     run.thread_id = Some("owner".into());
     run.turn_id = Some("turn-1".into());
     run.dispatch_phase = "terminal_observed".into();
-    run.state = "NEEDS_INPUT".into();
+    run.control.as_mut().unwrap().settlement = luna_factoryd::control::Settlement::Stopped;
+    run.set_state(luna_factoryd::control::RunControl::NeedsInput);
     run.blocker = Some("Should the optional migration be omitted?".into());
     // Imported pre-dispatch-ID terminal identity retains its observed generation,
     // but supplies no invented attempt or acceptance proof.

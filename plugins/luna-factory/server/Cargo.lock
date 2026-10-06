@@ -742,6 +742,7 @@ dependencies = [
  "clap",
  "fs2",
  "http-body-util",
+ "libc",
  "rmcp",
  "rusqlite",
  "serde",

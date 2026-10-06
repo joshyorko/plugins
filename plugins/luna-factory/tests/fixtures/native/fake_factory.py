@@ -2,6 +2,7 @@
 """Synthetic end-to-end factory protocol. No Codex or inference is used."""
 import json
 import pathlib
+import re
 import sys
 
 home = pathlib.Path(__file__).parent
@@ -19,7 +20,7 @@ def report_for(turn):
     report=json.loads((home / "report.json").read_text())
     if report.pop("_fixture_bind_dispatch",False):
         for check in report.get("checks",[]):
-            check["binding"]={"task_id":"objective","attempt_id":turn["client_id"],
+            check["binding"]={"task_id":turn.get("task_id","objective"),"attempt_id":turn["client_id"],
                 "intent_generation":1,"dispatch_generation":int(turn["id"].split("-")[-1]),
                 "subject":report["subject"],"assumptions":{}}
     return report
@@ -50,7 +51,9 @@ for line in sys.stdin:
             continue
         turn_number += 1
         active = {"owner": True, "child": True}
-        history.append({"id":f"turn-{turn_number}","status":"inProgress","client_id":params.get("clientUserMessageId")})
+        packet="\n".join(item.get("text","") for item in params.get("input",[]) if item.get("type")=="text")
+        selected=re.search(r"CONTROL: task_id=([^,]+),",packet)
+        history.append({"id":f"turn-{turn_number}","status":"inProgress","client_id":params.get("clientUserMessageId"),"task_id":selected.group(1) if selected else "objective"})
         if mode=="lost_ack_completed":
             active={"owner":False,"child":False};history[-1]["status"]="completed"
             history_path.write_text(json.dumps(history))
@@ -68,10 +71,15 @@ for line in sys.stdin:
         result = {"data": [{"id": "child", "parentThreadId": "owner"}] if turn_number else []}
     elif method == "thread/loaded/list":
         result = {"data": ["owner", "child"] if turn_number else ["owner"]}
-    elif method == "turn/steer" and mode == "finish":
+    elif method == "turn/steer" and mode == "lost_steer_ack":
+        emit({"id":message["id"],"error":{"code":-32000,"message":"synthetic uncertain steering acknowledgement"}})
+        continue
+    elif method == "turn/steer" and mode in ("finish", "finish_external"):
         active = {"owner": False,"child": False}
         history[-1]["status"]="completed";history_path.write_text(json.dumps(history))
         report = report_for(history[-1])
+        if mode=="finish_external":
+            emit({"method":"item/completed","params":{"threadId":"owner","turnId":f"turn-{turn_number}","item":{"id":"push-item","type":"commandExecution","command":"git push origin synthetic-branch","status":"completed","exitCode":0}}})
         emit({"method":"item/completed","params":{"threadId":"owner","turnId":f"turn-{turn_number}","item":{"id":"final","type":"agentMessage","phase":"final_answer","text":json.dumps(report)}}})
         emit({"method":"turn/completed","params":{"threadId":"owner","turn":{"id":f"turn-{turn_number}","status":"completed","items":[]}}})
     elif method == "turn/steer" and mode.startswith("reroute_"):
@@ -92,7 +100,7 @@ for line in sys.stdin:
             route["toModel"]="https://synthetic.invalid/sk-synthetic-secret"
         emit({"method":"model/rerouted","params":route})
         emit({"method":"model/rerouted","params":route})
-    elif method == "thread/items/list" and mode == "finish" and params["threadId"] == "owner":
+    elif method == "thread/items/list" and mode in ("finish", "finish_external") and params["threadId"] == "owner":
         result = {"data":[{"id":"final","type":"agentMessage","phase":"final_answer","text":json.dumps(report_for(history[-1]))}]}
     elif method == "thread/backgroundTerminals/list":
         tid=params["threadId"];terminal_reads[tid]=terminal_reads.get(tid,0)+1

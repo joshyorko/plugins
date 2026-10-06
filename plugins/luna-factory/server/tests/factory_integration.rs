@@ -508,7 +508,7 @@ async fn missing_dispatch_correlation_keeps_claim_without_a_new_turn() {
     let mut run = store.admit(&config, &request).unwrap().run;
     run.thread_id = Some("owner".into());
     run.dispatch_phase = "turn_start_pending".into();
-    run.state = "BLOCKED".into();
+    run.set_state(luna_factoryd::control::RunControl::Blocked);
     let mut value = serde_json::to_value(&run).unwrap();
     value["dispatch_id"] = json!("missing-dispatch");
     run = serde_json::from_value(value).unwrap();
@@ -906,9 +906,362 @@ async fn unproved_delivery_cannot_offer_retry_or_release_its_claim() {
         count,
         "delivery uncertainty contacted native runtime before denial"
     );
+    let stopped = factory.cancel(id).await.unwrap();
     assert_eq!(
-        factory.cancel(id).await.unwrap()["claim_held"],
-        true,
+        stopped["claim_held"], true,
         "unknown external effect released its claim"
     );
+    assert!(
+        stopped["delta"]
+            .as_str()
+            .unwrap()
+            .contains("claim retained")
+    );
+}
+#[tokio::test]
+async fn uncertain_steer_intent_blocks_replay_of_the_same_native_correction() {
+    let (dir, factory, request) = setup();
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    std::fs::write(dir.path().join("mode"), "lost_steer_ack").unwrap();
+    assert!(
+        factory
+            .steer(id, "turn-1", "One bounded correction")
+            .await
+            .is_err()
+    );
+    let count = calls(&dir).len();
+    assert!(
+        factory
+            .steer(id, "turn-1", "One bounded correction")
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        calls(&dir).len(),
+        count,
+        "uncertain steering effect was replayed"
+    );
+    let result = factory.cancel(id).await.unwrap();
+    assert!(result["claim_held"] == true || result["state"] == "CANCELLED");
+}
+#[tokio::test]
+async fn two_no_progress_returns_require_explicit_labelled_diagnosis_without_budget_reset() {
+    let (dir, base, mut request) = setup();
+    let mut config = (*base.config).clone();
+    drop(base);
+    config.limits.repair_attempts = 3;
+    request.repair_attempts = 3;
+    let factory = Factory::new(config).unwrap();
+    let mut run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap().to_owned();
+    let deadline = run["deadline_at"].clone();
+    for attempt in 0..2 {
+        let subject =
+            luna_factoryd::store::repository_subject(&factory.config.repositories["fixture"].root)
+                .unwrap();
+        std::fs::write(dir.path().join("report.json"),json!({"state":"BLOCKED","subject":subject,"acceptance":[],"checks":[],"delta":"No current criterion proof","remaining_gap":"Failed predicate remains","blocker":"Predicate unproved"}).to_string()).unwrap();
+        std::fs::write(dir.path().join("mode"), "finish").unwrap();
+        factory
+            .steer(
+                &id,
+                run["turn_id"].as_str().unwrap(),
+                "Return retained failure",
+            )
+            .await
+            .unwrap();
+        run = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let result = factory.get(&id).await.unwrap();
+                if result["state"] == "BLOCKED" {
+                    break result;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        if attempt == 0 {
+            run = factory.resume(&id).await.unwrap();
+        }
+    }
+    let count = calls(&dir).len();
+    assert!(
+        factory
+            .resume_with_input(&id, Some("Ordinary text is not a diagnosis"))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("diagnosis_required")
+    );
+    assert_eq!(
+        calls(&dir).len(),
+        count,
+        "denied repair contacted native runtime"
+    );
+    let diagnosis = luna_factoryd::control::Diagnosis {
+        summary: "The retained predicate is unchanged; narrow the correction".into(),
+        basis: "operator_semantic".into(),
+        check_refs: vec![],
+        same_goal_replan: true,
+    };
+    let repaired = factory
+        .resume_with_diagnosis(&id, None, None, None, Some(diagnosis.clone()))
+        .await
+        .unwrap();
+    assert_eq!(repaired["repairs_used"], 2);
+    assert_eq!(repaired["deadline_at"], deadline);
+    assert_eq!(repaired["control"]["intent_generation"], 1);
+    assert_eq!(repaired["control"]["attempts"].as_array().unwrap().len(), 3);
+    factory.cancel(&id).await.unwrap();
+    let count = calls(&dir).len();
+    assert!(
+        factory
+            .resume_with_diagnosis(&id, None, None, None, Some(diagnosis))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("replan_denied")
+    );
+    assert_eq!(calls(&dir).len(), count);
+}
+#[tokio::test]
+async fn owner_candidate_selection_gates_the_real_next_native_packet() {
+    let (dir, factory, request) = setup();
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    let subject =
+        luna_factoryd::store::repository_subject(&factory.config.repositories["fixture"].root)
+            .unwrap();
+    let candidate = json!({"id":"bounded-check","title":"One necessary bounded check","criterion_ids":["A1"],"dependencies":[],"assumptions":{},"necessary":true,"effects":["native_owner_turn"]});
+    std::fs::write(dir.path().join("report.json"),json!({"state":"NEEDS_INPUT","subject":subject,"acceptance":[],"checks":[],"candidates":[candidate],"selected_task":"bounded-check","delta":"One bounded candidate proposed","remaining_gap":"A1 needs proof","blocker":"Continue the selected task?"}).to_string()).unwrap();
+    std::fs::write(dir.path().join("mode"), "finish").unwrap();
+    factory
+        .steer(id, "turn-1", "Return proposal")
+        .await
+        .unwrap();
+    let proposed = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let result = factory.get(id).await.unwrap();
+            if result["state"] == "NEEDS_INPUT" {
+                break result;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        proposed["control"]["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|task| task["id"] == "bounded-check"
+                && task["state"] == "ready"
+                && task["admission"] == "admitted")
+    );
+    let resumed = factory
+        .resume_with_decision(
+            id,
+            Some("Continue within the original objective"),
+            proposed["pending_decision"]["id"].as_str(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resumed["control"]["attempts"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()["task_id"],
+        "bounded-check"
+    );
+    let history = calls(&dir);
+    assert!(
+        history
+            .iter()
+            .rev()
+            .find(|call| call["method"] == "turn/start")
+            .unwrap()["params"]
+            .to_string()
+            .contains("task_id=bounded-check")
+    );
+    assert_eq!(resumed["owner_thread"], run["owner_thread"]);
+    assert_eq!(resumed["deadline_at"], run["deadline_at"]);
+    predicate_report(
+        &dir,
+        &factory,
+        "Selected task supplied a current independent predicate",
+    );
+    factory
+        .steer(
+            id,
+            resumed["turn_id"].as_str().unwrap(),
+            "Return current proof",
+        )
+        .await
+        .unwrap();
+    let accepted = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let result = factory.get(id).await.unwrap();
+            if result["state"] == "CONVERGED" {
+                break result;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        accepted["control"]["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|task| task["id"] == "bounded-check" && task["state"] == "done")
+    );
+    assert_eq!(accepted["presentation"]["criteria"]["proven"], 1);
+    assert_eq!(accepted["claim_held"], false);
+}
+#[tokio::test]
+async fn rejected_owner_candidates_never_authorize_a_managed_dispatch() {
+    for mode in [
+        "missing",
+        "cycle",
+        "stale_assumption",
+        "foreign_claim",
+        "effect",
+        "necessity",
+    ] {
+        let (dir, factory, request) = setup();
+        let run = factory.start(request).await.unwrap();
+        let id = run["id"].as_str().unwrap();
+        let subject =
+            luna_factoryd::store::repository_subject(&factory.config.repositories["fixture"].root)
+                .unwrap();
+        let mut candidate = json!({"id":"bounded-check","title":"Proposed bounded check","criterion_ids":["A1"],"dependencies":[],"assumptions":{},"necessary":true,"effects":["native_owner_turn"]});
+        match mode {
+            "missing" => candidate["dependencies"] = json!(["missing"]),
+            "cycle" => candidate["dependencies"] = json!(["bounded-check"]),
+            "stale_assumption" => candidate["assumptions"] = json!({"acceptance":"old"}),
+            "foreign_claim" => candidate["claim"] = json!("foreign"),
+            "effect" => candidate["effects"] = json!(["merge"]),
+            "necessity" => candidate["necessary"] = json!(false),
+            _ => unreachable!(),
+        }
+        std::fs::write(dir.path().join("report.json"),json!({"state":"NEEDS_INPUT","subject":subject,"acceptance":[],"checks":[],"candidates":[candidate],"selected_task":"bounded-check","delta":"Proposed work","remaining_gap":"Admission is unresolved","blocker":"Continue?"}).to_string()).unwrap();
+        std::fs::write(dir.path().join("mode"), "finish").unwrap();
+        factory
+            .steer(id, "turn-1", "Return proposal")
+            .await
+            .unwrap();
+        let proposed = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let result = factory.get(id).await.unwrap();
+                if result["state"] == "BLOCKED" {
+                    break result;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            !proposed["control"]["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|task| task["id"] == "bounded-check" && task["state"] == "ready"),
+            "{mode} became READY"
+        );
+        let count = calls(&dir).len();
+        assert!(factory.resume(id).await.is_err(), "{mode} dispatched");
+        assert_eq!(
+            calls(&dir).len(),
+            count,
+            "{mode} contacted native runtime on denial"
+        );
+        factory.cancel(id).await.unwrap();
+    }
+}
+#[tokio::test]
+async fn ignored_file_predicate_changes_invalidate_current_completion() {
+    let (dir, factory, request) = setup();
+    let root = &factory.config.repositories["fixture"].root;
+    std::fs::write(root.join(".gitignore"), "predicate.txt\n").unwrap();
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    let subject = predicate_report(&dir, &factory, "Ignored artifact was independently checked");
+    std::fs::write(dir.path().join("mode"), "finish").unwrap();
+    factory.steer(id, "turn-1", "Return proof").await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if factory.get(id).await.unwrap()["state"] == "CONVERGED" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    std::fs::write(root.join("predicate.txt"), "changed ignored artifact").unwrap();
+    assert_eq!(
+        luna_factoryd::store::repository_subject(root).unwrap(),
+        subject
+    );
+    let count = calls(&dir).len();
+    let changed = factory.get(id).await.unwrap();
+    assert_ne!(changed["state"], "CONVERGED");
+    assert_eq!(changed["presentation"]["criteria"]["proven"], 0);
+    assert_eq!(calls(&dir).len(), count);
+}
+#[tokio::test]
+async fn observed_push_remains_unknown_even_when_owner_requests_an_answer() {
+    let (dir, base, mut request) = setup();
+    let mut config = (*base.config).clone();
+    drop(base);
+    config.repositories.get_mut("fixture").unwrap().max_finish = "push".into();
+    request.finish = "push".into();
+    let factory = Factory::new(config).unwrap();
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    let subject =
+        luna_factoryd::store::repository_subject(&factory.config.repositories["fixture"].root)
+            .unwrap();
+    std::fs::write(dir.path().join("report.json"),json!({"state":"NEEDS_INPUT","subject":subject,"acceptance":[],"checks":[],"delta":"Push result is uncertain","remaining_gap":"Remote effect needs settlement","blocker":"Retry the uncertain push?"}).to_string()).unwrap();
+    std::fs::write(dir.path().join("mode"), "finish_external").unwrap();
+    factory
+        .steer(id, "turn-1", "Return the actual uncertainty")
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let result = factory.get(id).await.unwrap();
+            if result["state"] == "NEEDS_INPUT" {
+                break result;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let answer = result["presentation"]["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|action| action["kind"] == "answer")
+        .unwrap();
+    assert_eq!(answer["allowed"], false);
+    let count = calls(&dir).len();
+    assert!(
+        factory
+            .resume_with_decision(
+                id,
+                Some("Do not repeat an uncertain effect"),
+                result["pending_decision"]["id"].as_str()
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(calls(&dir).len(), count);
+    assert_eq!(factory.cancel(id).await.unwrap()["claim_held"], true);
 }

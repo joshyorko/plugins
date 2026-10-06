@@ -75,7 +75,8 @@ fn valid_digest(digest: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 pub fn binding_current(control: &Control, binding: &Binding) -> bool {
-    binding.subject == control.current_subject
+    control.settlement == crate::control::Settlement::Stopped
+        && binding.subject == control.current_subject
         && binding.intent_generation == control.intent_generation
         && binding.dispatch_generation == control.dispatch_generation
         && binding
@@ -110,7 +111,49 @@ pub fn criterion_current(control: &Control, criterion: &Criterion) -> bool {
                     .is_some_and(|task| task.criteria.contains(&criterion.id))
         })
 }
-/// Bounded regular file hashing inside the already-approved source root. No content is retained.
+/// Each directory descriptor is anchored below the approved root. No path-based
+/// follow is permitted, including a parent swapped while verification runs.
+#[cfg(unix)]
+fn open_predicate(root: &Path, relative: &Path) -> Result<std::fs::File> {
+    use std::{
+        ffi::CString,
+        os::{
+            fd::{AsRawFd, FromRawFd},
+            unix::{ffi::OsStrExt, fs::OpenOptionsExt},
+        },
+    };
+    let mut descriptor = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(root.canonicalize()?)?;
+    let components: Vec<_> = relative.components().collect();
+    for (index, component) in components.iter().enumerate() {
+        let Component::Normal(name) = component else {
+            anyhow::bail!("check_path_escape")
+        };
+        let name = CString::new(name.as_bytes()).context("invalid_check_path")?;
+        let flags = libc::O_RDONLY
+            | libc::O_NOFOLLOW
+            | libc::O_CLOEXEC
+            | libc::O_NONBLOCK
+            | if index + 1 < components.len() {
+                libc::O_DIRECTORY
+            } else {
+                0
+            };
+        // SAFETY: descriptor is live, name is NUL-terminated, and no creation
+        // flags are used. The returned descriptor is owned exactly once.
+        let fd = unsafe { libc::openat(descriptor.as_raw_fd(), name.as_ptr(), flags) };
+        ensure!(fd >= 0, "check_open_rejected");
+        descriptor = unsafe { std::fs::File::from_raw_fd(fd) };
+    }
+    Ok(descriptor)
+}
+#[cfg(not(unix))]
+fn open_predicate(_root: &Path, _relative: &Path) -> Result<std::fs::File> {
+    anyhow::bail!("file_predicate_platform_unsupported")
+}
+/// Hash a bounded regular file without retaining content or executing commands.
 pub fn file_digest(root: &Path, relative: &str) -> Result<String> {
     ensure!(
         !relative.is_empty() && relative.len() <= 512,
@@ -120,54 +163,24 @@ pub fn file_digest(root: &Path, relative: &str) -> Result<String> {
     ensure!(
         relative
             .components()
-            .all(|component| matches!(component,Component::Normal(name) if name != ".git")),
+            .all(|component| matches!(component,Component::Normal(name) if name!=".git")),
         "check_path_escape"
     );
-    let root = root.canonicalize()?;
-    let mut path = root.clone();
-    for component in relative.components() {
-        path.push(component);
-        ensure!(
-            !std::fs::symlink_metadata(&path)?.file_type().is_symlink(),
-            "check_symlink_rejected"
-        );
-    }
-    ensure!(path.canonicalize()?.starts_with(&root), "check_path_escape");
-    let before = std::fs::symlink_metadata(&path)?;
+    let mut file = open_predicate(root, relative)?;
+    let before = file.metadata()?;
     ensure!(
         before.is_file() && before.len() <= 1024 * 1024,
         "check_requires_bounded_regular_file"
     );
-    let file = std::fs::File::open(&path)?;
-    let opened = file.metadata()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        ensure!(
-            before.dev() == opened.dev() && before.ino() == opened.ino(),
-            "check_file_changed_during_open"
-        );
-    }
-    ensure!(
-        opened.is_file() && opened.len() == before.len(),
-        "check_file_changed_during_open"
-    );
     let mut data = vec![];
-    file.take(1024 * 1024 + 1).read_to_end(&mut data)?;
-    ensure!(data.len() <= 1024 * 1024, "check_file_bound_exceeded");
-    let after = std::fs::symlink_metadata(&path)?;
+    (&mut file).take(1024 * 1024 + 1).read_to_end(&mut data)?;
+    let after = file.metadata()?;
     ensure!(
-        after.is_file() && before.len() == after.len() && before.modified()? == after.modified()?,
+        data.len() <= 1024 * 1024
+            && before.len() == after.len()
+            && before.modified()? == after.modified()?,
         "check_file_changed_during_read"
     );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        ensure!(
-            opened.dev() == after.dev() && opened.ino() == after.ino(),
-            "check_file_replaced_during_read"
-        );
-    }
     Ok(format!("{:x}", Sha256::digest(&data)))
 }
 fn record(control: &mut Control, mut observation: ObservedCheck) -> Result<()> {
@@ -368,9 +381,22 @@ pub fn reconcile_report(control: &mut Control, report: &Value, root: &Path) -> R
     for (criterion, reason) in control.criteria.iter_mut().zip(reasons) {
         criterion.reason = reason.into();
     }
-    if control.converged() {
-        control.tasks.get_mut("objective").unwrap().state = TaskState::Done;
+    let proven: std::collections::BTreeSet<_> = control
+        .criteria
+        .iter()
+        .filter(|criterion| criterion_current(control, criterion))
+        .map(|criterion| criterion.id.clone())
+        .collect();
+    for task in control.tasks.values_mut() {
+        if !task.criteria.is_empty()
+            && task.necessity != "unverified_native_child"
+            && task.criteria.iter().all(|id| proven.contains(id))
+        {
+            task.state = TaskState::Done;
+            task.subject = control.current_subject.clone();
+        }
     }
+
     if let Some(attempt) = control.attempts.last() {
         if control.certified_count() > attempt.certified_before {
             control.no_progress_attempts = 0;
@@ -379,4 +405,75 @@ pub fn reconcile_report(control: &mut Control, report: &Value, root: &Path) -> R
         }
     }
     Ok(())
+}
+
+/// A recognized command is an observation of a possible external effect, not
+/// shell analysis or pre-action enforcement. Exit zero cannot settle delivery.
+pub fn observe_external_command(control: &mut Control, thread: &str, item: &Value) -> Result<()> {
+    if item["type"] != "commandExecution" {
+        return Ok(());
+    }
+    let Some(command) = item["command"].as_str() else {
+        return Ok(());
+    };
+    let kind = if command.contains("git push") {
+        Some(crate::control::EffectKind::Push)
+    } else if command.contains("gh pr create") || command.contains("gh pr edit") {
+        Some(crate::control::EffectKind::Pr)
+    } else {
+        None
+    };
+    if let Some(kind) = kind {
+        let id = item["id"].as_str().context("command_identity_missing")?;
+        control.observe_effect(&format!("native-effect:{thread}:{id}"), kind)?;
+    }
+    Ok(())
+}
+/// Git subjects exclude ignored artifacts. Current file predicates therefore
+/// need their own bounded observations before a read can advertise current proof.
+pub fn revalidate_files(control: &mut Control, root: &Path) -> Result<bool> {
+    let mut changed = false;
+    let indices: Vec<_> = control
+        .checks
+        .iter()
+        .enumerate()
+        .filter(|(_, check)| {
+            check.kind == "file_sha256"
+                && check.outcome == "passed"
+                && binding_current(control, &check.binding)
+        })
+        .map(|(index, _)| index)
+        .collect();
+    for index in indices {
+        let check = &mut control.checks[index];
+        let digest = check
+            .path
+            .as_deref()
+            .and_then(|path| file_digest(root, path).ok());
+        if digest != check.observed_sha256 {
+            check.outcome = if digest.is_some() {
+                "failed"
+            } else {
+                "unverified"
+            }
+            .into();
+            check.reason = "observed_file_changed_or_missing".into();
+            check.observed_sha256 = digest;
+            changed = true;
+        }
+    }
+    if changed {
+        control.invalidate("observed_file_changed_or_missing");
+        for criterion in &mut control.criteria {
+            if criterion.check_refs.iter().any(|id| {
+                control
+                    .checks
+                    .iter()
+                    .any(|check| &check.id == id && check.outcome == "failed")
+            }) {
+                criterion.reason = "failed_or_contradictory_check".into();
+            }
+        }
+    }
+    Ok(changed)
 }

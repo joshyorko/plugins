@@ -77,6 +77,7 @@ fn unknown_effect_no_progress_and_original_budget_gate_repairs() {
         },
     )
     .unwrap();
+    stopped.settlement = luna_factoryd::control::Settlement::Stopped;
     stopped.no_progress_attempts = 2;
     assert!(
         reduce(
@@ -295,4 +296,281 @@ fn legacy_import_preserves_claim_decision_dispatch_identity_deadline_and_budget_
         .unwrap();
     drop(connection);
     assert!(Store::open(&config).is_err(), "corrupt snapshot accepted");
+}
+#[test]
+fn read_detects_changed_snapshot_and_foreign_claim_projection() {
+    use luna_factoryd::store::Store;
+    let (_dir, config, request) = store_setup();
+    let mut store = Store::open(&config).unwrap();
+    let mut first = store.admit(&config, &request).unwrap().run;
+    first.set_state(luna_factoryd::control::RunControl::Cancelled);
+    first.thread_id = Some("first-owner".into());
+    first.dispatch_phase = "terminal_observed".into();
+    first.control.as_mut().unwrap().settlement = luna_factoryd::control::Settlement::Stopped;
+    store.release_verified(&mut first).unwrap();
+    let mut second_request = request.clone();
+    second_request.idempotency_key = "other-owner".into();
+    store.admit(&config, &second_request).unwrap();
+    let observed = store.get(&first.id).unwrap();
+    let view =
+        luna_factoryd::presentation::project(&observed, observed.control.as_ref().unwrap(), 0);
+    assert_eq!(view["claim"]["status"], "foreign");
+    assert_eq!(
+        view["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|action| action["kind"] == "resume")
+            .unwrap()["allowed"],
+        false
+    );
+    let connection = rusqlite::Connection::open(&config.database).unwrap();
+    connection.execute("UPDATE runs SET payload=json_set(payload,'$.control.current_subject','valid-but-corrupt') WHERE id=?1",[&first.id]).unwrap();
+    assert!(
+        store.get(&first.id).is_err(),
+        "changed snapshot read bypassed journal validation"
+    );
+}
+
+#[test]
+fn matching_donor_conformance_cases_use_the_production_core() {
+    use luna_factoryd::{
+        control::admit_task,
+        evidence::{Binding, ObservedCheck, criterion_current},
+        store::Store,
+    };
+    use serde_json::{Value, json};
+    let corpus: Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/control-conformance.json"
+    ))
+    .unwrap();
+    assert_eq!(corpus["schema_version"], 1);
+    let cases = corpus["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 10);
+    for case in cases {
+        assert_eq!(case["donor"]["sha"].as_str().unwrap().len(), 40);
+        let input = &case["input"];
+        let id = case["id"].as_str().unwrap();
+        let output = match id {
+            "stale_revision" => {
+                let mut control = initial();
+                control.revision = input["current_revision"].as_u64().unwrap();
+                let accepted = reduce(
+                    &control,
+                    &EventEnvelope {
+                        id: "fixture-event".into(),
+                        expected_revision: input["expected_revision"].as_u64().unwrap(),
+                        event: Event::Subject {
+                            subject: "next".into(),
+                        },
+                    },
+                )
+                .is_ok();
+                json!({"accepted":accepted,"effects_executed":0})
+            }
+            "duplicate_event_conflict" => {
+                let (_dir, config, request) = store_setup();
+                let mut store = Store::open(&config).unwrap();
+                let mut run = store.admit(&config, &request).unwrap().run;
+                let first = EventEnvelope {
+                    id: input["event_id"].as_str().unwrap().into(),
+                    expected_revision: 0,
+                    event: Event::Dispatch {
+                        id: input["first_payload"].as_str().unwrap().into(),
+                        generation: 1,
+                        repair: false,
+                    },
+                };
+                store.apply_event(&mut run, &first).unwrap();
+                let before = run.control.clone().unwrap();
+                let mut conflict = first;
+                conflict.event = Event::Subject {
+                    subject: input["second_payload"].as_str().unwrap().into(),
+                };
+                let accepted = store.apply_event(&mut run, &conflict).is_ok();
+                json!({"accepted":accepted,"state_overwritten":store.get(&run.id).unwrap().control.unwrap()!=before})
+            }
+            "unknown_effect_repair" | "dispatch_generation_same_goal" => {
+                let control = initial();
+                let mut next = reduce(
+                    &control,
+                    &EventEnvelope {
+                        id: "first".into(),
+                        expected_revision: 0,
+                        event: Event::Dispatch {
+                            id: "first".into(),
+                            generation: 1,
+                            repair: false,
+                        },
+                    },
+                )
+                .unwrap();
+                if id == "dispatch_generation_same_goal" {
+                    next = reduce(
+                        &next,
+                        &EventEnvelope {
+                            id: "return".into(),
+                            expected_revision: 1,
+                            event: Event::Returned { id: "first".into() },
+                        },
+                    )
+                    .unwrap();
+                    next.settlement = luna_factoryd::control::Settlement::Stopped;
+                }
+                let repair = reduce(
+                    &next,
+                    &EventEnvelope {
+                        id: "repair".into(),
+                        expected_revision: next.revision,
+                        event: Event::Dispatch {
+                            id: "repair".into(),
+                            generation: 2,
+                            repair: true,
+                        },
+                    },
+                );
+                if id == "unknown_effect_repair" {
+                    let (_dir, config, request) = store_setup();
+                    let mut store = Store::open(&config).unwrap();
+                    let mut run = store.admit(&config, &request).unwrap().run;
+                    run.thread_id = Some("observed-fixture-owner".into());
+                    run.set_state(luna_factoryd::control::RunControl::Blocked);
+                    assert_eq!(input["effect"], "pr_create");
+                    assert_eq!(input["settlement"], "unknown");
+                    run.control
+                        .as_mut()
+                        .unwrap()
+                        .observe_effect("unsettled-pr", luna_factoryd::control::EffectKind::Pr)
+                        .unwrap();
+                    let projected = luna_factoryd::presentation::project(
+                        &run,
+                        run.control.as_ref().unwrap(),
+                        0,
+                    );
+                    let actions = projected["actions"].as_array().unwrap();
+                    json!({"repair_allowed":actions.iter().find(|action|action["kind"]=="resume").unwrap()["allowed"],"reconciliation_available":actions.iter().find(|action|action["kind"]=="reconcile").unwrap()["allowed"]})
+                } else {
+                    let repaired = repair.unwrap();
+                    json!({"intent_generation":repaired.intent_generation,"dispatch_generation":repaired.dispatch_generation,"budget_reset":repaired.deadline_at!=control.deadline_at||repaired.repair_limit!=control.repair_limit||repaired.repairs_used<control.repairs_used})
+                }
+            }
+            "admission_missing_dependency"
+            | "admission_cycle"
+            | "admission_stale_assumption"
+            | "admission_foreign_claim" => {
+                let mut control = initial();
+                let mut task = control.tasks["objective"].clone();
+                task.id = input["candidate"].as_str().unwrap_or("candidate").into();
+                if let Some(deps) = input.get("dependencies") {
+                    task.dependencies = serde_json::from_value(deps.clone()).unwrap();
+                }
+                if id == "admission_cycle" {
+                    for known in input["known_tasks"].as_array().unwrap() {
+                        let mut dependency = task.clone();
+                        dependency.id = known["id"].as_str().unwrap().into();
+                        dependency.dependencies =
+                            serde_json::from_value(known["dependencies"].clone()).unwrap();
+                        dependency.state = TaskState::Candidate;
+                        control.tasks.insert(dependency.id.clone(), dependency);
+                    }
+                }
+                if id == "admission_stale_assumption" {
+                    assert_eq!(input["state"], "UNKNOWN");
+                    assert_eq!(input["movement"], "CANDIDATE");
+                    assert_eq!(input["reconcile"], "stale");
+                    assert_eq!(input["fresh"], false);
+                    control
+                        .assumptions
+                        .insert("acceptance".into(), "current".into());
+                    task.assumptions.insert("acceptance".into(), "stale".into());
+                }
+                if id == "admission_foreign_claim" {
+                    task.id = input["candidate"]["id"].as_str().unwrap().into();
+                    let mut writer = task.clone();
+                    writer.id = input["active_writer"]["id"].as_str().unwrap().into();
+                    writer.state = TaskState::Running;
+                    control.tasks.insert(writer.id.clone(), writer);
+                    task.claim = "foreign".into();
+                }
+                let ready = admit_task(&control, &task).is_ok();
+                json!({"ready":ready,"dispatch_allowed":ready})
+            }
+            "evidence_wrong_binding" | "evidence_prose_only" => {
+                let control = initial();
+                let mut next = reduce(
+                    &control,
+                    &EventEnvelope {
+                        id: "first".into(),
+                        expected_revision: 0,
+                        event: Event::Dispatch {
+                            id: "first".into(),
+                            generation: 1,
+                            repair: false,
+                        },
+                    },
+                )
+                .unwrap();
+                next = reduce(
+                    &next,
+                    &EventEnvelope {
+                        id: "return".into(),
+                        expected_revision: 1,
+                        event: Event::Returned { id: "first".into() },
+                    },
+                )
+                .unwrap();
+                next.settlement = luna_factoryd::control::Settlement::Stopped;
+                next.criteria[0].accepted = true;
+                next.criteria[0].subject = Some(next.current_subject.clone());
+                if id == "evidence_prose_only" {
+                    json!({"criterion_proven":criterion_current(&next,&next.criteria[0]),"converged":next.converged()})
+                } else {
+                    let binding = Binding {
+                        task_id: "objective".into(),
+                        attempt_id: "first".into(),
+                        intent_generation: 1,
+                        dispatch_generation: 1,
+                        subject: next.current_subject.clone(),
+                        assumptions: Default::default(),
+                    };
+                    next.criteria[0].check_refs = vec!["observed-fixture".into()];
+                    // A pure fixture fact. The separate Factory/file tests prove the adapter.
+                    next.checks.push(ObservedCheck {
+                        id: "observed-fixture".into(),
+                        binding,
+                        kind: "file_sha256".into(),
+                        outcome: "passed".into(),
+                        reason: "predicate_observed".into(),
+                        path: Some("fixture.txt".into()),
+                        expected_sha256: Some("0".repeat(64)),
+                        observed_sha256: Some("0".repeat(64)),
+                        exit_code: None,
+                        output_completeness: "not_applicable".into(),
+                        environment: "not_applicable".into(),
+                    });
+                    assert!(criterion_current(&next, &next.criteria[0]));
+                    let mut any_proven = false;
+                    for mismatch in input["mismatches"].as_array().unwrap() {
+                        let mut foreign = next.clone();
+                        let binding = &mut foreign.checks[0].binding;
+                        match mismatch.as_str().unwrap() {
+                            "task" => binding.task_id = "foreign".into(),
+                            "attempt" => binding.attempt_id = "foreign".into(),
+                            "intent" => binding.intent_generation += 1,
+                            "generation" | "dispatch" => binding.dispatch_generation += 1,
+                            "subject" => binding.subject = "foreign".into(),
+                            "assumption" => {
+                                binding.assumptions.insert("foreign".into(), "claim".into());
+                            }
+                            other => panic!("unknown mismatch {other}"),
+                        }
+                        any_proven |= criterion_current(&foreign, &foreign.criteria[0]);
+                    }
+                    json!({"criterion_proven":any_proven})
+                }
+            }
+            other => panic!("unimplemented conformance case {other}"),
+        };
+        assert_eq!(output, case["expected"], "case {id}");
+    }
 }

@@ -32,6 +32,8 @@ fn setup() -> (tempfile::TempDir, Control, CheckSpec) {
         },
     )
     .unwrap();
+    let mut control = control;
+    control.settlement = luna_factoryd::control::Settlement::Stopped;
     let spec = CheckSpec {
         id: "file-1".into(),
         kind: "file_sha256".into(),
