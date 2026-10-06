@@ -7,3 +7,7 @@ pub mod mcp;
 pub mod native;
 pub mod repositories;
 pub mod store;
+
+pub mod control;
+pub mod evidence;
+pub mod presentation;

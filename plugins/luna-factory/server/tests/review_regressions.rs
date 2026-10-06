@@ -85,7 +85,7 @@ fn seed(config: &Config, request: &StartRequest) -> Run {
     let mut run = store.admit(config, request).unwrap().run;
     run.thread_id = Some("owner".into());
     run.turn_id = Some("turn-1".into());
-    store.save(&run).unwrap();
+    store.save(&mut run).unwrap();
     run
 }
 

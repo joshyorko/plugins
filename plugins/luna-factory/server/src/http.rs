@@ -33,6 +33,8 @@ pub struct McpServer {
 #[serde(deny_unknown_fields)]
 struct RunId {
     run_id: String,
+    #[serde(default)]
+    expected_revision: Option<u64>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -49,8 +51,12 @@ struct List {
 #[serde(deny_unknown_fields)]
 struct Resume {
     run_id: String,
+    #[serde(default)]
+    expected_revision: Option<u64>,
     message: Option<String>,
     expected_decision_id: Option<String>,
+    #[serde(default)]
+    diagnosis: Option<crate::control::Diagnosis>,
 }
 fn default_limit() -> u32 {
     20
@@ -59,6 +65,8 @@ fn default_limit() -> u32 {
 #[serde(deny_unknown_fields)]
 struct Steer {
     run_id: String,
+    #[serde(default)]
+    expected_revision: Option<u64>,
     expected_turn_id: String,
     message: String,
 }
@@ -89,17 +97,33 @@ impl McpServer {
             "steer_factory_run" => {
                 let p: Steer = parse(args)?;
                 self.factory
-                    .steer(&p.run_id, &p.expected_turn_id, &p.message)
+                    .steer_at_revision(
+                        &p.run_id,
+                        &p.expected_turn_id,
+                        &p.message,
+                        p.expected_revision,
+                    )
                     .await
             }
-            "cancel_factory_run" => self.factory.cancel(&parse::<RunId>(args)?.run_id).await,
+            "cancel_factory_run" => {
+                let p: RunId = parse(args)?;
+                self.factory
+                    .cancel_at_revision(&p.run_id, p.expected_revision)
+                    .await
+            }
+            "reconcile_factory_run" => {
+                let p: RunId = parse(args)?;
+                self.factory.reconcile(&p.run_id, p.expected_revision).await
+            }
             "resume_factory_run" => {
                 let params: Resume = parse(args)?;
                 self.factory
-                    .resume_with_decision(
+                    .resume_with_diagnosis(
                         &params.run_id,
                         params.message.as_deref(),
                         params.expected_decision_id.as_deref(),
+                        params.expected_revision,
+                        params.diagnosis,
                     )
                     .await
             }

@@ -107,7 +107,11 @@ async fn terminal_decision_survives_factory_startup() {
     run.dispatch_phase = "terminal_observed".into();
     run.state = "NEEDS_INPUT".into();
     run.blocker = Some("Should the optional migration be omitted?".into());
-    store.save(&run).unwrap();
+    // Imported pre-dispatch-ID terminal identity retains its observed generation,
+    // but supplies no invented attempt or acceptance proof.
+    run.control.as_mut().unwrap().dispatch_generation = run.generation;
+    run.control.as_mut().unwrap().migrated = true;
+    store.save(&mut run).unwrap();
     drop(store);
     let factory = Factory::new(config).unwrap();
     let actual = factory.get(&run.id).await.unwrap();
@@ -133,7 +137,11 @@ async fn terminal_decision_survives_reconcile_and_remains_answerable_with_zero_r
     run.dispatch_phase = "terminal_observed".into();
     run.state = "NEEDS_INPUT".into();
     run.blocker = Some("Should the optional migration be omitted?".into());
-    store.save(&run).unwrap();
+    // Imported pre-dispatch-ID terminal identity retains its observed generation,
+    // but supplies no invented attempt or acceptance proof.
+    run.control.as_mut().unwrap().dispatch_generation = run.generation;
+    run.control.as_mut().unwrap().migrated = true;
+    store.save(&mut run).unwrap();
     drop(store);
     factory.reconcile_startup().await.unwrap();
     let actual = factory.get(&run.id).await.unwrap();

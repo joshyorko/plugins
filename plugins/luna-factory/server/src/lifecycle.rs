@@ -27,6 +27,8 @@ pub fn public_run(run: &Run) -> Value {
         "blocker":run.blocker,"deadline_at":run.deadline_at,"claim_held":run.claim_held,
         "pending_decision":run.pending_decision,
         "repairs_used":run.repairs_used,"repair_limit":run.request.repair_attempts,"generation":run.generation,"updated_at":run.updated_at,
+        "control":run.control.as_ref().map(|control|crate::presentation::public_control(run,control)),
+        "presentation":run.control.as_ref().map(|control|crate::presentation::project(run,control,now())),
         "route":{"requested_model":"gpt-6-luna","requested_effort":run.requested_effort,
             "configured_model":run.configured_model,"configured_effort":run.configured_effort,
             "requested_provider":"inherited","configured_provider":run.configured_provider,
@@ -35,8 +37,8 @@ pub fn public_run(run: &Run) -> Value {
             "reroutes":run.route_observations}})
 }
 
-/// The owner keeps semantic judgment. The runtime fences its report to the exact
-/// current subject and refuses incomplete or contradictory convergence receipts.
+/// Validate a bounded owner claim, not acceptance proof. The production return
+/// path separately requires daemon-observed checks plus semantic acceptance.
 pub fn accept_owner_report(report: &Value, subject: &str, acceptance_count: usize) -> Result<()> {
     ensure!(
         report["subject"].as_str() == Some(subject),
@@ -195,12 +197,23 @@ pub fn safe_summary(text: &str, limit: usize) -> String {
 }
 
 pub fn owner_output_schema() -> Value {
+    let binding = json!({"type":"object","additionalProperties":false,"properties":{
+        "task_id":{"type":"string"},"attempt_id":{"type":"string"},"intent_generation":{"type":"integer"},
+        "dispatch_generation":{"type":"integer"},"subject":{"type":"string"},
+        "assumptions":{"type":"object","additionalProperties":{"type":"string"}}},
+        "required":["task_id","attempt_id","intent_generation","dispatch_generation","subject","assumptions"]});
+    let check = json!({"type":"object","additionalProperties":false,"properties":{
+        "id":{"type":"string"},"kind":{"type":"string","enum":["file_sha256","native_command"]},"binding":binding,
+        "path":{"type":["string","null"]},"sha256":{"type":["string","null"]},"native_item":{"type":["string","null"]}},
+        "required":["id","kind","binding","path","sha256","native_item"]});
     json!({"type":"object","additionalProperties":false,"properties":{
         "state":{"type":"string","enum":["CONVERGED","QUIESCENT","NEEDS_INPUT","BLOCKED"]},
-        "subject":{"type":"string"},"delta":{"type":"string"},"remaining_gap":{"type":"string"},
-        "blocker":{"type":["string","null"]},
-        "acceptance":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"id":{"type":"string"},"passed":{"type":"boolean"},"evidence":{"type":"string"}},"required":["id","passed","evidence"]}}
-    },"required":["state","subject","delta","remaining_gap","blocker","acceptance"]})
+        "subject":{"type":"string"},"delta":{"type":"string"},"remaining_gap":{"type":"string"},"blocker":{"type":["string","null"]},
+        "checks":{"type":"array","maxItems":32,"items":check},
+        "acceptance":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{
+            "id":{"type":"string"},"passed":{"type":"boolean"},"accepted":{"type":"boolean"},"evidence":{"type":"string"},
+            "check_refs":{"type":"array","items":{"type":"string"}}},"required":["id","passed","accepted","evidence","check_refs"]}}
+    },"required":["state","subject","delta","remaining_gap","blocker","acceptance","checks"]})
 }
 
 #[derive(Clone)]
@@ -235,22 +248,57 @@ impl Factory {
         })
     }
     pub async fn get(&self, id: &str) -> Result<Value> {
-        let store = self.store.lock().await;
-        let run = store.get(id)?;
+        let mut store = self.store.lock().await;
+        let mut run = store.get(id)?;
+        self.refresh_source(&mut run, &mut store)?;
         let mut view = public_run(&run);
         view["receipts"] = json!(store.receipts(id)?);
         Ok(view)
     }
     pub async fn list(&self, limit: u32) -> Result<Value> {
-        Ok(json!(
-            self.store
-                .lock()
-                .await
-                .list(limit)?
-                .iter()
-                .map(public_run)
-                .collect::<Vec<_>>()
-        ))
+        let mut store = self.store.lock().await;
+        let mut runs = store.list(limit)?;
+        for run in &mut runs {
+            self.refresh_source(run, &mut store)?;
+        }
+        Ok(json!(runs.iter().map(public_run).collect::<Vec<_>>()))
+    }
+    fn refresh_source(&self, run: &mut Run, store: &mut Store) -> Result<()> {
+        match repository_subject(Path::new(&run.canonical_root)) {
+            Ok(subject) if subject != run.current_subject => {
+                run.current_subject = subject.clone();
+                let event = crate::control::EventEnvelope {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    expected_revision: run.control.as_ref().context("control_missing")?.revision,
+                    event: crate::control::Event::Subject { subject },
+                };
+                store.apply_event(run, &event)?;
+            }
+            Err(_) => {
+                let control = run.control.as_mut().context("control_missing")?;
+                if control.criteria.iter().any(|c| c.accepted) {
+                    control.invalidate("source_subject_unavailable");
+                    store.save(run)?;
+                }
+            }
+            _ => {}
+        }
+        if run.state == "CONVERGED" && !run.control.as_ref().is_some_and(|c| c.converged()) {
+            run.state = "QUIESCENT".into();
+            run.remaining_gap =
+                Some("Current source or assumptions no longer match accepted proof.".into());
+            store.save(run)?;
+        }
+        Ok(())
+    }
+    async fn control_event(&self, run: &mut Run, event: crate::control::Event) -> Result<()> {
+        let envelope = crate::control::EventEnvelope {
+            id: uuid::Uuid::new_v4().to_string(),
+            expected_revision: run.control.as_ref().context("control_missing")?.revision,
+            event,
+        };
+        self.store.lock().await.apply_event(run, &envelope)?;
+        Ok(())
     }
     async fn effective_config(&self) -> Result<Config> {
         Ok(crate::repositories::effective_config(
@@ -340,7 +388,7 @@ impl Factory {
             return self.get(&run.id).await;
         }
         run.configured_effort = Some(profile.effort.clone());
-        self.store.lock().await.save(&run)?;
+        self.store.lock().await.save(&mut run)?;
         match self.launch(&mut run).await {
             Ok(()) => {}
             Err(_) => {
@@ -352,7 +400,7 @@ impl Factory {
                     self.store.lock().await.release_verified(&mut run)?;
                 } else {
                     run.state = "BLOCKED".into();
-                    self.store.lock().await.save(&run)?;
+                    self.store.lock().await.save(&mut run)?;
                 }
             }
         }
@@ -360,6 +408,10 @@ impl Factory {
         self.get(&run.id).await
     }
     async fn launch(&self, run: &mut Run) -> Result<()> {
+        self.validate_current_authority(run).await?;
+        let control = run.control.as_ref().context("control_missing")?;
+        crate::control::admit_task(control, &control.tasks["objective"])?;
+        ensure!(now() < run.deadline_at, "time_budget_exhausted");
         let client = self.connect().await?;
         let events = client.subscribe();
         let effort = &self.config.profiles[&run.request.profile].effort;
@@ -401,7 +453,15 @@ impl Factory {
             .insert(run.id.clone(), client.clone());
         run.dispatch_phase = "turn_start_pending".into();
         run.dispatch_id = Some(uuid::Uuid::new_v4().to_string());
-        self.store.lock().await.save(run)?;
+        self.control_event(
+            run,
+            crate::control::Event::Dispatch {
+                id: run.dispatch_id.clone().unwrap(),
+                generation: run.generation,
+                repair: false,
+            },
+        )
+        .await?;
         self.store.lock().await.receipt(
             run,
             "native_dispatch",
@@ -437,6 +497,14 @@ impl Factory {
                 .context("native_turn_id_missing")?
                 .into(),
         );
+        self.control_event(
+            run,
+            crate::control::Event::Acknowledged {
+                id: run.dispatch_id.clone().context("dispatch_missing")?,
+                turn_id: run.turn_id.clone().unwrap(),
+            },
+        )
+        .await?;
         run.dispatch_phase = "active".into();
         run.state = "RUNNING".into();
         run.updated_at = now();
@@ -458,7 +526,7 @@ impl Factory {
             subject_exe,
             run.canonical_root,
             serde_json::to_string(&run.request)?
-        ))
+        ).to_string()+&format!("\nCONTROL: task_id=objective, attempt_id={}, intent_generation=1, dispatch_generation={}, current assumptions={}. Returned work remains VERIFY until daemon-observed structured checks and your explicit semantic acceptance. Supply accepted and check_refs for each A# and checks with kind=file_sha256, id, binding={{task_id,attempt_id,intent_generation,dispatch_generation,subject,assumptions}}, path relative to approved source root, sha256 lowercase. path/sha256 are not arbitrary command execution. Native exit has unverified output completeness and environment. Use a fresh check ID per distinct predicate/binding. Your semantic acceptance is a recorded judgment, not independently proved natural-language truth. Child policies remain cooperative/unverified because native Codex has no verified pre-spawn enforcement. Push/PR URLs or prose do not prove delivery. No merge/release/deploy authority.",run.dispatch_id.as_deref().unwrap_or("unassigned"),run.generation,serde_json::to_string(&run.control.as_ref().context("control_missing")?.assumptions)?))
     }
     // The deadline belongs to the durable run, not an event subscription or turn.
     fn watch_deadline(&self, id: String, deadline: u64) {
@@ -505,10 +573,10 @@ impl Factory {
                             Ok(true) if run.pending_decision.is_some()=>{
                                 run.state="NEEDS_INPUT".into();
                                 run.blocker=run.pending_decision.as_ref().map(|decision|decision.question.clone());
-                                self.store.lock().await.save(&run)?;
+                                self.store.lock().await.save(&mut run)?;
                             },
                             Ok(true)=>self.block(&run.id,"Native ownership reconciled idle. Resume the same run explicitly within its remaining limits.").await?,
-                            Ok(false)=>{run.state="RUNNING".into();run.blocker=None;run.delta="Reconnected to existing native execution; no inference was started.".into();self.store.lock().await.save(&run)?;self.monitor(run.id.clone(),events).await;},
+                            Ok(false)=>{run.state="RUNNING".into();run.blocker=None;run.delta="Reconnected to existing native execution; no inference was started.".into();self.store.lock().await.save(&mut run)?;self.monitor(run.id.clone(),events).await;},
                             Err(_)=>self.block(&run.id,"Native ownership could not be reconciled. Repository claim remains held.").await?,
                         }
                     }
@@ -556,20 +624,21 @@ impl Factory {
         run.state = "BLOCKED".into();
         run.blocker = Some(reason.into());
         run.updated_at = now();
-        store.save(&run)
+        store.save(&mut run)
     }
     async fn observe(&self, id: &str, event: Value) -> Result<bool> {
         let method = event["method"].as_str().unwrap_or("");
         if method == "model/rerouted" {
             return self.observe_routing_mismatch(id, &event["params"]).await;
         }
+        let event_guard = self.mutation.lock().await;
         if method == "luna_factory/transportClosed" {
             let mut store = self.store.lock().await;
             let mut run = store.get(id)?;
             if run.pending_decision.is_some() && run.dispatch_phase == "terminal_observed" {
                 run.delta = "Native connection closed. The completed decision is preserved; ownership will be reconciled before its answer starts work.".into();
                 run.updated_at = now();
-                store.save(&run)?;
+                store.save(&mut run)?;
                 return Ok(true);
             }
             drop(store);
@@ -594,6 +663,21 @@ impl Factory {
         }
         let item = &event["params"]["item"];
         if is_owner
+            && matches!(method, "item/started" | "item/completed")
+            && matches!(
+                item["type"].as_str(),
+                Some("commandExecution" | "collabAgentToolCall" | "agentMessage")
+            )
+        {
+            run.control
+                .as_mut()
+                .context("control_missing")?
+                .tasks
+                .get_mut("objective")
+                .unwrap()
+                .state = crate::control::TaskState::Running;
+        }
+        if is_owner
             && item["type"] == "userMessage"
             && run.dispatch_id.is_some()
             && item["clientId"].as_str() == run.dispatch_id.as_deref()
@@ -606,12 +690,38 @@ impl Factory {
                 "conflicting_dispatch_turn_identity"
             );
             run.turn_id = Some(turn.into());
+            if let Some(attempt) = run
+                .control
+                .as_mut()
+                .context("control_missing")?
+                .attempts
+                .last_mut()
+            {
+                ensure!(
+                    attempt.id == run.dispatch_id.as_deref().unwrap(),
+                    "dispatch_attempt_mismatch"
+                );
+                ensure!(
+                    attempt.turn_id.as_deref().is_none_or(|known| known == turn),
+                    "conflicting_dispatch_turn_identity"
+                );
+                attempt.turn_id = Some(turn.into());
+                attempt.phase = "active".into();
+            }
             run.dispatch_phase = "active".into();
         }
         if let Some(thread) = thread
             && matches!(method, "item/started" | "item/completed")
         {
             observe_command(&mut run, thread, item)?;
+            if is_owner && let Some(turn) = event["params"]["turnId"].as_str() {
+                crate::evidence::observe_native(
+                    run.control.as_mut().context("control_missing")?,
+                    thread,
+                    turn,
+                    item,
+                )?;
+            }
         }
         if matches!(method, "item/started" | "item/completed")
             && item["type"] == "collabAgentToolCall"
@@ -624,6 +734,10 @@ impl Factory {
                     {
                         run.owned_threads.push(child.into());
                     }
+                    run.control
+                        .as_mut()
+                        .context("control_missing")?
+                        .observe_child(child, false)?;
                 }
             }
             run.delta = format!(
@@ -666,6 +780,10 @@ impl Factory {
             && let Some(child) = thread
         {
             run.active_threads.retain(|id| id != child);
+            run.control
+                .as_mut()
+                .context("control_missing")?
+                .observe_child(child, true)?;
         }
         if run.active_threads.len() > run.request.capacity as usize {
             run.state = "CANCELLING".into();
@@ -709,9 +827,10 @@ impl Factory {
             }
         }
         run.updated_at = now();
-        store.save(&run)?;
+        store.save(&mut run)?;
         drop(store);
         if run.state == "CANCELLING" {
+            drop(event_guard);
             let _ = self.cancel(id).await;
             return Ok(true);
         }
@@ -719,7 +838,8 @@ impl Factory {
             && is_owner
             && event["params"]["turn"]["id"].as_str() == run.turn_id.as_deref()
         {
-            self.finish_turn(id, &event["params"]["turn"]).await?;
+            self.finish_turn_locked(id, &event["params"]["turn"])
+                .await?;
             return Ok(!self.store.lock().await.get(id)?.claim_held);
         }
         Ok(false)
@@ -768,27 +888,24 @@ impl Factory {
         run.blocker = Some("Native execution reported a model reroute. Stop requested; effort and downstream provider remain unverified.".into());
         run.updated_at = now();
         let mut store = self.store.lock().await;
-        store.save(&run)?;
+        store.save(&mut run)?;
         store.receipt(&run, "routing_mismatch", "Native model/rerouted evidence recorded for the exact owned thread and turn; stopping owned execution without changing provider or security policy.")?;
         drop(store);
         drop(guard);
         self.cancel(id).await?;
         Ok(true)
     }
-    async fn finish_turn(&self, id: &str, turn: &Value) -> Result<()> {
-        let _guard = self.mutation.lock().await;
-        self.finish_turn_locked(id, turn).await
-    }
     async fn finish_turn_locked(&self, id: &str, turn: &Value) -> Result<()> {
         let mut run = self.store.lock().await.get(id)?;
         if !run.claim_held
             || turn["id"].as_str() != run.turn_id.as_deref()
             || run.state == "CANCELLING"
+            || run.dispatch_phase == "terminal_observed"
         {
             return Ok(());
         }
         run.state = "VERIFYING".into();
-        self.store.lock().await.save(&run)?;
+        self.store.lock().await.save(&mut run)?;
         let client = self
             .clients
             .lock()
@@ -804,8 +921,20 @@ impl Factory {
                 )
                 .await;
         }
+        self.validate_current_authority(&run).await?;
         let subject = repository_subject(Path::new(&run.canonical_root))?;
         run.current_subject = subject.clone();
+        self.control_event(
+            &mut run,
+            crate::control::Event::Subject {
+                subject: subject.clone(),
+            },
+        )
+        .await?;
+        if let Some(dispatch) = run.dispatch_id.clone() {
+            self.control_event(&mut run, crate::control::Event::Returned { id: dispatch })
+                .await?;
+        }
         let mut complete_turn = turn.clone();
         if complete_turn["items"]
             .as_array()
@@ -836,7 +965,42 @@ impl Factory {
             })
         {
             let report = report.unwrap();
+            let checked = crate::evidence::reconcile_report(
+                run.control.as_mut().context("control_missing")?,
+                &report,
+                Path::new(&run.canonical_root),
+            );
+            let source_unchanged = repository_subject(Path::new(&run.canonical_root))? == subject;
+            if checked.is_err() || !source_unchanged {
+                run.control
+                    .as_mut()
+                    .unwrap()
+                    .invalidate("invalid_or_moving_check");
+            }
+            if report["state"] == "CONVERGED" && run.request.finish != "local_candidate" {
+                let kind = if run.request.finish == "push" {
+                    crate::control::EffectKind::Push
+                } else {
+                    crate::control::EffectKind::Pr
+                };
+                let effect = format!(
+                    "delivery:{}",
+                    run.dispatch_id.as_deref().unwrap_or("legacy")
+                );
+                run.control
+                    .as_mut()
+                    .unwrap()
+                    .observe_effect(&effect, kind)?;
+            }
             run.state = report["state"].as_str().unwrap().into();
+            if run.state == "CONVERGED"
+                && (checked.is_err()
+                    || !source_unchanged
+                    || !run.control.as_ref().unwrap().converged()
+                    || run.request.finish != "local_candidate")
+            {
+                run.state = "BLOCKED".into();
+            }
             run.delta = safe_summary(
                 report["delta"]
                     .as_str()
@@ -856,6 +1020,10 @@ impl Factory {
             run.blocker = report["blocker"]
                 .as_str()
                 .map(|text| safe_summary(text, 1000));
+            if report["state"] == "CONVERGED" && run.state != "CONVERGED" {
+                run.remaining_gap=Some("Mandatory acceptance lacks current independently observed checks and explicit semantic acceptance.".into());
+                run.blocker = Some("current_observed_check_missing".into());
+            }
             run.pending_decision = if run.state == "NEEDS_INPUT" {
                 Some(PendingDecision {
                     id: format!("{}-{}", run.id, run.generation),
@@ -894,10 +1062,12 @@ impl Factory {
         run.updated_at = now();
         run.dispatch_phase = "terminal_observed".into();
         let mut store = self.store.lock().await;
-        if ["CONVERGED", "QUIESCENT"].contains(&run.state.as_str()) {
+        if ["CONVERGED", "QUIESCENT"].contains(&run.state.as_str())
+            && !run.control.as_ref().unwrap().unknown_effect()
+        {
             store.release_verified(&mut run)?;
         } else {
-            store.save(&run)?;
+            store.save(&mut run)?;
         }
         Ok(())
     }
@@ -911,6 +1081,10 @@ impl Factory {
             if !run.owned_threads.iter().any(|id| id == child) {
                 run.owned_threads.push(child.into());
             }
+            run.control
+                .as_mut()
+                .context("control_missing")?
+                .observe_child(child, false)?;
         }
         self.store.lock().await.save(run)?;
         let mut expected = run.owned_threads.clone();
@@ -935,26 +1109,46 @@ impl Factory {
             })
             .filter_map(|thread| thread["id"].as_str().map(str::to_owned))
             .collect();
-        self.store.lock().await.save(run)?;
-        Ok(terminals_empty
+        let stopped = terminals_empty
             && terminal_threads(&expected, &observed)
-            && run.owned_commands.values().all(|done| *done))
+            && run.owned_commands.values().all(|done| *done);
+        if stopped {
+            if let Some(attempt) = run
+                .control
+                .as_mut()
+                .context("control_missing")?
+                .attempts
+                .last_mut()
+            {
+                attempt.phase = "stopped".into();
+            }
+        }
+        self.store.lock().await.save(run)?;
+        Ok(stopped)
     }
     pub async fn cancel(&self, id: &str) -> Result<Value> {
+        self.cancel_at_revision(id, None).await
+    }
+    pub async fn cancel_at_revision(
+        &self,
+        id: &str,
+        expected_revision: Option<u64>,
+    ) -> Result<Value> {
         let _guard = self.mutation.lock().await;
         let mut run = self.store.lock().await.get(id)?;
         if !run.claim_held {
             return self.get(id).await;
         }
+        crate::presentation::authorize_action(&run, "cancel", expected_revision, now())?;
         run.state = "CANCELLING".into();
         run.pending_decision = None;
         run.delta="Stop requested. Repository ownership remains held until every owned execution is observed stopped.".into();
-        self.store.lock().await.save(&run)?;
+        self.store.lock().await.save(&mut run)?;
         let result = self.cancel_owned(&mut run).await;
         if result.is_err() || !result.unwrap_or(false) {
             run.state = "BLOCKED".into();
             run.blocker=Some("Cancellation is unconfirmed. Known or unknown native threads or terminal processes may still mutate; repository claim retained.".into());
-            self.store.lock().await.save(&run)?;
+            self.store.lock().await.save(&mut run)?;
         } else {
             run.state = "CANCELLED".into();
             run.dispatch_phase = "terminal_observed".into();
@@ -962,7 +1156,13 @@ impl Factory {
             run.delta =
                 "Owner and all known descendants were observed idle, with terminal command evidence; mutation claim released."
                     .into();
-            self.store.lock().await.release_verified(&mut run)?;
+            if run.control.as_ref().unwrap().unknown_effect() {
+                run.state = "BLOCKED".into();
+                run.blocker = Some("effect_outcome_unknown".into());
+                self.store.lock().await.save(&mut run)?;
+            } else {
+                self.store.lock().await.release_verified(&mut run)?;
+            }
         }
         self.get(id).await
     }
@@ -1088,6 +1288,16 @@ impl Factory {
         Ok(())
     }
     pub async fn steer(&self, id: &str, expected_turn: &str, message: &str) -> Result<Value> {
+        self.steer_at_revision(id, expected_turn, message, None)
+            .await
+    }
+    pub async fn steer_at_revision(
+        &self,
+        id: &str,
+        expected_turn: &str,
+        message: &str,
+        expected_revision: Option<u64>,
+    ) -> Result<Value> {
         let _guard = self.mutation.lock().await;
         let run = self.store.lock().await.get(id)?;
         self.validate_current_authority(&run).await?;
@@ -1095,6 +1305,7 @@ impl Factory {
             run.state == "RUNNING" && run.turn_id.as_deref() == Some(expected_turn),
             "stale_turn_or_not_running"
         );
+        crate::presentation::authorize_action(&run, "steer", expected_revision, now())?;
         ensure!(now() < run.deadline_at, "time_budget_exhausted");
         ensure!(
             message.len() <= 4000 && !message.trim().is_empty(),
@@ -1168,6 +1379,27 @@ impl Factory {
         message: Option<&str>,
         expected_decision_id: Option<&str>,
     ) -> Result<Value> {
+        self.resume_at_revision(id, message, expected_decision_id, None)
+            .await
+    }
+    pub async fn resume_at_revision(
+        &self,
+        id: &str,
+        message: Option<&str>,
+        expected_decision_id: Option<&str>,
+        expected_revision: Option<u64>,
+    ) -> Result<Value> {
+        self.resume_with_diagnosis(id, message, expected_decision_id, expected_revision, None)
+            .await
+    }
+    pub async fn resume_with_diagnosis(
+        &self,
+        id: &str,
+        message: Option<&str>,
+        expected_decision_id: Option<&str>,
+        expected_revision: Option<u64>,
+        diagnosis: Option<crate::control::Diagnosis>,
+    ) -> Result<Value> {
         if let Some(message) = message {
             ensure!(
                 !message.trim().is_empty() && message.len() <= 4000,
@@ -1203,6 +1435,11 @@ impl Factory {
             );
         }
         ensure!(
+            expected_revision
+                .is_none_or(|revision| revision == run.control.as_ref().unwrap().revision),
+            "stale_control_revision"
+        );
+        ensure!(
             [
                 "INTERRUPTED",
                 "BLOCKED",
@@ -1213,6 +1450,14 @@ impl Factory {
             .contains(&run.state.as_str()),
             "run_not_resumable"
         );
+        ensure!(
+            !run.control.as_ref().unwrap().delivery_unknown(),
+            "delivery_certification_unsupported"
+        );
+        if let Some(diagnosis) = diagnosis {
+            self.control_event(&mut run, crate::control::Event::Diagnose { diagnosis })
+                .await?;
+        }
         let client = self.client_for_reconcile(id).await?;
         match self.recover_dispatch_locked(&mut run, &client).await {
             Ok(true) => return self.get(id).await,
@@ -1250,10 +1495,41 @@ impl Factory {
             self.observe_stopped(&client, &mut run).await?,
             "owned_execution_not_stopped"
         );
-        let thread = run.thread_id.as_deref().context("owner_identity_unknown")?;
-        let response = client.resume_thread(thread).await?;
+        if !answering_decision {
+            ensure!(
+                run.control
+                    .as_ref()
+                    .context("control_missing")?
+                    .no_progress_attempts
+                    < 2
+                    || run.control.as_ref().unwrap().diagnosis.is_some(),
+                "diagnosis_required"
+            );
+        }
+        run.dispatch_phase = "terminal_observed".into();
+        crate::presentation::authorize_action(
+            &run,
+            if answering_decision {
+                "answer"
+            } else {
+                "resume"
+            },
+            None,
+            now(),
+        )?;
+        let subject = repository_subject(Path::new(&run.canonical_root))?;
+        run.current_subject = subject.clone();
+        self.control_event(&mut run, crate::control::Event::Subject { subject })
+            .await?;
+        let control = run.control.as_ref().unwrap();
+        let mut candidate = control.tasks["objective"].clone();
+        candidate.subject = control.current_subject.clone();
+        candidate.assumptions = control.assumptions.clone();
+        crate::control::admit_task(control, &candidate)?;
+        let thread = run.thread_id.clone().context("owner_identity_unknown")?;
+        let response = client.resume_thread(&thread).await?;
         ensure!(
-            response["thread"]["id"].as_str() == Some(thread),
+            response["thread"]["id"].as_str() == Some(thread.as_str()),
             "resume_changed_owner_identity"
         );
         let route = configured_route(
@@ -1286,7 +1562,12 @@ impl Factory {
         run.dispatch_phase = "turn_start_pending".into();
         run.dispatch_id = Some(uuid::Uuid::new_v4().to_string());
         run.turn_id = None;
-        self.store.lock().await.save(&run)?;
+        let event = crate::control::Event::Dispatch {
+            id: run.dispatch_id.clone().unwrap(),
+            generation: run.generation,
+            repair: !answering_decision,
+        };
+        self.control_event(&mut run, event).await?;
         self.store.lock().await.receipt(
             &run,
             "native_dispatch",
@@ -1307,7 +1588,7 @@ impl Factory {
         }
         let result = client
             .start_skill_turn_with_id(
-                thread,
+                &thread,
                 &self.config.skill_path,
                 &prompt,
                 effort,
@@ -1320,7 +1601,7 @@ impl Factory {
             Err(_) => {
                 run.state = "BLOCKED".into();
                 run.blocker=Some("Resume outcome is uncertain. Reconcile the same owner; no inference will be replayed automatically.".into());
-                self.store.lock().await.save(&run)?;
+                self.store.lock().await.save(&mut run)?;
                 self.monitor(id.into(), events).await;
                 return self.get(id).await;
             }
@@ -1331,12 +1612,80 @@ impl Factory {
                 .context("resume_turn_missing")?
                 .into(),
         );
+        let event = crate::control::Event::Acknowledged {
+            id: run.dispatch_id.clone().unwrap(),
+            turn_id: run.turn_id.clone().unwrap(),
+        };
+        self.control_event(&mut run, event).await?;
         run.dispatch_phase = "active".into();
         run.state = "RUNNING".into();
         run.delta = "Resumed the same owner with original authority and remaining budgets.".into();
-        self.store.lock().await.save(&run)?;
+        self.store.lock().await.save(&mut run)?;
         self.monitor(id.into(), events).await;
         drop(guard);
+        self.get(id).await
+    }
+    /// Only bounded read-only native observations. No resume/start/interrupt/retry RPC.
+    pub async fn reconcile(&self, id: &str, expected_revision: Option<u64>) -> Result<Value> {
+        let _guard = self.mutation.lock().await;
+        let mut run = self.store.lock().await.get(id)?;
+        self.validate_current_authority(&run).await?;
+        crate::presentation::authorize_action(&run, "reconcile", expected_revision, now())?;
+        let client = self.client_for_reconcile(id).await?;
+        if matches!(run.dispatch_phase.as_str(), "active" | "turn_start_pending") {
+            let owner = run.thread_id.as_deref().context("owner_identity_unknown")?;
+            let found = if let Some(turn) = &run.turn_id {
+                client.find_turn(owner, turn).await?
+            } else if let Some(dispatch) = &run.dispatch_id {
+                client.find_dispatch_turn(owner, dispatch).await?
+            } else {
+                None
+            };
+            let Some(turn) = found else {
+                run.state = "BLOCKED".into();
+                run.blocker = Some("dispatch_correlation_unknown".into());
+                self.store.lock().await.save(&mut run)?;
+                return self.get(id).await;
+            };
+            run.turn_id = Some(
+                turn["id"]
+                    .as_str()
+                    .context("native_turn_id_missing")?
+                    .into(),
+            );
+            if let Some(dispatch) = run.dispatch_id.clone() {
+                let event = crate::control::Event::Acknowledged {
+                    id: dispatch,
+                    turn_id: run.turn_id.clone().unwrap(),
+                };
+                self.control_event(&mut run, event).await?;
+            }
+            if turn["status"] == "inProgress" {
+                run.state = "RUNNING".into();
+                run.dispatch_phase = "active".into();
+                run.blocker = None;
+                self.store.lock().await.save(&mut run)?;
+                return self.get(id).await;
+            }
+            self.store.lock().await.save(&mut run)?;
+            self.finish_turn_locked(id, &turn).await?;
+            return self.get(id).await;
+        }
+        if self.observe_stopped(&client, &mut run).await? {
+            run.dispatch_phase = "terminal_observed".into();
+            if run.pending_decision.is_some() {
+                run.state = "NEEDS_INPUT".into();
+            } else if !["CANCELLED", "CONVERGED", "QUIESCENT"].contains(&run.state.as_str()) {
+                run.state = "BLOCKED".into();
+            }
+            run.delta =
+                "Observed existing native ownership; no execution was started or stopped.".into();
+            self.store.lock().await.save(&mut run)?;
+        } else {
+            run.state = "BLOCKED".into();
+            run.blocker = Some("owned_liveness_unknown".into());
+            self.store.lock().await.save(&mut run)?;
+        }
         self.get(id).await
     }
     pub async fn settings(&self) -> Result<Value> {

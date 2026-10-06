@@ -86,7 +86,7 @@ pub fn tool_definitions() -> Vec<Tool> {
             "Steer factory run",
             "Send an in-scope correction to the current owner, fenced to the expected turn. Does not expand authority.",
             object(
-                json!({"run_id":id,"expected_turn_id":id,"message":{"type":"string","minLength":1,"maxLength":4000}}),
+                json!({"run_id":id,"expected_revision":{"type":"integer","minimum":0},"expected_turn_id":id,"message":{"type":"string","minLength":1,"maxLength":4000}}),
                 &["run_id", "expected_turn_id", "message"],
             ),
             false,
@@ -95,7 +95,10 @@ pub fn tool_definitions() -> Vec<Tool> {
             "cancel_factory_run",
             "Stop factory run",
             "Interrupt only owned execution and verify stopped descendants before releasing its repository claim.",
-            object(json!({"run_id":id}), &["run_id"]),
+            object(
+                json!({"run_id":id,"expected_revision":{"type":"integer","minimum":0}}),
+                &["run_id"],
+            ),
             false,
         ),
         definition(
@@ -103,7 +106,7 @@ pub fn tool_definitions() -> Vec<Tool> {
             "Resume factory run",
             "Reconcile the same native thread with preserved authority and limits. To answer a completed decision, include message and the current pending_decision.id as expected_decision_id. Identical answer retries never dispatch twice.",
             object(
-                json!({"run_id":id,"message":{"type":"string","minLength":1,"maxLength":4000},"expected_decision_id":{"type":"string","minLength":1,"maxLength":128}}),
+                json!({"run_id":id,"expected_revision":{"type":"integer","minimum":0},"message":{"type":"string","minLength":1,"maxLength":4000},"expected_decision_id":{"type":"string","minLength":1,"maxLength":128},"diagnosis":{"type":"object","additionalProperties":false,"properties":{"summary":{"type":"string","minLength":1,"maxLength":1000},"basis":{"type":"string","enum":["operator_semantic","observed_checks"]},"check_refs":{"type":"array","maxItems":32,"items":{"type":"string"}},"same_goal_replan":{"type":"boolean"}},"required":["summary","basis","check_refs"]}}),
                 &["run_id"],
             ),
             false,
@@ -148,6 +151,7 @@ pub fn tool_definitions() -> Vec<Tool> {
         ),
     ];
     tools.extend([
+        definition("reconcile_factory_run","Reconcile native ownership","Observe existing owned native work and current checks without starting, resuming or stopping inference or retrying effects.",object(json!({"run_id":id,"expected_revision":{"type":"integer","minimum":0}}),&["run_id"]),true),
         definition("discover_factory_repositories", "Discover local repositories", "Read a bounded catalog under operator-approved local roots. Returns opaque candidate IDs, never absolute paths or file contents. No inference.", object(json!({}), &[]), true),
         definition("request_factory_repository", "Request repository access", "Request one discovered repository alias and explicit finish cap. This queues a security-sensitive request; only local operator approval grants access. Never accepts filesystem paths or remote approval.", object(json!({"candidate_id":{"type":"string","pattern":"^[a-f0-9]{64}$"},"alias":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"},"max_finish":{"type":"string","enum":["local_candidate","push","pr"]}}), &["candidate_id","alias","max_finish"]), false),
     ]);
@@ -165,6 +169,7 @@ pub fn tool_definitions() -> Vec<Tool> {
         } else if matches!(
             name,
             "read_factory_settings"
+                | "reconcile_factory_run"
                 | "update_factory_settings"
                 | "discover_factory_repositories"
                 | "request_factory_repository"

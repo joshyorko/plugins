@@ -88,6 +88,8 @@ pub struct Run {
     #[serde(default)]
     pub route_observations: Vec<crate::native::NativeRouteObservation>,
     pub claim_held: bool,
+    #[serde(default)]
+    pub control: Option<crate::control::Control>,
 }
 
 fn decode_run(payload: &str) -> Result<Run> {
@@ -104,6 +106,68 @@ fn decode_run(payload: &str) -> Result<Run> {
             question,
         });
     }
+    if run.control.is_none() {
+        let mut control = crate::control::Control::new(
+            &run.current_subject,
+            &run.request.acceptance,
+            run.request.repair_attempts,
+            run.deadline_at,
+        )?;
+        control.migrated = true;
+        control.repairs_used = run.repairs_used;
+        control.dispatch_generation = if run.thread_id.is_some() || run.turn_id.is_some() {
+            run.generation
+        } else {
+            run.generation.saturating_sub(1)
+        };
+        if let Some(id) = &run.dispatch_id {
+            control.dispatch_generation = run.generation;
+            control.attempts.push(crate::control::Attempt {
+                id: id.clone(),
+                task_id: "objective".into(),
+                parent: None,
+                intent_generation: 1,
+                dispatch_generation: run.generation,
+                source_subject: run.current_subject.clone(),
+                assumptions: Default::default(),
+                phase: if run.dispatch_phase == "terminal_observed" {
+                    "returned"
+                } else if run.turn_id.is_some() {
+                    "active"
+                } else {
+                    "intent_unknown"
+                }
+                .into(),
+                turn_id: run.turn_id.clone(),
+                certified_before: 0,
+                diagnosis: None,
+            });
+            control.tasks.get_mut("objective").unwrap().state = crate::control::TaskState::Verify;
+        }
+        for child in &run.owned_threads {
+            control.observe_child(child, false)?;
+        }
+        if run.state == "CONVERGED" && run.request.finish != "local_candidate" {
+            control.observe_effect(
+                &format!("legacy-delivery:{}", run.id),
+                if run.request.finish == "push" {
+                    crate::control::EffectKind::Push
+                } else {
+                    crate::control::EffectKind::Pr
+                },
+            )?;
+        }
+        if run.state == "CONVERGED" {
+            run.state = "QUIESCENT".into();
+            run.remaining_gap =
+                Some("Legacy owner prose has no independently observed check references.".into());
+        }
+        run.control = Some(control);
+    }
+    run.control
+        .as_ref()
+        .context("control_missing")?
+        .validate()?;
     Ok(run)
 }
 #[derive(Debug)]
@@ -303,7 +367,52 @@ impl Store {
           CREATE TABLE IF NOT EXISTS receipts (sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES runs(id), subject TEXT NOT NULL, kind TEXT NOT NULL, summary TEXT NOT NULL, created_at INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS repository_registrations (id TEXT PRIMARY KEY, alias TEXT NOT NULL UNIQUE, payload TEXT NOT NULL);")?;
-        Ok(Self { connection })
+        let mut store = Self { connection };
+        store.migrate_control()?;
+        Ok(store)
+    }
+    fn migrate_control(&mut self) -> Result<()> {
+        let version: u32 = self
+            .connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        ensure!(version <= 1, "unsupported_database_schema");
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS control_events (run_id TEXT NOT NULL REFERENCES runs(id), event_id TEXT NOT NULL, revision INTEGER NOT NULL, fingerprint TEXT NOT NULL, envelope TEXT NOT NULL, snapshot_sha256 TEXT NOT NULL, PRIMARY KEY(run_id,event_id), UNIQUE(run_id,revision));")?;
+        let rows = {
+            let mut statement = tx.prepare("SELECT id,payload FROM runs")?;
+            statement
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for (id, payload) in rows {
+            let raw: serde_json::Value = serde_json::from_str(&payload)?;
+            ensure!(
+                version == 0 || raw.get("control").is_some_and(|v| !v.is_null()),
+                "control_state_missing"
+            );
+            let run = decode_run(&payload)?;
+            ensure!(run.id == id, "run_identity_corrupt");
+            if version == 0 {
+                let payload = serde_json::to_string(&run)?;
+                tx.execute(
+                    "UPDATE runs SET payload=?2,state=?3 WHERE id=?1",
+                    params![id, payload, run.state],
+                )?;
+                let fingerprint = format!("{:x}", Sha256::digest(payload.as_bytes()));
+                tx.execute("INSERT OR IGNORE INTO control_events(run_id,event_id,revision,fingerprint,envelope,snapshot_sha256) VALUES (?1,'migration',?2,?3,'{\"kind\":\"legacy_import_unproved\"}',?3)",params![id,i64::try_from(run.control.as_ref().unwrap().revision)?,fingerprint])?;
+            } else {
+                let expected:String=tx.query_row("SELECT snapshot_sha256 FROM control_events WHERE run_id=?1 ORDER BY revision DESC LIMIT 1",[&id],|r|r.get(0)).optional()?.context("control_journal_missing")?;
+                ensure!(
+                    expected == format!("{:x}", Sha256::digest(payload.as_bytes())),
+                    "control_snapshot_corrupt"
+                );
+            }
+        }
+        tx.execute_batch("PRAGMA user_version=1;")?;
+        tx.commit()?;
+        Ok(())
     }
     pub fn repository_registrations(&self) -> Result<Vec<crate::repositories::Registration>> {
         let mut statement = self
@@ -445,7 +554,7 @@ impl Store {
             bail!("repository_claimed");
         }
         let timestamp = now();
-        let run = Run {
+        let mut run = Run {
             id: Uuid::new_v4().to_string(),
             request: request.clone(),
             canonical_root: root_text,
@@ -482,7 +591,14 @@ impl Store {
             configured_provider: None,
             route_observations: Vec::new(),
             claim_held: true,
+            control: None,
         };
+        run.control = Some(crate::control::Control::new(
+            &run.current_subject,
+            &request.acceptance,
+            request.repair_attempts,
+            run.deadline_at,
+        )?);
         tx.execute(
             "INSERT INTO runs(id,idem,fingerprint,root,state,payload) VALUES (?1,?2,?3,?4,?5,?6)",
             params![
@@ -498,6 +614,9 @@ impl Store {
             "INSERT INTO claims(identity,run_id) VALUES (?1,?2)",
             params![identity, run.id],
         )?;
+        let snapshot = serde_json::to_string(&run)?;
+        let digest = format!("{:x}", Sha256::digest(snapshot.as_bytes()));
+        tx.execute("INSERT INTO control_events(run_id,event_id,revision,fingerprint,envelope,snapshot_sha256) VALUES (?1,'admission',0,?2,'{\"kind\":\"admission\"}',?2)",params![run.id,digest])?;
         tx.commit()?;
         Ok(Admission { run, created: true })
     }
@@ -516,7 +635,41 @@ impl Store {
         let rows = stmt.query_map([limit.clamp(1, 100)], |r| r.get::<_, String>(0))?;
         rows.map(|r| decode_run(&r?)).collect()
     }
-    pub fn save(&mut self, run: &Run) -> Result<()> {
+    pub fn save(&mut self, run: &mut Run) -> Result<()> {
+        self.persist(run, None)
+    }
+    pub fn apply_event(
+        &mut self,
+        run: &mut Run,
+        event: &crate::control::EventEnvelope,
+    ) -> Result<bool> {
+        let fingerprint = format!("{:x}", Sha256::digest(serde_json::to_vec(event)?));
+        if let Some(previous) = self
+            .connection
+            .query_row(
+                "SELECT fingerprint FROM control_events WHERE run_id=?1 AND event_id=?2",
+                params![run.id, event.id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            ensure!(previous == fingerprint, "event_identity_conflict");
+            *run = self.get(&run.id)?;
+            return Ok(false);
+        }
+        let next = crate::control::reduce(run.control.as_ref().context("control_missing")?, event)?;
+        let previous = run.control.replace(next);
+        if let Err(error) = self.persist(run, Some((event, &fingerprint))) {
+            run.control = previous;
+            return Err(error);
+        }
+        Ok(true)
+    }
+    fn persist(
+        &mut self,
+        run: &mut Run,
+        event: Option<(&crate::control::EventEnvelope, &str)>,
+    ) -> Result<()> {
         let previous = self.get(&run.id)?;
         ensure!(
             serde_json::to_value(&previous.request)? == serde_json::to_value(&run.request)?
@@ -534,10 +687,77 @@ impl Store {
                 .is_none_or(|id| run.thread_id.as_ref() == Some(id)),
             "immutable_owner_identity"
         );
-        self.connection.execute(
-            "UPDATE runs SET state=?2,payload=?3 WHERE id=?1",
-            params![run.id, run.state, serde_json::to_string(run)?],
+        let old_revision = previous
+            .control
+            .as_ref()
+            .context("control_missing")?
+            .revision;
+        let expected = event.map_or(
+            run.control.as_ref().context("control_missing")?.revision,
+            |(event, _)| event.expected_revision,
+        );
+        ensure!(old_revision == expected, "stale_control_revision");
+        ensure!(
+            run.repairs_used >= previous.repairs_used && run.generation >= previous.generation,
+            "budget_or_generation_reset"
+        );
+        let control = run.control.as_mut().context("control_missing")?;
+        if event.is_none() {
+            control.revision = old_revision.checked_add(1).context("revision_exhausted")?;
+        }
+        ensure!(
+            control.revision == old_revision + 1
+                && control.repair_limit == run.request.repair_attempts
+                && control.deadline_at == run.deadline_at,
+            "immutable_control_budget"
+        );
+        control.repairs_used = run.repairs_used;
+        control.validate()?;
+        let payload = serde_json::to_string(run)?;
+        let snapshot = format!("{:x}", Sha256::digest(payload.as_bytes()));
+        let event_id =
+            event.map_or_else(|| Uuid::new_v4().to_string(), |(event, _)| event.id.clone());
+        let envelope = event.map_or_else(
+            || {
+                Ok(
+                    serde_json::json!({"kind":"snapshot","expected_revision":old_revision})
+                        .to_string(),
+                )
+            },
+            |(event, _)| serde_json::to_string(event),
         )?;
+        let fingerprint = event.map_or(snapshot.clone(), |(_, fingerprint)| fingerprint.to_owned());
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        ensure!(
+            tx.query_row(
+                "SELECT count(*) FROM control_events WHERE run_id=?1",
+                [&run.id],
+                |r| r.get::<_, i64>(0)
+            )? < 10000,
+            "control_event_bound_reached"
+        );
+        ensure!(tx.execute("UPDATE runs SET state=?2,payload=?3 WHERE id=?1 AND json_extract(payload,'$.control.revision')=?4",params![run.id,run.state,payload,i64::try_from(old_revision)?])?==1,"stale_control_revision");
+        tx.execute("INSERT INTO control_events(run_id,event_id,revision,fingerprint,envelope,snapshot_sha256) VALUES (?1,?2,?3,?4,?5,?6)",params![run.id,event_id,i64::try_from(old_revision+1)?,fingerprint,envelope,snapshot])?;
+        if run.claim_held {
+            tx.execute(
+                "INSERT OR IGNORE INTO claims(identity,run_id) VALUES (?1,?2)",
+                params![run.repository_identity, run.id],
+            )?;
+            let owner: String = tx.query_row(
+                "SELECT run_id FROM claims WHERE identity=?1",
+                [&run.repository_identity],
+                |r| r.get(0),
+            )?;
+            ensure!(owner == run.id, "repository_claimed");
+        } else {
+            tx.execute(
+                "DELETE FROM claims WHERE run_id=?1 AND identity=?2",
+                params![run.id, run.repository_identity],
+            )?;
+        }
+        tx.commit()?;
         Ok(())
     }
     pub fn claim_owner(&self, root: &str) -> Result<Option<String>> {
@@ -555,7 +775,7 @@ impl Store {
                 run.blocker = Some("Runtime restarted. Reconcile native ownership before resuming; no mutation is replayed.".into());
             }
             run.updated_at = now();
-            self.save(&run)?;
+            self.save(&mut run)?;
         }
         Ok(())
     }
@@ -573,19 +793,21 @@ impl Store {
             ["CANCELLED", "CONVERGED", "QUIESCENT", "FAILED"].contains(&run.state.as_str()),
             "claim_release_requires_terminal_state"
         );
-        let tx = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute(
-            "DELETE FROM claims WHERE run_id=?1 AND identity=?2",
-            params![run.id, run.repository_identity],
-        )?;
+        if run.state == "CONVERGED" {
+            ensure!(
+                run.control.as_ref().is_some_and(|c| c.converged()),
+                "unproved_mandatory_criterion"
+            );
+        }
+        ensure!(
+            !run.control
+                .as_ref()
+                .context("control_missing")?
+                .unknown_effect(),
+            "effect_outcome_unknown"
+        );
         run.claim_held = false;
-        tx.execute(
-            "UPDATE runs SET state=?2,payload=?3 WHERE id=?1",
-            params![run.id, run.state, serde_json::to_string(run)?],
-        )?;
-        tx.commit()?;
+        self.persist(run, None)?;
         Ok(())
     }
     pub fn receipt(&mut self, run: &Run, kind: &str, summary: &str) -> Result<()> {
@@ -605,10 +827,8 @@ impl Store {
         Ok(stmt.query_map([run_id],|r|Ok(serde_json::json!({"subject":r.get::<_,String>(0)?,"kind":r.get::<_,String>(1)?,"summary":r.get::<_,String>(2)?,"created_at":r.get::<_,i64>(3)?})))?.collect::<rusqlite::Result<Vec<_>>>()?)
     }
     pub fn reclaim(&mut self, run: &mut Run) -> Result<()> {
-        let tx = self
+        let owner: Option<String> = self
             .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let owner: Option<String> = tx
             .query_row(
                 "SELECT run_id FROM claims WHERE identity=?1",
                 [&run.repository_identity],
@@ -619,17 +839,8 @@ impl Store {
             owner.as_deref().is_none_or(|id| id == run.id),
             "repository_claimed"
         );
-        tx.execute(
-            "INSERT OR IGNORE INTO claims(identity,run_id) VALUES (?1,?2)",
-            params![run.repository_identity, run.id],
-        )?;
         run.claim_held = true;
-        tx.execute(
-            "UPDATE runs SET payload=?2 WHERE id=?1",
-            params![run.id, serde_json::to_string(run)?],
-        )?;
-        tx.commit()?;
-        Ok(())
+        self.persist(run, None)
     }
     pub fn settings(&self) -> Result<serde_json::Value> {
         let value: Option<String> = self

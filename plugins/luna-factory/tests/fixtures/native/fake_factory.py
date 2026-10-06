@@ -15,6 +15,15 @@ active={"owner":bool(history and history[-1]["status"]=="inProgress"),"child":bo
 def emit(value):
     print(json.dumps(value), flush=True)
 
+def report_for(turn):
+    report=json.loads((home / "report.json").read_text())
+    if report.pop("_fixture_bind_dispatch",False):
+        for check in report.get("checks",[]):
+            check["binding"]={"task_id":"objective","attempt_id":turn["client_id"],
+                "intent_generation":1,"dispatch_generation":int(turn["id"].split("-")[-1]),
+                "subject":report["subject"],"assumptions":{}}
+    return report
+
 for line in sys.stdin:
     message = json.loads(line)
     with (home / "calls.jsonl").open("a") as file:
@@ -62,7 +71,7 @@ for line in sys.stdin:
     elif method == "turn/steer" and mode == "finish":
         active = {"owner": False,"child": False}
         history[-1]["status"]="completed";history_path.write_text(json.dumps(history))
-        report = json.loads((home / "report.json").read_text())
+        report = report_for(history[-1])
         emit({"method":"item/completed","params":{"threadId":"owner","turnId":f"turn-{turn_number}","item":{"id":"final","type":"agentMessage","phase":"final_answer","text":json.dumps(report)}}})
         emit({"method":"turn/completed","params":{"threadId":"owner","turn":{"id":f"turn-{turn_number}","status":"completed","items":[]}}})
     elif method == "turn/steer" and mode.startswith("reroute_"):
@@ -84,7 +93,7 @@ for line in sys.stdin:
         emit({"method":"model/rerouted","params":route})
         emit({"method":"model/rerouted","params":route})
     elif method == "thread/items/list" and mode == "finish" and params["threadId"] == "owner":
-        result = {"data":[{"id":"final","type":"agentMessage","phase":"final_answer","text":(home / "report.json").read_text()}]}
+        result = {"data":[{"id":"final","type":"agentMessage","phase":"final_answer","text":json.dumps(report_for(history[-1]))}]}
     elif method == "thread/backgroundTerminals/list":
         tid=params["threadId"];terminal_reads[tid]=terminal_reads.get(tid,0)+1
         if mode=="terminal_preflight" and tid=="child" and terminal_reads[tid]==3:
@@ -127,7 +136,7 @@ for line in sys.stdin:
             for turn in history:
                 result["data"].append({"turnId":turn["id"],"item":{"id":"server-item-"+turn["id"],"type":"userMessage","clientId":turn.get("client_id"),"content":[]}})
                 if mode=="lost_ack_completed" and turn["status"]=="completed":
-                    result["data"].append({"turnId":turn["id"],"item":{"id":"final-"+turn["id"],"type":"agentMessage","phase":"final_answer","text":(home / "report.json").read_text()}})
+                    result["data"].append({"turnId":turn["id"],"item":{"id":"final-"+turn["id"],"type":"agentMessage","phase":"final_answer","text":json.dumps(report_for(turn))}})
             if params.get("turnId"):
                 result["data"]=[entry for entry in result["data"] if entry["turnId"]==params["turnId"]]
     emit({"id": message["id"], "result": result})
