@@ -131,11 +131,16 @@ Proof is conservatively invalidated across new dispatches when unaffected retent
 cannot be explicitly justified. Native child identities never receive inferred
 admission, execution or completion proof.
 
-Current checkpoint limit: check bindings still require the latest global attempt.
-Sequential necessary tasks therefore cannot all retain current proof and cannot
-converge. Multiple admitted records are not multi-task completion support. The
-next alignment gate is explicit current re-attestation for each task's recorded
-attempt, without accepting unknown execution or automatically retaining old proof.
+Sequential necessary tasks can complete only after explicit current re-attestation
+for each task's latest observed returned/stopped attempt. The daemon rehashes every
+declared file predicate and the current owner supplies semantic acceptance; old
+references alone do not retain proof. Task output subject, intent, recorded
+dispatch identity and required assumptions must match. Changed source or assumptions
+remain unproved until valid same-task repair or verification. Prerequisite proof is
+checked from its own scoped references with bounded cycle rejection; a stale
+prerequisite demotes dependent criteria and completed tasks to unverified work.
+Factory-owned native dispatch additionally requires `native_owner_turn`; a task
+permitting only file checks cannot start or resume native execution.
 
 ## Migration, delivery and acceptance
 

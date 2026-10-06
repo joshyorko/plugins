@@ -50,7 +50,7 @@ model supplies the same action availability to MCP guards and the ChatGPT UI.
 ## Slice 1: Typed control, admission and additive persistence
 
 Files: add `server/src/control.rs`, `server/tests/control.rs` and a donor-cited
-`server/tests/fixtures/control_conformance.json`; modify `store.rs`, `lib.rs`,
+`tests/fixtures/control-conformance.json`; modify `store.rs`, `lib.rs`,
 `lifecycle.rs` and the package input inventory as needed.
 
 Interfaces: typed `Control`, `Task`, `Attempt`, `EventEnvelope`, `Reason`;
