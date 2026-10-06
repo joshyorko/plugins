@@ -59,6 +59,27 @@ fn status_and_ui_reads_are_truthfully_read_only() {
 }
 
 #[test]
+fn reconciliation_is_callable_in_the_model_filtered_catalog() {
+    let models: Vec<_> = tool_definitions()
+        .into_iter()
+        .filter(|tool| {
+            let value = serde_json::to_value(tool).unwrap();
+            value["_meta"]["ui"]["visibility"]
+                .as_array()
+                .is_none_or(|visibility| visibility.iter().any(|context| context == "model"))
+        })
+        .collect();
+    let reconcile = models
+        .iter()
+        .find(|tool| tool.name == "reconcile_factory_run")
+        .expect("the advertised recovery action must exist in ChatGPT's callable catalog");
+    let value = serde_json::to_value(reconcile).unwrap();
+    assert_eq!(value["annotations"]["readOnlyHint"], true);
+    assert_eq!(value["inputSchema"]["required"], json!(["run_id"]));
+    assert!(value["inputSchema"]["properties"]["expected_revision"].is_object());
+}
+
+#[test]
 fn server_identity_contains_a_portable_png_icon() {
     use luna_factoryd::{config::Config, http::McpServer, lifecycle::Factory};
     use rmcp::ServerHandler;

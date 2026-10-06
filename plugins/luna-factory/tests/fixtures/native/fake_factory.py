@@ -65,7 +65,7 @@ for line in sys.stdin:
         result = {"turn": {"id": f"turn-{turn_number}", "status": "inProgress"}}
     elif method == "thread/read":
         tid = params["threadId"]
-        state = "notLoaded" if mode == "unknown_child" and tid == "child" else "active" if active.get(tid) else "idle"
+        state = "notLoaded" if (mode == "unknown_child" and tid == "child") or (mode == "finish_owner_unknown" and tid == "owner") else "active" if active.get(tid) else "idle"
         result = {"thread": {"id": tid, "model": "gpt-6-luna", "status": {"type": state}, "parentThreadId": "owner" if tid == "child" else None}}
     elif method == "thread/list":
         result = {"data": [{"id": "child", "parentThreadId": "owner"}] if turn_number else []}
@@ -74,7 +74,7 @@ for line in sys.stdin:
     elif method == "turn/steer" and mode == "lost_steer_ack":
         emit({"id":message["id"],"error":{"code":-32000,"message":"synthetic uncertain steering acknowledgement"}})
         continue
-    elif method == "turn/steer" and mode in ("finish", "finish_external"):
+    elif method == "turn/steer" and mode in ("finish", "finish_external", "finish_owner_unknown"):
         active = {"owner": False,"child": False}
         history[-1]["status"]="completed";history_path.write_text(json.dumps(history))
         report = report_for(history[-1])
@@ -100,7 +100,7 @@ for line in sys.stdin:
             route["toModel"]="https://synthetic.invalid/sk-synthetic-secret"
         emit({"method":"model/rerouted","params":route})
         emit({"method":"model/rerouted","params":route})
-    elif method == "thread/items/list" and mode in ("finish", "finish_external") and params["threadId"] == "owner":
+    elif method == "thread/items/list" and mode in ("finish", "finish_external", "finish_owner_unknown") and params["threadId"] == "owner":
         result = {"data":[{"id":"final","type":"agentMessage","phase":"final_answer","text":json.dumps(report_for(history[-1]))}]}
     elif method == "thread/backgroundTerminals/list":
         tid=params["threadId"];terminal_reads[tid]=terminal_reads.get(tid,0)+1

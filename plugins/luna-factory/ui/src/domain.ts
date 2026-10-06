@@ -152,7 +152,12 @@ const finishRank = { local_candidate: 0, push: 1, pr: 2 } satisfies Record<RunVi
 export function allowedFinishes(max: RunView["finish"]): RunView["finish"][] {
   return finishSchema.options.filter(finish => finishRank[finish] <= finishRank[max]);
 }
-const lines = (value: string): string[] => value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+const lines = (value: string, field: "acceptance" | "non_goals"): string[] => {
+  const heading = field === "acceptance" ? /^(?:mandatory\s+)?acceptance(?:\s+criteria)?\s*:?$/i : /^non[ -]?goals\s*:?$/i;
+  return value.split(/\r?\n/).map(line => line.trim())
+    .filter(line => !heading.test(line.replace(/^#{1,6}\s+/, "").replace(/^\*\*(.*?)\*\*$/, "$1").trim()))
+    .map(line => line.replace(/^(?:[-*+•]|\d+[.)])\s+/, "").trim()).filter(Boolean);
+};
 const startSchema = z.object({
   repository: z.string().min(1).max(64), objective: z.string().trim().min(1, "Enter an objective").max(8000),
   acceptance: z.array(z.string().min(1).max(1000)).min(1, "Add at least one acceptance criterion").max(32),
@@ -161,7 +166,7 @@ const startSchema = z.object({
   wall_seconds: z.coerce.number().int().min(30).max(86400), idempotency_key: z.string().min(1).max(128),
 });
 export function startRequest(fields: Record<string, string>, capabilities: Capabilities, key: string) {
-  const result = startSchema.safeParse({ ...fields, acceptance: lines(fields.acceptance ?? ""), non_goals: lines(fields.non_goals ?? ""), idempotency_key: key });
+  const result = startSchema.safeParse({ ...fields, acceptance: lines(fields.acceptance ?? "", "acceptance"), non_goals: lines(fields.non_goals ?? "", "non_goals"), idempotency_key: key });
   if (!result.success) throw new Error(result.error.issues[0]?.message || "Check the run fields");
   const request = result.data;
   const repository = capabilities.repositories.find(repo => repo.alias === request.repository);

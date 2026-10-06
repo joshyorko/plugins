@@ -104,6 +104,9 @@ The workbench uses the same service and run history as the MCP tools. Start from
 The [control adoption matrix](docs/control-adoption.md),
 [slice plan](docs/control-plan.md) and [wire boundary](docs/control-wire.md)
 record the pinned donor semantics, intentional differences and integration gates.
+The [dogfood recovery notes](docs/dogfood-recovery.md) distinguish ChatGPT's
+model-filtered catalog, native schema rejection and original-session cessation
+proof. Reconciliation is read-only and callable by both the model and app.
 Factory-owned dispatch now uses revision-fenced task admission, retained attempt
 lineage and persisted native-effect settlements. Current file predicates and
 explicit owner semantic acceptance are separate requirements for local completion.

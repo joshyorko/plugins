@@ -100,6 +100,18 @@ describe("bounded Model-App Context", () => {
 
 describe("start request", () => {
   const fields = { repository: "plugins", objective: "Ship the workbench", acceptance: "Build passes\nTests pass", non_goals: "No deployment", finish: "local_candidate", profile: "luna", capacity: "2", repair_attempts: "1", wall_seconds: "600" };
+  it("does not turn pasted headings or bullet syntax into mandatory criteria", () => {
+    const request = startRequest({ ...fields,
+      acceptance: "Acceptance:\n- Build passes\n* Tests pass\n3. Evidence checked",
+      non_goals: "**Non-goals:**\n• No deployment\n- No merge"
+    }, fixtureWorkbench.capabilities, "normalized-form");
+    expect(request.acceptance).toEqual(["Build passes", "Tests pass", "Evidence checked"]);
+    expect(request.non_goals).toEqual(["No deployment", "No merge"]);
+  });
+  it("preserves meaningful text that merely contains a heading word", () => {
+    const request = startRequest({ ...fields, acceptance: "Acceptance: validate an actual payload" }, fixtureWorkbench.capabilities, "not-a-heading");
+    expect(request.acceptance).toEqual(["Acceptance: validate an actual payload"]);
+  });
   it("constructs only real tool arguments from approved choices", () => {
     const request = startRequest(fields, fixtureWorkbench.capabilities, "attempt-1");
     expect(request.acceptance).toEqual(["Build passes", "Tests pass"]);

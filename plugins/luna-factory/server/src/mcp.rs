@@ -169,7 +169,6 @@ pub fn tool_definitions() -> Vec<Tool> {
         } else if matches!(
             name,
             "read_factory_settings"
-                | "reconcile_factory_run"
                 | "update_factory_settings"
                 | "discover_factory_repositories"
                 | "request_factory_repository"
@@ -181,6 +180,11 @@ pub fn tool_definitions() -> Vec<Tool> {
             if name == "read_factory_settings" {
                 tool.output_schema = Some(serde_json::from_value(json!({"type":"object","properties":{"schema":{"type":"object"},"values":{"type":"object"},"layout":{"type":"array"}},"required":["schema","values"]})).expect("settings schema"));
             }
+        } else if name == "reconcile_factory_run" {
+            tool.meta = Some(
+                serde_json::from_value(json!({"ui":{"visibility":["model","app"]}}))
+                    .expect("static recovery visibility"),
+            );
         } else if matches!(name, "start_factory" | "get_factory_run") {
             tool.meta = Some(
                 serde_json::from_value(json!({"ui":{"resourceUri":APP_URI}}))

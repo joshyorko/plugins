@@ -20,6 +20,7 @@ METADATA = (
     ".claude-plugin/plugin.json", "plugin.yaml", "__init__.py", "README.md",
     "docs/package.md", "docs/local-service.md", "docs/repository-onboarding.md",
     "docs/control-adoption.md", "docs/control-plan.md", "docs/control-wire.md",
+    "docs/dogfood-recovery.md",
     "assets/logo.svg", "assets/logo.png",
 )
 SKILL_FILES = (

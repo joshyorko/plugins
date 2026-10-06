@@ -2,6 +2,73 @@ use luna_factoryd::lifecycle::{accept_owner_report, public_run, terminal_threads
 use serde_json::json;
 
 #[test]
+fn native_output_schema_obeys_strict_structured_output_objects() {
+    fn verify(value: &serde_json::Value, path: &str) {
+        if value["type"] == "object" {
+            let properties = value["properties"].as_object().unwrap_or_else(|| {
+                panic!("{path}: object properties required by native response format")
+            });
+            assert_eq!(
+                value["additionalProperties"], false,
+                "{path}: object must be closed"
+            );
+            let required = value["required"]
+                .as_array()
+                .expect("every object has required keys");
+            assert_eq!(
+                required.len(),
+                properties.len(),
+                "{path}: all properties required"
+            );
+            for (key, child) in properties {
+                assert!(
+                    required.contains(&json!(key)),
+                    "{path}: missing required {key}"
+                );
+                verify(child, &format!("{path}.{key}"));
+            }
+        }
+        if value["type"] == "array" {
+            verify(&value["items"], &format!("{path}[]"));
+        }
+    }
+    verify(&luna_factoryd::lifecycle::owner_output_schema(), "owner");
+    let assumptions =
+        std::collections::BTreeMap::from([("known-context".to_owned(), "current".to_owned())]);
+    let schema = luna_factoryd::lifecycle::owner_output_schema_with_assumptions(&assumptions);
+    verify(&schema, "owner-with-context");
+    assert_eq!(
+        schema["properties"]["candidates"]["items"]["properties"]["assumptions"]["required"],
+        json!(["known-context"])
+    );
+}
+
+#[test]
+fn provider_schema_rejection_is_diagnosed_without_stopped_execution_claim() {
+    use luna_factoryd::lifecycle::native_turn_failure_kind;
+    let failed = json!({"status":"failed","error":{"message":json!({"error":{
+        "code":"invalid_json_schema","param":"text.format.schema"},"status":400}).to_string()}});
+    assert_eq!(
+        native_turn_failure_kind(&failed),
+        Some("native_output_schema_rejected")
+    );
+    assert_eq!(
+        native_turn_failure_kind(
+            &json!({"status":"failed","error":{"message":"untrusted provider detail"}})
+        ),
+        Some("native_turn_failed")
+    );
+    assert_eq!(
+        native_turn_failure_kind(&json!({"status":"completed"})),
+        None
+    );
+    assert!(!terminal_threads(
+        &["owner".into()],
+        &[json!({"id":"owner","status":{"type":"notLoaded"}})]
+    ));
+}
+
+#[test]
 fn interrupt_ack_and_missing_children_do_not_prove_cancellation() {
     assert!(!terminal_threads(
         &["owner".into(), "child".into()],

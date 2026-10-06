@@ -80,6 +80,76 @@ fn calls(dir: &tempfile::TempDir) -> Vec<Value> {
         .collect()
 }
 
+#[tokio::test]
+async fn restart_cannot_turn_unavailable_stdio_ownership_into_cessation_or_redispatch() {
+    use luna_factoryd::control::{Event, EventEnvelope, RunControl};
+    let (dir, mut config, request) = setup();
+    config.native_transport = "stdio".into();
+    let mut store = Store::open(&config).unwrap();
+    let mut run = store.admit(&config, &request).unwrap().run;
+    run.generation = 1;
+    run.thread_id = Some("owner".into());
+    run.turn_id = Some("turn-1".into());
+    run.dispatch_id = Some("preserved-dispatch".into());
+    run.dispatch_phase = "active".into();
+    store
+        .apply_event(
+            &mut run,
+            &EventEnvelope {
+                id: "original-dispatch".into(),
+                expected_revision: 0,
+                event: Event::Dispatch {
+                    id: "preserved-dispatch".into(),
+                    generation: 1,
+                    repair: false,
+                },
+            },
+        )
+        .unwrap();
+    let revision = run.control.as_ref().unwrap().revision;
+    store
+        .apply_event(
+            &mut run,
+            &EventEnvelope {
+                id: "original-ack".into(),
+                expected_revision: revision,
+                event: Event::Acknowledged {
+                    id: "preserved-dispatch".into(),
+                    turn_id: "turn-1".into(),
+                },
+            },
+        )
+        .unwrap();
+    run.set_state(RunControl::Blocked);
+    store.save(&mut run).unwrap();
+    let deadline = run.deadline_at;
+    let id = run.id.clone();
+    drop(store);
+    let factory = Factory::new(config).unwrap();
+    factory.reconcile_startup().await.unwrap();
+    let original = factory.get(&id).await.unwrap();
+    let error = factory
+        .reconcile(&id, original["control"]["revision"].as_u64())
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("stdio_process_lifetime_unknown_after_restart")
+    );
+    let after = factory.get(&id).await.unwrap();
+    assert_eq!(after["claim_held"], true);
+    assert_eq!(after["generation"], 1);
+    assert_eq!(after["owner_thread"], "owner");
+    assert_eq!(after["turn_id"], "turn-1");
+    assert_eq!(after["deadline_at"], deadline);
+    assert_eq!(after["repairs_used"], 0);
+    assert!(
+        calls(&dir).is_empty(),
+        "restart/reconcile must never create a substitute native session or dispatch"
+    );
+}
+
 async fn wait_state(factory: &Factory, id: &str, expected: &str) -> Value {
     let wait = if expected == "CANCELLED" { 35 } else { 6 };
     tokio::time::timeout(Duration::from_secs(wait), async {

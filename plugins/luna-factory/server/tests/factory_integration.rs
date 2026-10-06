@@ -55,6 +55,62 @@ fn calls(dir: &tempfile::TempDir) -> Vec<Value> {
 }
 
 #[tokio::test]
+async fn ended_owner_unknown_is_reconciled_without_redispatch_or_budget_reset() {
+    let (dir, factory, request) = setup();
+    let started = factory.start(request).await.unwrap();
+    let id = started["id"].as_str().unwrap();
+    let subject = started["current_subject"].clone();
+    std::fs::write(dir.path().join("report.json"), json!({"state":"BLOCKED","subject":subject,
+        "acceptance":[],"checks":[],"candidates":[],"selected_task":"objective",
+        "delta":"Original turn ended","remaining_gap":"Original criteria unproved","blocker":"Needs evidence"}).to_string()).unwrap();
+    std::fs::write(dir.path().join("mode"), "finish_owner_unknown").unwrap();
+    factory
+        .steer(id, "turn-1", "Return the same objective")
+        .await
+        .unwrap();
+    let blocked = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let value = factory.get(id).await.unwrap();
+            if value["blocker"] == "Owner turn ended but owned execution is not verified stopped." {
+                break value;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(blocked["claim_held"], true);
+    assert_eq!(blocked["presentation"]["owner"]["liveness"], "unknown");
+    let action = &blocked["presentation"]["primary_action"];
+    assert_eq!(action["tool"], "reconcile_factory_run");
+    assert_eq!(action["allowed"], true);
+    let catalog = serde_json::to_value(luna_factoryd::mcp::tool_definitions()).unwrap();
+    assert!(catalog.as_array().unwrap().iter().any(|tool| {
+        tool["name"] == action["tool"]
+            && tool["_meta"]["ui"]["visibility"]
+                .as_array()
+                .is_none_or(|contexts| contexts.iter().any(|context| context == "model"))
+    }));
+    let count = calls(&dir).len();
+    std::fs::write(dir.path().join("mode"), "finish").unwrap();
+    let recovered = factory
+        .reconcile(id, blocked["control"]["revision"].as_u64())
+        .await
+        .unwrap();
+    assert_eq!(recovered["generation"], 1);
+    assert_eq!(recovered["owner_thread"], started["owner_thread"]);
+    assert_eq!(recovered["turn_id"], started["turn_id"]);
+    assert_eq!(recovered["deadline_at"], started["deadline_at"]);
+    assert_eq!(recovered["repairs_used"], 0);
+    assert_eq!(recovered["claim_held"], true);
+    assert_eq!(recovered["presentation"]["owner"]["liveness"], "idle");
+    assert!(calls(&dir)[count..].iter().all(|call| !matches!(
+        call["method"].as_str(),
+        Some("thread/start" | "thread/resume" | "turn/start" | "turn/steer" | "turn/interrupt")
+    )));
+}
+
+#[tokio::test]
 async fn runtime_start_status_steer_cancel_resume_preserve_native_owner() {
     let (dir, factory, request) = setup();
     let start = factory.start(request.clone()).await.unwrap();

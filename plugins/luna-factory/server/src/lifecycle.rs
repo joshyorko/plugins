@@ -211,16 +211,51 @@ pub fn safe_summary(text: &str, limit: usize) -> String {
 }
 
 pub fn owner_output_schema() -> Value {
+    owner_output_schema_with_assumptions(&std::collections::BTreeMap::new())
+}
+
+/// Classify observed native failure without exposing provider output or treating
+/// a failed turn as stopped-process proof.
+pub fn native_turn_failure_kind(turn: &Value) -> Option<&'static str> {
+    if turn["status"] != "failed" {
+        return None;
+    }
+    let rejected = turn["error"]["message"]
+        .as_str()
+        .and_then(|message| serde_json::from_str::<Value>(message).ok())
+        .is_some_and(|error| {
+            error["error"]["code"] == "invalid_json_schema"
+                && error["error"]["param"] == "text.format.schema"
+                && error["status"] == 400
+        });
+    Some(if rejected {
+        "native_output_schema_rejected"
+    } else {
+        "native_turn_failed"
+    })
+}
+
+pub fn owner_output_schema_with_assumptions(
+    assumptions: &std::collections::BTreeMap<String, String>,
+) -> Value {
+    // Native strict structured output requires closed objects with explicit
+    // properties and every property required, including an empty assumption map.
+    let properties: serde_json::Map<String, Value> = assumptions
+        .keys()
+        .map(|key| (key.clone(), json!({"type":"string"})))
+        .collect();
+    let assumption_schema = json!({"type":"object","properties":properties,
+        "additionalProperties":false,"required":assumptions.keys().collect::<Vec<_>>()});
     let binding = json!({"type":"object","additionalProperties":false,"properties":{
         "task_id":{"type":"string"},"attempt_id":{"type":"string"},"intent_generation":{"type":"integer"},
         "dispatch_generation":{"type":"integer"},"subject":{"type":"string"},
-        "assumptions":{"type":"object","additionalProperties":{"type":"string"}}},
+        "assumptions":assumption_schema},
         "required":["task_id","attempt_id","intent_generation","dispatch_generation","subject","assumptions"]});
     let check = json!({"type":"object","additionalProperties":false,"properties":{
         "id":{"type":"string"},"kind":{"type":"string","enum":["file_sha256","native_command"]},"binding":binding,
         "path":{"type":["string","null"]},"sha256":{"type":["string","null"]},"native_item":{"type":["string","null"]}},
         "required":["id","kind","binding","path","sha256","native_item"]});
-    let candidate = json!({"type":"object","additionalProperties":false,"properties":{"id":{"type":"string"},"title":{"type":"string"},"criterion_ids":{"type":"array","items":{"type":"string"}},"dependencies":{"type":"array","items":{"type":"string"}},"assumptions":{"type":"object","additionalProperties":{"type":"string"}},"necessary":{"type":"boolean"},"effects":{"type":"array","items":{"type":"string","enum":["native_owner_turn","read_only_file_check"]}}},"required":["id","title","criterion_ids","dependencies","assumptions","necessary","effects"]});
+    let candidate = json!({"type":"object","additionalProperties":false,"properties":{"id":{"type":"string"},"title":{"type":"string"},"criterion_ids":{"type":"array","items":{"type":"string"}},"dependencies":{"type":"array","items":{"type":"string"}},"assumptions":assumption_schema,"necessary":{"type":"boolean"},"effects":{"type":"array","items":{"type":"string","enum":["native_owner_turn","read_only_file_check"]}}},"required":["id","title","criterion_ids","dependencies","assumptions","necessary","effects"]});
     json!({"type":"object","additionalProperties":false,"properties":{
         "candidates":{"type":"array","maxItems":16,"items":candidate},"selected_task":{"type":"string"},
         "state":{"type":"string","enum":["CONVERGED","QUIESCENT","NEEDS_INPUT","BLOCKED"]},
@@ -628,7 +663,9 @@ impl Factory {
                 &self.config.skill_path,
                 &self.owner_prompt(run)?,
                 effort,
-                Some(owner_output_schema()),
+                Some(owner_output_schema_with_assumptions(
+                    &run.control.as_ref().context("control_missing")?.assumptions,
+                )),
                 run.dispatch_id.as_deref(),
             )
             .await;
@@ -1107,6 +1144,13 @@ impl Factory {
         }
         run.set_state(crate::control::RunControl::Verifying);
         self.store.lock().await.save(&mut run)?;
+        let failure = native_turn_failure_kind(turn);
+        if let Some(kind) = failure {
+            self.store
+                .lock()
+                .await
+                .receipt(&run, "native_turn_failure", kind)?;
+        }
         let client = self
             .clients
             .lock()
@@ -1118,7 +1162,11 @@ impl Factory {
             return self
                 .block(
                     id,
-                    "Owner turn ended but owned execution is not verified stopped.",
+                    if failure == Some("native_output_schema_rejected") {
+                        "Native output schema was rejected. Owned execution is not verified stopped; claim retained. Reconcile this dispatch without starting another turn."
+                    } else {
+                        "Owner turn ended but owned execution is not verified stopped."
+                    },
                 )
                 .await;
         }
@@ -1916,7 +1964,9 @@ impl Factory {
                 &self.config.skill_path,
                 &prompt,
                 effort,
-                Some(owner_output_schema()),
+                Some(owner_output_schema_with_assumptions(
+                    &run.control.as_ref().context("control_missing")?.assumptions,
+                )),
                 run.dispatch_id.as_deref(),
             )
             .await;

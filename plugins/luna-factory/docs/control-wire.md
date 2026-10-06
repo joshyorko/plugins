@@ -55,7 +55,9 @@ retain `expected_decision_id` and answer fingerprints. An identical already-reco
 answer is a no-call retry even if the caller's revision is old; a different answer
 or stale decision ID fails closed.
 
-`reconcile_factory_run` is app-only and observes existing native execution. It must
+`reconcile_factory_run` is visible to both the model and app and observes existing
+native execution. Its typed `run_id`/`expected_revision` schema is present in the
+model-filtered catalog whenever presentation advertises it. It must
 not start/resume a turn, interrupt, terminate or retry an uncertain effect. Native
 approval requests remain in Codex, never an app-answer grant. Repair diagnosis is
 a separately bounded optional resume input, not a changed goal or budget reset.
@@ -81,8 +83,9 @@ Handoff to that owner: pin the final tested Plugins SHA, explicitly refresh the
 compiled-product fixture/expected canonical catalog from 12 to 15 tools, verify
 the new initialization icon and additive control/presentation fields, and preserve
 optional `expected_revision`/diagnosis argument pass-through and decision-answer
-fencing. The seven model-visible tools remain the same; discovery/registration and
-read-only reconciliation stay app-only and must not enter Executor's model view.
+fencing. The model-visible catalog now has eight tools, including read-only
+reconciliation. Discovery and registration remain app-only. The bridge must not
+drop an advertised model-callable recovery action when updating its exact pin.
 The bridge's subset/visibility check and direct-call allowlist remain relevant
 (`scripts/luna_bridge.py:48`, `:95`). Re-run its real compiled-product and browser
 approval/restart/history gates against the new exact bytes. This PR does not edit
