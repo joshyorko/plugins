@@ -74,7 +74,7 @@ fn valid_digest(digest: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
-pub fn binding_current(control: &Control, binding: &Binding) -> bool {
+fn binding_identity_current(control: &Control, binding: &Binding) -> bool {
     control.settlement == crate::control::Settlement::Stopped
         && binding.subject == control.current_subject
         && binding.intent_generation == control.intent_generation
@@ -96,6 +96,88 @@ pub fn binding_current(control: &Control, binding: &Binding) -> bool {
                     && attempt.assumptions == binding.assumptions
                     && matches!(attempt.phase.as_str(), "returned" | "stopped")
             })
+}
+/// A prerequisite proves only its own refs, even when its criterion also names
+/// a dependent task. Evaluating the full shared criterion here would recurse.
+fn task_scoped_proof_current(control: &Control, task: &crate::control::Task) -> bool {
+    task.state != TaskState::Blocked
+        && task.assumptions == control.assumptions
+        && !task.criteria.is_empty()
+        && task.criteria.iter().all(|id| {
+            control
+                .criteria
+                .iter()
+                .find(|criterion| &criterion.id == id)
+                .is_some_and(|criterion| {
+                    if !criterion.accepted
+                        || criterion.subject.as_deref() != Some(&control.current_subject)
+                    {
+                        return false;
+                    }
+                    let mut own_refs = 0;
+                    for reference in &criterion.check_refs {
+                        let matching: Vec<_> = control
+                            .checks
+                            .iter()
+                            .filter(|check| &check.id == reference)
+                            .collect();
+                        let own: Vec<_> = matching
+                            .iter()
+                            .filter(|check| check.binding.task_id == task.id)
+                            .collect();
+                        if !own.is_empty() {
+                            if matching.len() != 1
+                                || own[0].outcome != "passed"
+                                || !binding_identity_current(control, &own[0].binding)
+                            {
+                                return false;
+                            }
+                            own_refs += 1;
+                        }
+                    }
+                    own_refs > 0
+                })
+        })
+}
+/// Bounded iterative traversal rejects missing tasks and cycles without following
+/// criterion edges. Shared accepted criteria therefore cannot create recursion.
+fn dependencies_current(control: &Control, task_id: &str) -> bool {
+    if control.tasks.len() > 128 {
+        return false;
+    }
+    let mut active = BTreeSet::new();
+    let mut done = BTreeSet::new();
+    let mut stack = vec![(task_id, false)];
+    while let Some((id, leaving)) = stack.pop() {
+        if leaving {
+            active.remove(id);
+            done.insert(id);
+            continue;
+        }
+        if done.contains(id) {
+            continue;
+        }
+        let Some(task) = control.tasks.get(id) else {
+            return false;
+        };
+        if !active.insert(id)
+            || task.dependencies.len() > 128
+            || (id != task_id && !task_scoped_proof_current(control, task))
+        {
+            return false;
+        }
+        stack.push((id, true));
+        stack.extend(
+            task.dependencies
+                .iter()
+                .rev()
+                .map(|id| (id.as_str(), false)),
+        );
+    }
+    true
+}
+pub fn binding_current(control: &Control, binding: &Binding) -> bool {
+    binding_identity_current(control, binding) && dependencies_current(control, &binding.task_id)
 }
 pub fn criterion_current(control: &Control, criterion: &Criterion) -> bool {
     criterion.accepted
@@ -317,7 +399,7 @@ pub fn reconcile_report(control: &mut Control, report: &Value, root: &Path) -> R
         let expected = spec.sha256.as_deref().context("missing_check_digest")?;
         ensure!(valid_digest(expected), "invalid_check_digest");
         let path = spec.path.as_deref().context("missing_check_path")?;
-        let current = binding_current(control, &spec.binding);
+        let current = binding_identity_current(control, &spec.binding);
         let observed = if current {
             Some(file_digest(root, path)?)
         } else {
@@ -418,6 +500,8 @@ pub fn reconcile_report(control: &mut Control, report: &Value, root: &Path) -> R
         if proven_tasks.contains(&task.id) || (task.id == "objective" && objective_proven) {
             task.state = TaskState::Done;
             task.subject = control.current_subject.clone();
+        } else if task.state == TaskState::Done {
+            task.state = TaskState::Verify;
         }
     }
     if let Some(attempt) = control.attempts.last() {
@@ -463,7 +547,7 @@ pub fn revalidate_files(control: &mut Control, root: &Path) -> Result<bool> {
         .filter(|(_, check)| {
             check.kind == "file_sha256"
                 && check.outcome == "passed"
-                && binding_current(control, &check.binding)
+                && binding_identity_current(control, &check.binding)
         })
         .map(|(index, _)| index)
         .collect();

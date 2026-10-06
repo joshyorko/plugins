@@ -209,3 +209,183 @@ fn new_dispatch_requires_explicit_reattestation_and_denies_old_active_or_unknown
         &spec.binding
     ));
 }
+fn dependency_setup() -> (tempfile::TempDir, Control, CheckSpec, serde_json::Value) {
+    use luna_factoryd::control::{Criterion, TaskState};
+    let (dir, mut control, spec) = setup();
+    control.criteria.push(Criterion {
+        id: "A2".into(),
+        accepted: false,
+        check_refs: vec![],
+        subject: None,
+        reason: "evidence_missing".into(),
+    });
+    for (id, criterion, dependencies) in [
+        ("prerequisite", "A1", vec![]),
+        ("dependent", "A2", vec!["prerequisite".into()]),
+    ] {
+        let mut task = control.tasks["objective"].clone();
+        task.id = id.into();
+        task.criteria = vec![criterion.into()];
+        task.dependencies = dependencies;
+        task.necessity = "owner_declared_necessary".into();
+        task.state = TaskState::Verify;
+        control.tasks.insert(task.id.clone(), task);
+        let mut attempt = control.attempts[0].clone();
+        attempt.id = format!("{id}-attempt");
+        attempt.task_id = id.into();
+        control.attempts.push(attempt);
+    }
+    let mut prerequisite = spec.clone();
+    prerequisite.id = "prerequisite-check".into();
+    prerequisite.binding.task_id = "prerequisite".into();
+    prerequisite.binding.attempt_id = "prerequisite-attempt".into();
+    let mut dependent = spec;
+    dependent.id = "dependent-check".into();
+    dependent.binding.task_id = "dependent".into();
+    dependent.binding.attempt_id = "dependent-attempt".into();
+    // Dependent observation deliberately precedes prerequisite observation.
+    let packet = json!({
+        "checks": [dependent, prerequisite],
+        "acceptance": [
+            {"id":"A1","passed":true,"accepted":true,"check_refs":["prerequisite-check"]},
+            {"id":"A2","passed":true,"accepted":true,"check_refs":["dependent-check"]}
+        ]
+    });
+    (dir, control, dependent, packet)
+}
+#[test]
+fn dependent_criterion_requires_its_prerequisites_own_scoped_proof() {
+    use luna_factoryd::evidence::{binding_current, criterion_current, task_proof_current};
+    let (dir, mut control, dependent, packet) = dependency_setup();
+    reconcile_report(&mut control, &packet, dir.path()).unwrap();
+    assert!(criterion_current(&control, &control.criteria[1]));
+    for mutation in [
+        "failed",
+        "unverified",
+        "contradictory",
+        "missing",
+        "stale_attempt",
+        "acceptance",
+        "criterion_subject",
+        "task_assumptions",
+        "own_ref",
+        "foreign_claim",
+        "subject",
+        "missing_dependency",
+        "cycle",
+        "transitive",
+    ] {
+        let mut invalid = control.clone();
+        match mutation {
+            "failed" | "unverified" | "contradictory" => {
+                invalid
+                    .checks
+                    .iter_mut()
+                    .find(|check| check.id == "prerequisite-check")
+                    .unwrap()
+                    .outcome = mutation.into();
+            }
+            "missing" => invalid
+                .checks
+                .retain(|check| check.id != "prerequisite-check"),
+            "stale_attempt" => {
+                invalid
+                    .attempts
+                    .iter_mut()
+                    .find(|attempt| attempt.task_id == "prerequisite")
+                    .unwrap()
+                    .phase = "active".into()
+            }
+            "acceptance" => invalid.criteria[0].accepted = false,
+            "criterion_subject" => invalid.criteria[0].subject = Some("stale".into()),
+            "task_assumptions" => {
+                invalid
+                    .tasks
+                    .get_mut("prerequisite")
+                    .unwrap()
+                    .assumptions
+                    .insert("changed".into(), "value".into());
+            }
+            "own_ref" => invalid.criteria[0].check_refs = vec!["file-1".into()],
+            "foreign_claim" => {
+                invalid.tasks.get_mut("prerequisite").unwrap().claim = "foreign".into()
+            }
+            "subject" => invalid.tasks.get_mut("prerequisite").unwrap().subject = "stale".into(),
+            "missing_dependency" => {
+                invalid.tasks.get_mut("dependent").unwrap().dependencies = vec!["missing".into()]
+            }
+            "cycle" => {
+                invalid.tasks.get_mut("prerequisite").unwrap().dependencies =
+                    vec!["dependent".into()]
+            }
+            "transitive" => {
+                invalid.tasks.get_mut("prerequisite").unwrap().dependencies =
+                    vec!["objective".into()]
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            !binding_current(&invalid, &dependent.binding),
+            "binding retained {mutation} prerequisite"
+        );
+        assert!(
+            !criterion_current(&invalid, &invalid.criteria[1]),
+            "criterion retained {mutation} prerequisite"
+        );
+        assert!(
+            !task_proof_current(&invalid, &invalid.tasks["dependent"]),
+            "task retained {mutation} prerequisite"
+        );
+    }
+}
+#[test]
+fn shared_criterion_dependency_uses_only_the_prerequisites_own_refs() {
+    let (dir, mut control, dependent, mut packet) = dependency_setup();
+    control.criteria.pop();
+    control.tasks.get_mut("dependent").unwrap().criteria = vec!["A1".into()];
+    packet["acceptance"] = json!([
+        {"id":"A1","passed":true,"accepted":true,"check_refs":["prerequisite-check","dependent-check"]}
+    ]);
+    reconcile_report(&mut control, &packet, dir.path()).unwrap();
+    assert!(luna_factoryd::evidence::binding_current(
+        &control,
+        &dependent.binding
+    ));
+    assert!(luna_factoryd::evidence::criterion_current(
+        &control,
+        &control.criteria[0]
+    ));
+    assert_eq!(
+        control.tasks["prerequisite"].state,
+        luna_factoryd::control::TaskState::Done
+    );
+    assert_eq!(
+        control.tasks["dependent"].state,
+        luna_factoryd::control::TaskState::Done
+    );
+}
+#[test]
+fn dependency_failure_demotes_completed_dependent_on_reconciliation() {
+    let (dir, mut control, _, mut packet) = dependency_setup();
+    reconcile_report(&mut control, &packet, dir.path()).unwrap();
+    assert_eq!(
+        control.tasks["dependent"].state,
+        luna_factoryd::control::TaskState::Done
+    );
+    control
+        .checks
+        .iter_mut()
+        .find(|check| check.id == "prerequisite-check")
+        .unwrap()
+        .outcome = "failed".into();
+    packet["checks"] = json!([]);
+    reconcile_report(&mut control, &packet, dir.path()).unwrap();
+    assert_eq!(
+        control.tasks["dependent"].state,
+        luna_factoryd::control::TaskState::Verify
+    );
+    assert!(!luna_factoryd::evidence::criterion_current(
+        &control,
+        &control.criteria[1]
+    ));
+}
