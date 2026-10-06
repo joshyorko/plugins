@@ -43,6 +43,12 @@ Factory rechecks the same current revision, source, authority, ownership, livene
 and budget at the effect boundary. Contradictory control/presentation revisions or
 counts must fail parsing rather than displaying false completion.
 
+Presentation is bounded independently of retained SQLite history: task titles use
+at most 1000 UTF-16 units, task attempt IDs show the most recent 64, the attempt
+projection shows the most recent 256, and worker identity rows show at most 64.
+Older recorded history remains authoritative in SQLite; omitted projection rows
+are not proof that execution never occurred or that a worker stopped.
+
 Targeted mutation requests add optional `expected_revision`; omission keeps older
 callers compatible but does not bypass fresh server action guards. Decision answers
 retain `expected_decision_id` and answer fingerprints. An identical already-recorded
@@ -62,6 +68,25 @@ The exact final tool/schema identity and published head must be recorded in the
 PR evidence before accepting mcp-tunnel-kit PR #11 against new bytes. Do not modify
 that repository or claim its old pin passed this contract. Portable/compatibility
 manifests, standard MCP icons and existing UI entrypoints remain unchanged.
+
+The inspected toolkit PR #11 head is
+`09018681233d70305e70c68c8dbe36879ab66675`, whose contract fixture still pins
+Plugins `f2c81429db651c0bfe9da7a22b3853dfb6d9c9ac`
+(`tests/fixtures/luna-contract.json:2`). Its compiled-product check requires exact
+canonical tool equality and the saved schema snapshot
+(`tests/luna_product_contract.py:18`, `:58`); those old bytes are not acceptance
+for the onboarding/branding checkpoint or this alignment.
+
+Handoff to that owner: pin the final tested Plugins SHA, explicitly refresh the
+compiled-product fixture/expected canonical catalog from 12 to 15 tools, verify
+the new initialization icon and additive control/presentation fields, and preserve
+optional `expected_revision`/diagnosis argument pass-through and decision-answer
+fencing. The seven model-visible tools remain the same; discovery/registration and
+read-only reconciliation stay app-only and must not enter Executor's model view.
+The bridge's subset/visibility check and direct-call allowlist remain relevant
+(`scripts/luna_bridge.py:48`, `:95`). Re-run its real compiled-product and browser
+approval/restart/history gates against the new exact bytes. This PR does not edit
+or restart the toolkit/Executor stack or claim those gates passed.
 
 The recoverable live Cutover package/database stays at 6cc2062 until a complete
 exact tested production-path checkpoint is safe to use. No real first run,

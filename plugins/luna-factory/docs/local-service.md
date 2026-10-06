@@ -54,6 +54,8 @@ luna-factory-0.2.0/
   assets/logo.svg, assets/logo.png    square workbench crescent branding
   README.md, docs/package.md, docs/local-service.md
   docs/repository-onboarding.md       bounded discovery and local approval
+  docs/control-adoption.md, docs/control-plan.md, docs/control-wire.md
+                                      control guarantees and compatibility gates
   runtime-receipt.json                 versions, input hashes, file hashes/modes
   SHA256SUMS                          every package file and the receipt
 ```
@@ -109,6 +111,12 @@ existing durable runs. Treat starting, stopping, and replacing a live service as
 operator actions. Check active runs and retained claims before changing versions.
 Unknown owned execution must remain blocked. Do not discard the database to
 bypass a retained claim.
+
+The control migration upgrades SQLite schema 0/1 to 2 transactionally. Keep an
+online backup and the previous immutable package before upgrading; legacy reports
+remain unproved. A rollback must retain the upgraded database and any new state.
+Do not restore an older backup over runs or claims created after the upgrade, or
+use an older binary against upgraded state without verified compatibility.
 
 ## Optional Linux user-service example
 

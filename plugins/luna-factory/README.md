@@ -104,10 +104,16 @@ The workbench uses the same service and run history as the MCP tools. Start from
 The [control adoption matrix](docs/control-adoption.md),
 [slice plan](docs/control-plan.md) and [wire boundary](docs/control-wire.md)
 record the pinned donor semantics, intentional differences and integration gates.
-The alignment is in progress: UI projection fixtures and donor tests are not
-native execution, evidence provenance or migration acceptance. The green
-operator instance remains on its recorded checkpoint until the complete tested
-production path is safe to adopt.
+Factory-owned dispatch now uses revision-fenced task admission, retained attempt
+lineage and persisted native-effect settlements. Current file predicates and
+explicit owner semantic acceptance are separate requirements for local completion.
+SQLite schema 2 preserves legacy identities, decisions, claims and budgets while
+importing legacy prose as unproved; the additive control wire remains schema 1.
+Native child/action policy is cooperative and unverified. Command-output
+completeness, clean-environment proof and independent push/PR certification remain
+unsupported. Fixture and donor tests do not prove authenticated native execution
+or ChatGPT rendering. Keep the recorded operator checkpoint until exact-build
+migration, package and read-only live checks pass.
 
 From the repository root:
 

@@ -13,8 +13,9 @@ They are not acceptance evidence or an adoption input.
 
 - **R**: Review self-hosted `6b18ff1c35df4eb144a61add9c69271484195c02`.
 - **RG**: Review #275 `144c0a7f4fee4c4306a3e8d02b4c610ecb70877a`.
-  This is unmerged; its krun graph proof is blocked. Its source/fixtures establish
-  no native conformance, and this PR does not depend on its merge.
+  This is unmerged; krun graph proof was blocked at the original inspection.
+  Its source/fixtures establish no Plugins native conformance, and this PR does
+  not depend on its merge.
 - **CL**: Plugins changeplane/language `2bec221f0158ac8ef21a31324b2547b034d4dc4e`.
 - **CP**: Plugins experiment/changeplane-fast-reference
   `6e0d19f1298a1f8b7963bd3cea8989e8274bc9e6`. Prototype, not production authority.
@@ -22,6 +23,14 @@ They are not acceptance evidence or an adoption input.
 Paths below are relative to the named donor repository. Each SHA is verified
 against its actual Git object; private snapshots and a per-file hash receipt
 retain the inspected source without changing donor worktrees.
+
+The refreshed Review handoff reports a settled packaged krun graph fixture at
+test/docs head `b652f77570f070f64dd43b27c25cb4679e63e3c0`, still using production
+source RG and OMP 18.4.12. Its host-loopback deterministic provider is explicit in
+`tests/fixtures/luna-factory-graph-krun-host-provider.sh:69` and `:73` at that head.
+This supersedes the earlier transport blocker only for that bounded fixture;
+network isolation, current-base conformance and Plugins native execution are not
+established. No additional Review runtime behavior is adopted from this result.
 
 ## Code-first adoption matrix
 
@@ -112,6 +121,21 @@ cannot manufacture that judgment. Likewise a projected action remains advisory
 until revision, subject, claim, liveness, budget and authority are rechecked at the
 actual Factory/MCP effect boundary. Conformance fixtures must exercise the Plugins
 SQLite/Factory production path; copied donor fixtures are not live acceptance.
+
+The initial explicit objective is the aggregate G1 rollup, not a second final
+verification turn. Admitted necessary candidates need their own task/attempt-bound
+current proof before they can be complete; another task's accepted criterion does
+not certify them. Outstanding necessary or selected work blocks successful
+convergence. Optional or rejected discoveries alone do not reopen a proven goal.
+Proof is conservatively invalidated across new dispatches when unaffected retention
+cannot be explicitly justified. Native child identities never receive inferred
+admission, execution or completion proof.
+
+Current checkpoint limit: check bindings still require the latest global attempt.
+Sequential necessary tasks therefore cannot all retain current proof and cannot
+converge. Multiple admitted records are not multi-task completion support. The
+next alignment gate is explicit current re-attestation for each task's recorded
+attempt, without accepting unknown execution or automatically retaining old proof.
 
 ## Migration, delivery and acceptance
 
