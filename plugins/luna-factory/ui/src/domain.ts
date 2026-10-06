@@ -5,6 +5,28 @@ const nullableText = text.nullable();
 const timestamp = z.number().nonnegative().max(253_402_300_799);
 export const runId = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/);
 export const finishSchema = z.enum(["local_candidate", "push", "pr"]);
+const revision = z.number().int().nonnegative().refine(Number.isSafeInteger, "Expected a safe revision integer");
+const actionKind = z.enum(["wait", "refresh", "answer", "steer", "cancel", "resume", "reconcile", "inspect"]);
+const actionSchema = z.object({ kind: actionKind, label: z.string().min(1).max(160), reason: z.string().max(300), tool: z.string().max(80).nullable(), allowed: z.boolean() });
+const controlSchema = z.object({
+  schema_version: z.literal(1), revision, intent_generation: revision, dispatch_generation: revision,
+  criteria: z.array(z.object({ id: z.string().max(128), description: text, status: z.enum(["proven", "failed", "unproved"]), reason: nullableText, check_refs: z.array(z.string().max(256)).max(64) })).max(32),
+  tasks: z.array(z.object({ id: z.string().max(128), title: z.string().max(1000), criterion_ids: z.array(z.string().max(128)).max(32), dependencies: z.array(z.string().max(128)).max(128), state: z.string().max(64), admission: z.string().max(64), reason: nullableText, owner_thread: nullableText, attempt_ids: z.array(z.string().max(128)).max(64) })).max(128),
+  attempts: z.array(z.object({ id: z.string().max(128), task_id: z.string().max(128), intent_generation: revision, dispatch_generation: revision, subject: text, thread_id: nullableText, turn_id: nullableText, status: z.string().max(64) })).max(256),
+  effects: z.array(z.unknown()).max(128), child_policy: z.literal("cooperative_unverified"),
+});
+const presentationSchema = z.object({
+  revision,
+  primary_action: actionSchema,
+  actions: z.array(actionSchema).max(16),
+  criteria: z.object({ proven: z.number().int().nonnegative().max(10_000), failed: z.number().int().nonnegative().max(10_000), unproved: z.number().int().nonnegative().max(10_000), mandatory: z.number().int().nonnegative().max(10_000) }),
+  result: z.object({ kind: z.enum(["finished_verified", "stopped_unresolved", "working", "needs_input", "unverified"]), label: z.string().min(1).max(160) }),
+  owner: z.object({ thread_id: nullableText, turn_id: nullableText, liveness: z.enum(["active", "idle", "unknown"]) }),
+  workers: z.array(z.object({ thread_id: z.string().max(256), liveness: z.enum(["active", "idle", "unknown"]) })).max(64),
+  budget: z.object({ time_remaining_seconds: z.number().int().nonnegative().max(604_800).nullable(), repair_attempts_remaining: z.number().int().nonnegative().max(10_000), repairs_used: z.number().int().nonnegative().max(10_000) }),
+  claim: z.object({ held: z.boolean(), status: z.enum(["owned", "released", "foreign", "unknown"]) }),
+  deliverable: z.object({ kind: z.enum(["local_candidate", "push", "pr_ready"]), status: z.enum(["verified", "unproved"]), subject: text, reference: nullableText }),
+});
 const states = ["STARTING", "RUNNING", "VERIFYING", "NEEDS_INPUT", "BLOCKED", "CONVERGED", "QUIESCENT", "CANCELLING", "CANCELLED", "INTERRUPTED", "FAILED"] as const;
 export const runSchema = z.object({
   id: runId, repository: z.string().min(1).max(64), objective: text,
@@ -25,6 +47,7 @@ export const runSchema = z.object({
     reroutes: z.array(z.object({ thread_id: text, turn_id: text, from_model: text, to_model: text, reason: text, source: z.literal("model/rerouted") })).max(100).optional(),
   }),
   receipts: z.array(z.object({ subject: text, kind: z.string().max(64), summary: z.string().max(2000), created_at: timestamp })).max(100),
+  control: controlSchema.optional(), presentation: presentationSchema.optional(),
 });
 export type RunView = z.infer<typeof runSchema>;
 export const capabilitiesSchema = z.object({
@@ -69,15 +92,27 @@ export function structuredResult(value: unknown): unknown {
 export function parseToolResult(value: unknown): ToolData {
   const structured = structuredResult(value);
   const workbench = workbenchSchema.safeParse(structured);
-  if (workbench.success) return { kind: "workbench", value: workbench.data };
+  if (workbench.success) {
+    for (const run of [...workbench.data.runs, ...(workbench.data.selected_run ? [workbench.data.selected_run] : [])]) {
+      if (run.control && run.presentation && run.control.revision !== run.presentation.revision) throw new Error("The server returned mismatched control revisions. Refresh to read a current view.");
+    }
+    return { kind: "workbench", value: workbench.data };
+  }
   const run = runSchema.safeParse(structured);
-  if (run.success) return { kind: "run", value: run.data };
+  if (run.success) {
+    if (run.data.control && run.data.presentation && run.data.control.revision !== run.data.presentation.revision) throw new Error("The server returned mismatched control revisions. Refresh to read a current view.");
+    return { kind: "run", value: run.data };
+  }
   throw new Error("The server returned an unrecognized result. Your last valid view is preserved.");
 }
 export function classifyRun(run: RunView): "needs" | "active" | "recent" {
-  if (["NEEDS_INPUT", "BLOCKED", "QUIESCENT", "INTERRUPTED", "FAILED"].includes(run.state)) return "needs";
-  if (["CONVERGED", "CANCELLED"].includes(run.state)) return "recent";
-  return "active";
+  if (run.control && run.presentation) {
+    if (["needs_input", "stopped_unresolved", "unverified"].includes(run.presentation.result.kind)) return "needs";
+    if (run.presentation.result.kind === "finished_verified") return "recent";
+    return "active";
+  }
+  // Older server payloads have no shared result projection; do not call them complete.
+  return "needs";
 }
 export function parseRunLink(value: string): string | null {
   // Validate the raw path before URL normalization can erase traversal segments.

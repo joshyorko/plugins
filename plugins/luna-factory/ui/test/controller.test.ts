@@ -107,9 +107,10 @@ describe("workbench state and MCP lifecycle", () => {
   it("preserves history and run identity on same-run resume", async () => {
     const { controller, call } = setup();
     await controller.select("run-123");
+    controller.state.runs = [fixtureRun({ state: "BLOCKED" })];
     call.mockResolvedValue({ structuredContent: fixtureRun({ state: "RUNNING", updated_at: 8 }) });
     await controller.mutate("resume_factory_run", { run_id: "run-123" });
-    expect(call).toHaveBeenCalledWith("resume_factory_run", { run_id: "run-123" });
+    expect(call).toHaveBeenCalledWith("resume_factory_run", { run_id: "run-123", expected_revision: 7 });
     expect(controller.selected?.receipts).toHaveLength(1);
     expect(controller.selected?.owner_thread).toBe("owner-123");
   });
@@ -119,7 +120,10 @@ describe("workbench state and MCP lifecycle", () => {
     expect(await controller.mutate("cancel_factory_run", { run_id: "run-123" })).toBe(false);
     expect(controller.state.pending).toBeNull();
     expect(controller.state.runs[0]?.state).toBe("VERIFYING");
-    expect(controller.state.error).toContain("Refresh before retrying");
+    expect(controller.state.error).toContain("Refresh to read the current state");
+    expect(controller.selected?.presentation).toBeUndefined();
+    expect(await controller.mutate("cancel_factory_run", { run_id: "run-123" })).toBe(false);
+    expect(call).toHaveBeenCalledTimes(1);
   });
   it("shares bounded context on selection and clears it on overview", async () => {
     const { controller, bridge } = setup();
@@ -146,6 +150,7 @@ describe("workbench state and MCP lifecycle", () => {
   });
   it("does not claim a blocked resume succeeded", async () => {
     const { controller, call } = setup();
+    controller.state.runs = [fixtureRun({ state: "BLOCKED" })];
     call.mockResolvedValue({ structuredContent: fixtureRun({ state: "BLOCKED", blocker: "Owned execution is still active" }) });
     expect(await controller.mutate("resume_factory_run", { run_id: "run-123" })).toBe(false);
     expect(controller.state.notice).toBeNull();
@@ -154,9 +159,9 @@ describe("workbench state and MCP lifecycle", () => {
   it("answers completed NEEDS_INPUT turns by resuming the same run with input", async () => {
     const call = vi.fn<Bridge["call"]>().mockResolvedValue({ structuredContent: fixtureRun({ state: "RUNNING", turn_id: "new-turn" }) });
     const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
-    controller.receiveInitial({ structuredContent: { ...fixtureRun({ state: "NEEDS_INPUT", turn_id: null }), pending_decision: { id: "decision-1", question: "Keep the migration local?" } } });
+    controller.receiveInitial({ structuredContent: fixtureRun({ state: "NEEDS_INPUT", turn_id: null, pending_decision: { id: "decision-1", question: "Keep the migration local?" } }) });
     expect(await controller.sendOwnerInput("  Keep the migration local  ")).toBe(true);
-    expect(call).toHaveBeenCalledWith("resume_factory_run", { run_id: "run-123", message: "Keep the migration local", expected_decision_id: "decision-1" });
+    expect(call).toHaveBeenCalledWith("resume_factory_run", { run_id: "run-123", message: "Keep the migration local", expected_decision_id: "decision-1", expected_revision: 7 });
     expect(controller.selected?.owner_thread).toBe("owner-123");
     expect(controller.selected?.turn_id).toBe("new-turn");
   });
@@ -171,7 +176,40 @@ describe("workbench state and MCP lifecycle", () => {
     const { controller, call } = setup();
     call.mockResolvedValue({ structuredContent: fixtureRun({ state: "RUNNING" }) });
     expect(await controller.sendOwnerInput("Keep the current acceptance")).toBe(true);
-    expect(call).toHaveBeenCalledWith("steer_factory_run", { run_id: "run-123", expected_turn_id: "turn-123", message: "Keep the current acceptance" });
+    expect(call).toHaveBeenCalledWith("steer_factory_run", { run_id: "run-123", expected_turn_id: "turn-123", message: "Keep the current acceptance", expected_revision: 7 });
+  });
+  it("requires the server's primary action and sends its presentation revision", async () => {
+    const run = {
+      ...fixtureRun(),
+      presentation: {
+        revision: 7,
+        primary_action: { kind: "resume", label: "Resume same run", reason: "The writer is stopped", tool: "resume_factory_run", allowed: true },
+        actions: [{ kind: "resume", label: "Resume same run", reason: "The writer is stopped", tool: "resume_factory_run", allowed: true }],
+        criteria: { proven: 1, failed: 0, unproved: 1, mandatory: 2 },
+        result: { kind: "stopped_unresolved", label: "Stopped with work unresolved" },
+        owner: { thread_id: "owner-123", turn_id: null, liveness: "idle" }, workers: [],
+        budget: { time_remaining_seconds: 120, repair_attempts_remaining: 2, repairs_used: 1 },
+        claim: { held: true, status: "owned" },
+        deliverable: { kind: "local_candidate", status: "unproved", subject: "abc123", reference: null },
+      },
+    };
+    const call = vi.fn<Bridge["call"]>().mockResolvedValue({ structuredContent: fixtureRun({ state: "RUNNING" }) });
+    const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
+    controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [run], selected_run: run } });
+    controller.setConnected(true);
+    expect(await controller.mutate("resume_factory_run", { run_id: "run-123" })).toBe(true);
+    expect(call).toHaveBeenCalledWith("resume_factory_run", { run_id: "run-123", expected_revision: 7 });
+  });
+  it("does not offer or send run mutations when the server presentation is absent", async () => {
+    const legacy = fixtureRun();
+    delete legacy.control;
+    delete legacy.presentation;
+    const call = vi.fn<Bridge["call"]>();
+    const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
+    controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [legacy], selected_run: legacy } });
+    expect(await controller.mutate("cancel_factory_run", { run_id: "run-123" })).toBe(false);
+    expect(call).not.toHaveBeenCalled();
+    expect(controller.state.error).toContain("Refresh");
   });
   it.each(["", " ", "x".repeat(4001)])("rejects invalid owner input before sending", async message => {
     const { controller, call } = setup();

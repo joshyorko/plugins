@@ -4,7 +4,7 @@ export interface Bridge {
   call(tool: string, args: Record<string, unknown>): Promise<unknown>;
   context(context: Record<string, unknown>): Promise<void>;
 }
-export type MutationTool = "start_factory" | "steer_factory_run" | "cancel_factory_run" | "resume_factory_run";
+export type MutationTool = "start_factory" | "steer_factory_run" | "cancel_factory_run" | "resume_factory_run" | "reconcile_factory_run";
 export interface ViewState {
   runs: RunView[]; capabilities: Capabilities | null; settings: Settings;
   selectedId: string | null; initialized: boolean; connected: boolean; refreshing: boolean;
@@ -98,15 +98,31 @@ export class WorkbenchController {
     const message = input.trim();
     if (!run) throw new Error("Select a run before answering the owner");
     if (!message || message.length > 4000) throw new Error("Enter an answer or correction of at most 4000 characters");
-    if (run.pending_decision) {
+    const primary = run.presentation?.primary_action;
+    if (!primary?.allowed) {
+      if (run.state === "NEEDS_INPUT" && !run.pending_decision) throw new Error("This approval must be handled in native Codex. The workbench cannot approve it.");
+      throw new Error("The server has no available owner action. Refresh this run before trying again.");
+    }
+    if (primary.kind === "answer" && primary.tool === "resume_factory_run" && run.pending_decision) {
       return this.mutate("resume_factory_run", { run_id: run.id, message, expected_decision_id: run.pending_decision.id });
     }
-    if (run.state === "NEEDS_INPUT") throw new Error("This approval or input must be handled in native Codex. The workbench cannot approve it.");
-    if (!["RUNNING", "VERIFYING"].includes(run.state) || !run.turn_id) throw new Error("No active owner turn. Refresh this run before steering.");
-    return this.mutate("steer_factory_run", { run_id: run.id, expected_turn_id: run.turn_id, message });
+    if (primary.kind === "steer" && primary.tool === "steer_factory_run" && run.presentation?.owner.turn_id) {
+      return this.mutate("steer_factory_run", { run_id: run.id, expected_turn_id: run.presentation.owner.turn_id, message });
+    }
+    throw new Error("The server presentation does not authorize an owner answer or correction. Refresh before trying again.");
   }
   async mutate(tool: MutationTool, args: Record<string, unknown>): Promise<boolean> {
     if (this.state.pending) return false;
+    const targetId = typeof args.run_id === "string" ? args.run_id : null;
+    const targeted = tool !== "start_factory";
+    const run = targeted && targetId !== null ? this.state.runs.find(item => item.id === targetId) : undefined;
+    const presentation = run?.presentation;
+    if (targeted && (!run || !presentation || !this.actionAllows(run, tool, args))) {
+      this.state.error = "The server no longer authorizes this action. Refresh the run before trying again.";
+      this.changed();
+      return false;
+    }
+    const requestArgs = targeted && presentation ? { ...args, expected_revision: presentation.revision } : args;
     ++this.readVersion;
     this.state.refreshing = false;
     this.state.pending = { tool, runId: typeof args.run_id === "string" ? args.run_id : null };
@@ -114,8 +130,8 @@ export class WorkbenchController {
     this.state.notice = null;
     this.changed();
     try {
-      const data = parseToolResult(await this.bridge.call(tool, args));
-      if (data.kind !== "run" || (typeof args.run_id === "string" && data.value.id !== args.run_id)) throw new Error("The server returned a different run. Refresh before retrying.");
+      const data = parseToolResult(await this.bridge.call(tool, requestArgs));
+      if (data.kind !== "run" || (targetId !== null && data.value.id !== targetId)) throw new Error("The server returned a different run. Refresh before retrying.");
       this.apply(data);
       if (tool === "start_factory") this.state.selectedId = data.value.id;
       if (tool === "resume_factory_run" && ["BLOCKED", "NEEDS_INPUT", "INTERRUPTED", "FAILED", "QUIESCENT"].includes(data.value.state)) {
@@ -123,13 +139,30 @@ export class WorkbenchController {
         this.syncContext();
         return false;
       }
-      this.state.notice = tool === "cancel_factory_run" ? "Stop outcome received. The state and ownership below are the server's verified result." : tool === "resume_factory_run" ? "Resume outcome received. This run keeps its history and remaining limits." : tool === "steer_factory_run" ? "Correction delivered to the current owner turn." : "Run admitted. Follow its progress here.";
+      this.state.notice = tool === "cancel_factory_run" ? "Stop outcome received. The state and ownership below are the server's observed result." : tool === "resume_factory_run" ? "Resume outcome received. This run keeps its history and remaining limits." : tool === "steer_factory_run" ? "Correction delivered to the current owner turn." : tool === "reconcile_factory_run" ? "Existing work was reconciled. Current proof and ownership are shown below." : "Run admitted. Follow its progress here.";
       this.syncContext();
       return true;
     } catch (error) {
-      this.state.error = `${errorMessage(error)} Refresh before retrying; the action may have reached the server.`;
+      if (targetId !== null) {
+        const current = this.state.runs.find(item => item.id === targetId);
+        if (current) current.presentation = undefined;
+      }
+      this.state.error = `${errorMessage(error)} Refresh to read the current state; the action may have reached the server.`;
       return false;
     } finally { this.state.pending = null; this.changed(); }
+  }
+  private actionAllows(run: RunView, tool: MutationTool, args: Record<string, unknown>): boolean {
+    const runPresentation = run.presentation;
+    if (!run.control || !runPresentation || run.control.revision !== runPresentation.revision) return false;
+    const expectedKinds = tool === "resume_factory_run" ? ["resume", "answer"] : tool === "steer_factory_run" ? ["steer"] : tool === "cancel_factory_run" ? ["cancel"] : tool === "reconcile_factory_run" ? ["reconcile"] : [];
+    const action = runPresentation.actions.find(item => item.tool === tool && expectedKinds.includes(item.kind));
+    if (!action?.allowed) return false;
+    const isPrimary = runPresentation.primary_action.kind === action.kind && runPresentation.primary_action.tool === action.tool && runPresentation.primary_action.allowed;
+    if (!isPrimary && action.kind !== "cancel") return false;
+    if (tool === "resume_factory_run" && action.kind === "answer") return typeof args.expected_decision_id === "string" && args.expected_decision_id === run.pending_decision?.id && validOwnerMessage(args.message);
+    if (tool === "resume_factory_run" && action.kind === "resume") return args.expected_decision_id === undefined && args.message === undefined;
+    if (tool === "steer_factory_run") return args.expected_turn_id === runPresentation.owner.turn_id && args.expected_turn_id !== null && validOwnerMessage(args.message);
+    return true;
   }
   async saveSettings(settings: Settings): Promise<boolean> {
     if (this.state.pending) return false;
@@ -198,3 +231,4 @@ export class WorkbenchController {
   }
 }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message.slice(0, 800) : "The request could not be completed"; }
+function validOwnerMessage(value: unknown): value is string { return typeof value === "string" && value.trim().length > 0 && value.length <= 4000; }

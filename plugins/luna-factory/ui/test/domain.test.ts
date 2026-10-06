@@ -24,6 +24,18 @@ describe("the server boundary", () => {
   it("rejects impossible timestamps before rendering", () => {
     expect(() => parseToolResult({ structuredContent: fixtureRun({ deadline_at: 1e30 }) })).toThrow();
   });
+  it("rejects presentation revisions that do not match the control snapshot", () => {
+    const run = fixtureRun();
+    if (!run.presentation) throw new Error("Missing fixture presentation");
+    run.presentation.revision += 1;
+    expect(() => parseToolResult({ structuredContent: run })).toThrow("mismatched control revisions");
+  });
+  it("rejects unsafe JSON revision integers without coercion", () => {
+    const run = fixtureRun();
+    if (!run.presentation) throw new Error("Missing fixture presentation");
+    run.presentation.revision = Number.MAX_SAFE_INTEGER + 1;
+    expect(() => parseToolResult({ structuredContent: run })).toThrow();
+  });
 });
 
 describe("operator attention", () => {
@@ -32,6 +44,16 @@ describe("operator attention", () => {
     expect(classifyRun(fixtureRun({ state: "QUIESCENT" }))).toBe("needs");
     expect(classifyRun(fixtureRun({ state: "RUNNING" }))).toBe("active");
     expect(classifyRun(fixtureRun({ state: "CONVERGED" }))).toBe("recent");
+  });
+  it("trusts the server result projection over a legacy terminal state", () => {
+    const stopped = fixtureRun({ state: "CONVERGED" });
+    if (!stopped.presentation) throw new Error("Missing fixture presentation");
+    stopped.presentation.result = { kind: "stopped_unresolved", label: "Stopped with work unresolved" };
+    expect(classifyRun(stopped)).toBe("needs");
+    const legacy = fixtureRun({ state: "CONVERGED" });
+    delete legacy.control;
+    delete legacy.presentation;
+    expect(classifyRun(legacy)).toBe("needs");
   });
 });
 

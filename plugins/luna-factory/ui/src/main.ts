@@ -53,10 +53,24 @@ mount.addEventListener("click", event => {
     case "settings": showEditor("settings"); break;
     case "repositories": showEditor("repositories"); void controller.discoverRepositories(); break;
     case "discover-repositories": void controller.discoverRepositories(); break;
-    case "steer": showEditor("steer"); break;
-    case "stop": showEditor("stop"); break;
+    case "control": {
+      const run = controller.selected;
+      const kind = target.dataset.kind;
+      const tool = target.dataset.tool;
+      const descriptor = run?.presentation?.actions.find(action => action.kind === kind && action.tool === (tool || null));
+      if (run && (!run.control || !run.presentation) && kind === "refresh" && tool === "refresh_factory") { void controller.refresh(); break; }
+      if (!run || !descriptor?.allowed) { controller.reportError("This action is no longer available. Refresh the run to read the current server decision."); return; }
+      if (descriptor.kind === "answer" && descriptor.tool === "resume_factory_run") { showEditor("steer"); break; }
+      if (descriptor.kind === "steer" && descriptor.tool === "steer_factory_run") { showEditor("steer"); break; }
+      if (descriptor.kind === "cancel" && descriptor.tool === "cancel_factory_run") { showEditor("stop"); break; }
+      if (descriptor.kind === "refresh" && descriptor.tool === "refresh_factory") { void controller.refresh(); break; }
+      if (descriptor.kind === "resume" && descriptor.tool === "resume_factory_run") { void controller.mutate("resume_factory_run", { run_id: run.id }); break; }
+      if (descriptor.kind === "reconcile" && descriptor.tool === "reconcile_factory_run") { void controller.mutate("reconcile_factory_run", { run_id: run.id }); break; }
+      if (descriptor.kind === "inspect" && descriptor.tool === "get_factory_run") { void controller.select(run.id); break; }
+      controller.reportError("The server action is not supported by this workbench version. Refresh to read current status.");
+      break;
+    }
     case "close-editor": showEditor(null); break;
-    case "resume": if (controller.selected) void controller.mutate("resume_factory_run", { run_id: controller.selected.id }); break;
   }
 });
 mount.addEventListener("change", event => {

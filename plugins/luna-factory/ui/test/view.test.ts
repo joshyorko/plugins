@@ -17,8 +17,8 @@ describe("accessible workbench", () => {
     const { root } = render(null, fixtureRun({ state: "NEEDS_INPUT", blocker: "Choose whether to reduce the scope", pending_decision: { id: "decision-1", question: "Choose whether to reduce the scope" } }));
     expect(root.textContent).toContain("Choose whether to reduce the scope");
     const main = root.querySelector("main");
-    expect(main?.textContent?.indexOf("What changed")).toBeLessThan(main?.textContent?.indexOf("Evidence") ?? 0);
-    expect(root.querySelector('[data-action="steer"]')).not.toBeNull();
+    expect(main?.textContent?.indexOf("What changed")).toBeLessThan(main?.textContent?.indexOf("Execution evidence") ?? 0);
+    expect(root.querySelector('[data-kind="answer"]')).not.toBeNull();
     expect(root.textContent).not.toContain("Force");
   });
   it("escapes server and repository strings as text", () => {
@@ -53,13 +53,13 @@ describe("accessible workbench", () => {
   });
   it("does not imply stopped descendants while cancellation is pending", () => {
     const { root } = render(null, fixtureRun({ state: "CANCELLING", claim_held: true }));
-    expect(root.textContent).toContain("Repository claim held");
-    expect(root.querySelector('[data-action="resume"]')).toBeNull();
+    expect(root.textContent).toContain("Repository claimownedRetained");
+    expect(root.querySelector('[data-kind="resume"]')).toBeNull();
   });
   it("allows NEEDS_INPUT answers without an active turn and explains same-run continuation", () => {
     const run = fixtureRun({ state: "NEEDS_INPUT", turn_id: null, blocker: "Choose the bounded scope", pending_decision: { id: "decision-1", question: "Choose the bounded scope" } });
     const { root } = render(null, run);
-    expect(root.querySelector('[data-action="steer"]')?.textContent).toBe("Answer the owner");
+    expect(root.querySelector('[data-kind="answer"]')?.textContent).toBe("Answer the owner");
     const form = render("steer", run).root;
     expect(form.querySelector('button[type="submit"]')?.hasAttribute("disabled")).toBe(false);
     expect(form.textContent).toContain("same run and owner thread");
@@ -112,9 +112,59 @@ describe("accessible workbench", () => {
     run.route.reroutes = [{ thread_id: "owner-123", turn_id: "turn-123", from_model: "gpt-6-luna", to_model: "gpt-6-sol", source: "model/rerouted", reason: "highRiskCyberActivity" }];
     const { root } = render(null, run);
     expect(root.textContent).toContain("headroom-fixture");
-    expect(root.textContent).toContain("downstream execution and billing unverified");
+    expect(root.textContent).toContain("Downstream execution and billing unverified");
     expect(root.textContent).toContain("1 native model mismatch recorded");
     expect(root.textContent).toContain("owner-123, turn-123");
     expect(root.textContent).toContain("Effort telemetry unavailable");
+  });
+  it("puts objective, change, Josh's next action, and proof counts in order", () => {
+    const { root } = render(null, fixtureRun({ state: "NEEDS_INPUT", pending_decision: { id: "decision-1", question: "Keep the migration local?" } }));
+    const text = root.querySelector("main")?.textContent ?? "";
+    expect(text.indexOf("Make Luna Factory a first-class workbench")).toBeLessThan(text.indexOf("What changed"));
+    expect(text.indexOf("What changed")).toBeLessThan(text.indexOf("Needs Josh"));
+    expect(text.indexOf("Needs Josh")).toBeLessThan(text.indexOf("Proven"));
+    expect(text).toContain("Proven");
+    expect(text).toContain("Failed");
+    expect(text).toContain("Unproved");
+    expect(root.querySelectorAll(".needs-josh .button.primary")).toHaveLength(1);
+  });
+  it("renders stopped unresolved separately from finished verified and retains unknown liveness", () => {
+    const run = fixtureRun({ state: "CANCELLED", active_workers: 0, claim_held: true });
+    if (!run.presentation) throw new Error("Missing fixture presentation");
+    run.presentation.result = { kind: "stopped_unresolved", label: "Stopped with work unresolved" };
+    run.presentation.owner.liveness = "unknown";
+    run.presentation.workers = [{ thread_id: "worker-retained", liveness: "unknown" }];
+    const { root } = render(null, run);
+    expect(root.textContent).toContain("Stopped with work unresolved");
+    expect(root.textContent).toContain("unknown");
+    expect(root.textContent).toContain("worker-retained: unknown");
+    expect(root.textContent).toContain("Repository claim");
+  });
+  it("offers an allowed secondary stop only from the server action list", () => {
+    const run = fixtureRun();
+    const { root } = render(null, run);
+    expect(root.querySelector('[data-kind="cancel"][data-tool="cancel_factory_run"]')).not.toBeNull();
+    const noCancel = fixtureRun();
+    const presentation = noCancel.presentation;
+    if (!presentation) throw new Error("Missing fixture presentation");
+    noCancel.presentation = { ...presentation, actions: presentation.actions.filter(action => action.kind !== "cancel") };
+    const second = render(null, noCancel).root;
+    expect(second.querySelector('[data-kind="cancel"]')).toBeNull();
+  });
+  it("hides machine reason codes behind plain copy and keeps legacy action read-only", () => {
+    const run = fixtureRun({ blocker: null });
+    if (!run.presentation) throw new Error("Missing fixture presentation");
+    run.presentation.primary_action = { ...run.presentation.primary_action, kind: "reconcile", label: "Reconcile existing work", reason: "owned_liveness_unknown", tool: "reconcile_factory_run", allowed: true };
+    run.presentation.actions = [run.presentation.primary_action];
+    const { root } = render(null, run);
+    expect(root.textContent).toContain("Owned execution has not been proved stopped.");
+    expect(root.textContent).not.toContain("owned_liveness_unknown");
+    const legacy = fixtureRun();
+    delete legacy.control;
+    delete legacy.presentation;
+    const oldRoot = render(null, legacy).root;
+    expect(oldRoot.textContent).toContain("Outcome unverified");
+    expect(oldRoot.querySelector(".needs-josh .button.primary")?.textContent).toBe("Refresh current state");
+    expect(oldRoot.querySelector('[data-kind="cancel"]')).toBeNull();
   });
 });
