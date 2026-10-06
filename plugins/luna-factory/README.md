@@ -101,6 +101,14 @@ The workbench uses the same service and run history as the MCP tools. Start from
 
 ## Verify a change
 
+The [control adoption matrix](docs/control-adoption.md),
+[slice plan](docs/control-plan.md) and [wire boundary](docs/control-wire.md)
+record the pinned donor semantics, intentional differences and integration gates.
+The alignment is in progress: UI projection fixtures and donor tests are not
+native execution, evidence provenance or migration acceptance. The green
+operator instance remains on its recorded checkpoint until the complete tested
+production path is safe to adopt.
+
 From the repository root:
 
 ```bash
