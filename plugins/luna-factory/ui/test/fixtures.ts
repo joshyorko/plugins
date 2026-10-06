@@ -17,7 +17,7 @@ export function fixtureRun(overrides: Partial<RunView> = {}): RunView {
     schema_version: 1, revision: 7, intent_generation: 2, dispatch_generation: 3,
     criteria: [
       { id: "A1", description: run.acceptance[0] ?? "First criterion", status: "proven", reason: null, check_refs: ["check-1"] },
-      { id: "A2", description: run.acceptance[1] ?? "Second criterion", status: "unproved", reason: "Owner acceptance is pending", check_refs: [] },
+      { id: "A2", description: run.acceptance[1] ?? "Second criterion", status: run.state === "CONVERGED" ? "proven" : "unproved", reason: run.state === "CONVERGED" ? null : "Owner acceptance is pending", check_refs: run.state === "CONVERGED" ? ["check-2"] : [] },
     ],
     tasks: [{ id: "task-owner", title: "Complete the objective", criterion_ids: ["A1", "A2"], dependencies: [], state: "VERIFY", admission: "admitted", reason: null, owner_thread: run.owner_thread, attempt_ids: ["attempt-1"] }],
     attempts: [{ id: "attempt-1", task_id: "task-owner", intent_generation: 2, dispatch_generation: 3, subject: run.current_subject, thread_id: run.owner_thread, turn_id: run.turn_id, status: "returned" }],
@@ -34,7 +34,7 @@ export function fixtureRun(overrides: Partial<RunView> = {}): RunView {
       revision: run.control.revision,
       primary_action: primary,
       actions: [...(tool ? [primary] : []), ...(run.claim_held && !["CONVERGED", "CANCELLED"].includes(run.state) ? [{ kind: "cancel" as const, label: "Stop run", reason: "Stop owned execution", tool: "cancel_factory_run", allowed: true }] : [])],
-      criteria: { proven: 1, failed: 0, unproved: 1, mandatory: 2 },
+      criteria: run.state === "CONVERGED" ? { proven: 2, failed: 0, unproved: 0, mandatory: 2 } : { proven: 1, failed: 0, unproved: 1, mandatory: 2 },
       result: { kind: resultKind, label: resultLabel },
       owner: { thread_id: run.owner_thread, turn_id: run.turn_id, liveness: run.state === "RUNNING" ? "active" : run.owner_thread ? "unknown" : "idle" },
       workers: run.active_workers ? [{ thread_id: "worker-1", liveness: "unknown" }] : [],

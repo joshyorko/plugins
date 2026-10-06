@@ -151,6 +151,18 @@ describe("accessible workbench", () => {
     const second = render(null, noCancel).root;
     expect(second.querySelector('[data-kind="cancel"]')).toBeNull();
   });
+  it("folds an allowed secondary steer under wait without promoting it", () => {
+    const run = fixtureRun();
+    const current = run.presentation;
+    if (!current) throw new Error("Missing fixture presentation");
+    const wait = { kind: "wait" as const, label: "Wait for observed work", reason: "owned_execution_active", tool: null, allowed: false };
+    const steer = { kind: "steer" as const, label: "Correct the owner", reason: "current_owned_turn", tool: "steer_factory_run", allowed: true };
+    run.presentation = { ...current, primary_action: wait, actions: [wait, steer] };
+    const { root } = render(null, run);
+    expect(root.querySelector(".needs-josh .button.primary")?.textContent).toBe("Wait for observed work");
+    const secondary = root.querySelector('[data-kind="steer"]');
+    expect(secondary?.closest("details")?.textContent).toContain("Other available actions");
+  });
   it("hides machine reason codes behind plain copy and keeps legacy action read-only", () => {
     const run = fixtureRun({ blocker: null });
     if (!run.presentation) throw new Error("Missing fixture presentation");

@@ -36,6 +36,18 @@ describe("the server boundary", () => {
     run.presentation.revision = Number.MAX_SAFE_INTEGER + 1;
     expect(() => parseToolResult({ structuredContent: run })).toThrow();
   });
+  it("rejects proof counts that disagree with criterion statuses", () => {
+    const run = fixtureRun();
+    if (!run.presentation) throw new Error("Missing fixture presentation");
+    run.presentation.criteria.proven = 0;
+    expect(() => parseToolResult({ structuredContent: run })).toThrow("inconsistent criterion counts");
+  });
+  it("rejects finished_verified while a mandatory criterion is unresolved", () => {
+    const run = fixtureRun();
+    if (!run.presentation) throw new Error("Missing fixture presentation");
+    run.presentation.result = { kind: "finished_verified", label: "Finished and verified" };
+    expect(() => parseToolResult({ structuredContent: run })).toThrow("unresolved criteria as finished");
+  });
 });
 
 describe("operator attention", () => {
@@ -54,6 +66,15 @@ describe("operator attention", () => {
     delete legacy.control;
     delete legacy.presentation;
     expect(classifyRun(legacy)).toBe("needs");
+  });
+  it("does not export stale CONVERGED as model context", () => {
+    const run = fixtureRun({ state: "CONVERGED" });
+    if (!run.presentation) throw new Error("Missing fixture presentation");
+    run.presentation.result = { kind: "unverified", label: "Outcome unverified" };
+    expect(boundedContext(run).state).toBe("UNVERIFIED");
+    delete run.presentation;
+    delete run.control;
+    expect(boundedContext(run).state).toBe("UNVERIFIED");
   });
 });
 

@@ -94,16 +94,28 @@ export function parseToolResult(value: unknown): ToolData {
   const workbench = workbenchSchema.safeParse(structured);
   if (workbench.success) {
     for (const run of [...workbench.data.runs, ...(workbench.data.selected_run ? [workbench.data.selected_run] : [])]) {
-      if (run.control && run.presentation && run.control.revision !== run.presentation.revision) throw new Error("The server returned mismatched control revisions. Refresh to read a current view.");
+      validateProjection(run);
     }
     return { kind: "workbench", value: workbench.data };
   }
   const run = runSchema.safeParse(structured);
   if (run.success) {
-    if (run.data.control && run.data.presentation && run.data.control.revision !== run.data.presentation.revision) throw new Error("The server returned mismatched control revisions. Refresh to read a current view.");
+    validateProjection(run.data);
     return { kind: "run", value: run.data };
   }
   throw new Error("The server returned an unrecognized result. Your last valid view is preserved.");
+}
+function validateProjection(run: RunView): void {
+  const { control, presentation } = run;
+  if (!control || !presentation) return;
+  if (control.revision !== presentation.revision) throw new Error("The server returned mismatched control revisions. Refresh to read a current view.");
+  const actual = control.criteria.reduce((counts, criterion) => ({ ...counts, [criterion.status]: counts[criterion.status] + 1 }), { proven: 0, failed: 0, unproved: 0 });
+  if (presentation.criteria.mandatory !== control.criteria.length || presentation.criteria.proven !== actual.proven || presentation.criteria.failed !== actual.failed || presentation.criteria.unproved !== actual.unproved) {
+    throw new Error("The server returned inconsistent criterion counts. Refresh to read a current view.");
+  }
+  if (presentation.result.kind === "finished_verified" && (actual.failed > 0 || actual.unproved > 0 || actual.proven !== presentation.criteria.mandatory)) {
+    throw new Error("The server marked unresolved criteria as finished. Refresh to read a current view.");
+  }
 }
 export function classifyRun(run: RunView): "needs" | "active" | "recent" {
   if (run.control && run.presentation) {
@@ -126,8 +138,11 @@ export function parseRunLink(value: string): string | null {
 export function runPath(id: string): string { return `/runs/${encodeURIComponent(id)}`; }
 const bound = (value: string | null, length: number): string | null => value === null ? null : value.slice(0, length);
 export function boundedContext(run: RunView) {
+  const projectedState = run.control && run.presentation
+    ? ({ finished_verified: "CONVERGED", stopped_unresolved: "STOPPED_UNRESOLVED", working: run.state === "CONVERGED" ? "WORKING" : run.state, needs_input: "NEEDS_INPUT", unverified: "UNVERIFIED" } satisfies Record<NonNullable<RunView["presentation"]>["result"]["kind"], string>)[run.presentation.result.kind]
+    : run.state === "CONVERGED" ? "UNVERIFIED" : run.state;
   return {
-    run_id: run.id, repository: run.repository, objective: run.objective.slice(0, 1200), state: run.state,
+    run_id: run.id, repository: run.repository, objective: run.objective.slice(0, 1200), state: projectedState,
     current_subject: run.current_subject.slice(0, 180), remaining_mandatory_gap: bound(run.remaining_gap, 800),
     blocker: bound(run.blocker, 600), finish: run.finish,
   };

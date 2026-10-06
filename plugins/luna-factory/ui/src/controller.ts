@@ -99,15 +99,18 @@ export class WorkbenchController {
     if (!run) throw new Error("Select a run before answering the owner");
     if (!message || message.length > 4000) throw new Error("Enter an answer or correction of at most 4000 characters");
     const primary = run.presentation?.primary_action;
-    if (!primary?.allowed) {
-      if (run.state === "NEEDS_INPUT" && !run.pending_decision) throw new Error("This approval must be handled in native Codex. The workbench cannot approve it.");
-      throw new Error("The server has no available owner action. Refresh this run before trying again.");
-    }
-    if (primary.kind === "answer" && primary.tool === "resume_factory_run" && run.pending_decision) {
+    if (!primary) throw new Error("The server has no available owner action. Refresh this run before trying again.");
+    if (primary.allowed && primary.kind === "answer" && primary.tool === "resume_factory_run" && run.pending_decision) {
       return this.mutate("resume_factory_run", { run_id: run.id, message, expected_decision_id: run.pending_decision.id });
     }
-    if (primary.kind === "steer" && primary.tool === "steer_factory_run" && run.presentation?.owner.turn_id) {
+    const availableSteer = run.presentation?.actions.find(action => action.kind === "steer" && action.tool === "steer_factory_run" && action.allowed);
+    const steer = primary.kind === "steer" && primary.tool === "steer_factory_run" ? primary : ["wait", "refresh"].includes(primary.kind) ? availableSteer : undefined;
+    if (steer?.allowed && steer.tool === "steer_factory_run" && run.presentation?.owner.turn_id) {
       return this.mutate("steer_factory_run", { run_id: run.id, expected_turn_id: run.presentation.owner.turn_id, message });
+    }
+    if (!primary.allowed) {
+      if (run.state === "NEEDS_INPUT" && !run.pending_decision) throw new Error("This approval must be handled in native Codex. The workbench cannot approve it.");
+      throw new Error("The server has no available owner action. Refresh this run before trying again.");
     }
     throw new Error("The server presentation does not authorize an owner answer or correction. Refresh before trying again.");
   }
@@ -158,7 +161,8 @@ export class WorkbenchController {
     const action = runPresentation.actions.find(item => item.tool === tool && expectedKinds.includes(item.kind));
     if (!action?.allowed) return false;
     const isPrimary = runPresentation.primary_action.kind === action.kind && runPresentation.primary_action.tool === action.tool && runPresentation.primary_action.allowed;
-    if (!isPrimary && action.kind !== "cancel") return false;
+    const secondarySteer = action.kind === "steer" && ["wait", "refresh"].includes(runPresentation.primary_action.kind);
+    if (!isPrimary && action.kind !== "cancel" && !secondarySteer) return false;
     if (tool === "resume_factory_run" && action.kind === "answer") return typeof args.expected_decision_id === "string" && args.expected_decision_id === run.pending_decision?.id && validOwnerMessage(args.message);
     if (tool === "resume_factory_run" && action.kind === "resume") return args.expected_decision_id === undefined && args.message === undefined;
     if (tool === "steer_factory_run") return args.expected_turn_id === runPresentation.owner.turn_id && args.expected_turn_id !== null && validOwnerMessage(args.message);

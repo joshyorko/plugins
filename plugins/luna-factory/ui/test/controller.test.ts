@@ -211,6 +211,32 @@ describe("workbench state and MCP lifecycle", () => {
     expect(call).not.toHaveBeenCalled();
     expect(controller.state.error).toContain("Refresh");
   });
+  it("allows a server-approved secondary steer while the primary action is wait", async () => {
+    const run = fixtureRun();
+    const presentation = run.presentation;
+    if (!presentation) throw new Error("Missing fixture presentation");
+    const wait = { kind: "wait" as const, label: "Wait for observed work", reason: "owned_execution_active", tool: null, allowed: false };
+    const steer = { kind: "steer" as const, label: "Correct the owner", reason: "current_owned_turn", tool: "steer_factory_run", allowed: true };
+    run.presentation = { ...presentation, primary_action: wait, actions: [wait, steer] };
+    const call = vi.fn<Bridge["call"]>().mockResolvedValue({ structuredContent: fixtureRun({ state: "RUNNING" }) });
+    const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
+    controller.receiveInitial({ structuredContent: run });
+    expect(await controller.sendOwnerInput("Keep the current scope" )).toBe(true);
+    expect(call).toHaveBeenCalledWith("steer_factory_run", { run_id: run.id, expected_turn_id: run.presentation.owner.turn_id, message: "Keep the current scope", expected_revision: run.presentation.revision });
+  });
+  it("denies secondary steer when the server marks it unavailable", async () => {
+    const run = fixtureRun();
+    const presentation = run.presentation;
+    if (!presentation) throw new Error("Missing fixture presentation");
+    const wait = { kind: "wait" as const, label: "Wait for observed work", reason: "owned_execution_active", tool: null, allowed: false };
+    const steer = { kind: "steer" as const, label: "Correct the owner", reason: "owned_execution_active", tool: "steer_factory_run", allowed: false };
+    run.presentation = { ...presentation, primary_action: wait, actions: [wait, steer] };
+    const call = vi.fn<Bridge["call"]>();
+    const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
+    controller.receiveInitial({ structuredContent: run });
+    await expect(controller.sendOwnerInput("Keep the current scope")).rejects.toThrow();
+    expect(call).not.toHaveBeenCalled();
+  });
   it.each(["", " ", "x".repeat(4001)])("rejects invalid owner input before sending", async message => {
     const { controller, call } = setup();
     await expect(controller.sendOwnerInput(message)).rejects.toThrow();
