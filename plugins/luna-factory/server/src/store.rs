@@ -110,6 +110,9 @@ impl Run {
 }
 
 fn decode_run(payload: &str) -> Result<Run> {
+    decode_versioned_run(payload, 2)
+}
+fn decode_versioned_run(payload: &str, version: u32) -> Result<Run> {
     let mut run: Run = serde_json::from_str(payload)?;
     // Upgrade pre-decision-ID rows from their accepted, terminal owner result.
     // Active native approval requests never qualify for this migration.
@@ -186,10 +189,34 @@ fn decode_run(payload: &str) -> Result<Run> {
         }
         run.control = Some(control);
     }
-    run.control
-        .as_ref()
-        .context("control_missing")?
-        .validate()?;
+    if version == 1 {
+        let control = run.control.as_mut().context("control_missing")?;
+        ensure!(control.schema_version == 1, "unsupported_control_schema");
+        control.schema_version = crate::control::SCHEMA_VERSION;
+        // V1 has no authoritative typed census fact. Preserve observed checks,
+        // bindings and unknown effects, but require fresh native reconciliation.
+        control.settlement = crate::control::Settlement::Unknown;
+        control.owner_liveness = crate::control::Settlement::Unknown;
+        for thread in &run.owned_threads {
+            control
+                .child_liveness
+                .insert(thread.clone(), crate::control::Settlement::Unknown);
+        }
+        control.run_control = crate::control::RunControl::from_legacy(&run.state)?;
+        if control.run_control == crate::control::RunControl::Converged {
+            control.run_control = crate::control::RunControl::Quiescent;
+            run.state = "QUIESCENT".into();
+            run.remaining_gap = Some(
+                "Imported v1 proof needs current native settlement and file revalidation.".into(),
+            );
+        }
+    }
+    let control = run.control.as_ref().context("control_missing")?;
+    ensure!(
+        control.run_control.legacy() == run.state,
+        "legacy_control_projection_mismatch"
+    );
+    control.validate()?;
     Ok(run)
 }
 #[derive(Debug)]
@@ -422,7 +449,7 @@ impl Store {
                     "control_snapshot_corrupt"
                 );
             }
-            let mut run = decode_run(&payload)?;
+            let mut run = decode_versioned_run(&payload, version)?;
             ensure!(run.id == id, "run_identity_corrupt");
             if version < 2 {
                 if version == 1 {

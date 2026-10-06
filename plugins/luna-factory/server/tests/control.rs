@@ -574,3 +574,185 @@ fn matching_donor_conformance_cases_use_the_production_core() {
         assert_eq!(output, case["expected"], "case {id}");
     }
 }
+
+fn load_actual_v1(config: &luna_factoryd::config::Config, corrupt: bool) -> serde_json::Value {
+    use sha2::{Digest, Sha256};
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/schema-v1-822cdf81.json")).unwrap();
+    assert_eq!(
+        fixture["producer_commit"],
+        "822cdf81ca3d52e5dd17ee74340d1621707db7a8"
+    );
+    drop(luna_factoryd::store::Store::open(config).unwrap());
+    let connection = rusqlite::Connection::open(&config.database).unwrap();
+    let original = fixture["payload"].as_str().unwrap();
+    let payload = if corrupt {
+        format!("{original} ")
+    } else {
+        original.to_owned()
+    };
+    let events = fixture["events"].as_array().unwrap();
+    assert_eq!(
+        events.last().unwrap()["snapshot_sha256"],
+        format!("{:x}", Sha256::digest(original.as_bytes()))
+    );
+    connection
+        .execute(
+            "INSERT INTO runs(id,idem,fingerprint,root,state,payload) VALUES (?1,?2,?3,?4,?5,?6)",
+            rusqlite::params![
+                fixture["id"].as_str().unwrap(),
+                fixture["idem"].as_str().unwrap(),
+                fixture["fingerprint"].as_str().unwrap(),
+                fixture["root"].as_str().unwrap(),
+                fixture["state"].as_str().unwrap(),
+                payload
+            ],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO claims(identity,run_id) VALUES (?1,?2)",
+            rusqlite::params![
+                fixture["claim_identity"].as_str().unwrap(),
+                fixture["id"].as_str().unwrap()
+            ],
+        )
+        .unwrap();
+    for event in events {
+        connection.execute("INSERT INTO control_events(run_id,event_id,revision,fingerprint,envelope,snapshot_sha256) VALUES (?1,?2,?3,?4,?5,?6)",rusqlite::params![fixture["id"].as_str().unwrap(),event["event_id"].as_str().unwrap(),event["revision"].as_i64().unwrap(),event["fingerprint"].as_str().unwrap(),event["envelope"].as_str().unwrap(),event["snapshot_sha256"].as_str().unwrap()]).unwrap();
+    }
+    connection.execute_batch("PRAGMA user_version=1;").unwrap();
+    fixture
+}
+#[test]
+fn actual_822_v1_snapshot_imports_transactionally_without_invented_cessation() {
+    let (_dir, config, _request) = store_setup();
+    let fixture = load_actual_v1(&config, false);
+    let original: serde_json::Value =
+        serde_json::from_str(fixture["payload"].as_str().unwrap()).unwrap();
+    let store =
+        luna_factoryd::store::Store::open(&config).expect("actual v1 snapshot must migrate");
+    let run = store.get(fixture["id"].as_str().unwrap()).unwrap();
+    let imported = serde_json::to_value(&run).unwrap();
+    for key in [
+        "id",
+        "request",
+        "canonical_root",
+        "repository_identity",
+        "base_head",
+        "current_subject",
+        "thread_id",
+        "dispatch_phase",
+        "dispatch_id",
+        "turn_id",
+        "owned_threads",
+        "generation",
+        "repairs_used",
+        "deadline_at",
+        "pending_decision",
+        "answered_decisions",
+        "skill_sha256",
+        "configured_provider",
+        "claim_held",
+        "terminal_stop_attempts",
+    ] {
+        assert_eq!(imported[key], original[key], "changed {key}");
+    }
+    assert_eq!(run.control.as_ref().unwrap().schema_version, 2);
+    assert_eq!(
+        run.control.as_ref().unwrap().settlement,
+        luna_factoryd::control::Settlement::Unknown
+    );
+    assert!(run.control.as_ref().unwrap().unknown_effect());
+    assert_eq!(
+        run.control.as_ref().unwrap().revision,
+        original["control"]["revision"].as_u64().unwrap() + 1
+    );
+    drop(store);
+    assert!(
+        luna_factoryd::store::Store::open(&config).is_ok(),
+        "subsequent strict v2 open failed"
+    );
+    let connection = rusqlite::Connection::open(&config.database).unwrap();
+    let old_digest: String = connection
+        .query_row(
+            "SELECT snapshot_sha256 FROM control_events WHERE run_id=?1 AND revision=?2",
+            rusqlite::params![
+                fixture["id"].as_str().unwrap(),
+                original["control"]["revision"].as_i64().unwrap()
+            ],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        old_digest,
+        fixture["events"].as_array().unwrap().last().unwrap()["snapshot_sha256"]
+    );
+}
+#[test]
+fn corrupt_actual_v1_snapshot_fails_before_import_and_keeps_schema_and_claim() {
+    let (_dir, config, _request) = store_setup();
+    let fixture = load_actual_v1(&config, true);
+    assert!(
+        luna_factoryd::store::Store::open(&config)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("control_snapshot_corrupt")
+    );
+    let connection = rusqlite::Connection::open(&config.database).unwrap();
+    let version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 1);
+    let owner: String = connection
+        .query_row(
+            "SELECT run_id FROM claims WHERE identity=?1",
+            [fixture["claim_identity"].as_str().unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(owner, fixture["id"]);
+}
+#[test]
+fn public_projection_bounds_do_not_narrow_authoritative_history() {
+    let (_dir, config, mut request) = store_setup();
+    request.objective = "x".repeat(8000);
+    let mut store = luna_factoryd::store::Store::open(&config).unwrap();
+    let mut run = store.admit(&config, &request).unwrap().run;
+    let control = run.control.as_mut().unwrap();
+    for index in 0..1000 {
+        control.attempts.push(luna_factoryd::control::Attempt {
+            id: format!("history-{index}"),
+            task_id: "objective".into(),
+            parent: None,
+            intent_generation: 1,
+            dispatch_generation: 1,
+            source_subject: control.current_subject.clone(),
+            assumptions: Default::default(),
+            phase: "returned".into(),
+            turn_id: None,
+            certified_before: 0,
+            diagnosis: None,
+        });
+    }
+    run.owned_threads = (0..127).map(|index| format!("child-{index}")).collect();
+    let public = luna_factoryd::presentation::public_control(&run, run.control.as_ref().unwrap());
+    let projection = luna_factoryd::presentation::project(&run, run.control.as_ref().unwrap(), 0);
+    assert!(
+        public["tasks"][0]["title"]
+            .as_str()
+            .unwrap()
+            .encode_utf16()
+            .count()
+            <= 1000
+    );
+    assert_eq!(public["attempts"].as_array().unwrap().len(), 256);
+    assert_eq!(
+        public["tasks"][0]["attempt_ids"].as_array().unwrap().len(),
+        64
+    );
+    assert_eq!(projection["workers"].as_array().unwrap().len(), 64);
+    assert_eq!(run.control.as_ref().unwrap().attempts.len(), 1000);
+    assert_eq!(run.request.objective.len(), 8000);
+}

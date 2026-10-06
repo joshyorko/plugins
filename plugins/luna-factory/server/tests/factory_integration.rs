@@ -1265,3 +1265,226 @@ async fn observed_push_remains_unknown_even_when_owner_requests_an_answer() {
     assert_eq!(calls(&dir).len(), count);
     assert_eq!(factory.cancel(id).await.unwrap()["claim_held"], true);
 }
+#[tokio::test]
+async fn all_criteria_proven_does_not_finish_an_outstanding_necessary_selected_task() {
+    let (dir, factory, request) = setup();
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    predicate_report(
+        &dir,
+        &factory,
+        "Owner claims convergence while selecting undispatched necessary work",
+    );
+    let path = dir.path().join("report.json");
+    let mut report: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    report["candidates"] = json!([{"id":"undispatched","title":"Claimed necessary work","criterion_ids":["A1"],"dependencies":[],"assumptions":{},"necessary":true,"effects":["native_owner_turn"]}]);
+    report["selected_task"] = json!("undispatched");
+    std::fs::write(&path, report.to_string()).unwrap();
+    std::fs::write(dir.path().join("mode"), "finish").unwrap();
+    factory
+        .steer(id, "turn-1", "Return both claims")
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let result = factory.get(id).await.unwrap();
+            if ["CONVERGED", "BLOCKED"]
+                .iter()
+                .any(|state| result["state"] == *state)
+            {
+                break result;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_ne!(result["state"], "CONVERGED");
+    assert_ne!(
+        result["presentation"]["result"]["kind"],
+        "finished_verified"
+    );
+    assert_eq!(result["claim_held"], true);
+    factory.cancel(id).await.unwrap();
+}
+#[tokio::test]
+async fn previously_admitted_necessary_sibling_cannot_be_done_by_another_tasks_receipt() {
+    let (dir, factory, request) = setup();
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    let subject =
+        luna_factoryd::store::repository_subject(&factory.config.repositories["fixture"].root)
+            .unwrap();
+    let candidates:Vec<_>=["task-a","task-b"].iter().map(|id|json!({"id":id,"title":"Necessary bounded work","criterion_ids":["A1"],"dependencies":[],"assumptions":{},"necessary":true,"effects":["native_owner_turn"]})).collect();
+    std::fs::write(dir.path().join("report.json"),json!({"state":"NEEDS_INPUT","subject":subject,"acceptance":[],"checks":[],"candidates":candidates,"selected_task":"task-a","delta":"Two necessary candidates","remaining_gap":"A1 needs proof","blocker":"Continue A?"}).to_string()).unwrap();
+    std::fs::write(dir.path().join("mode"), "finish").unwrap();
+    factory
+        .steer(id, "turn-1", "Return candidates")
+        .await
+        .unwrap();
+    let proposed = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let result = factory.get(id).await.unwrap();
+            if result["state"] == "NEEDS_INPUT" {
+                break result;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let second = factory
+        .resume_with_decision(
+            id,
+            Some("Continue A within the same goal"),
+            proposed["pending_decision"]["id"].as_str(),
+        )
+        .await
+        .unwrap();
+    predicate_report(&dir, &factory, "Only A supplied a task-scoped predicate");
+    factory
+        .steer(id, second["turn_id"].as_str().unwrap(), "Return A proof")
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let result = factory.get(id).await.unwrap();
+            if ["CONVERGED", "BLOCKED"]
+                .iter()
+                .any(|state| result["state"] == *state)
+            {
+                break result;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_ne!(result["state"], "CONVERGED");
+    assert_eq!(result["claim_held"], true);
+    assert!(
+        result["control"]["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|task| task["id"] == "task-b" && task["state"] == "ready")
+    );
+    factory.cancel(id).await.unwrap();
+}
+#[tokio::test]
+async fn failed_selected_task_repairs_its_observed_output_without_replacement() {
+    let (dir, factory, request) = setup();
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    let deadline = run["deadline_at"].clone();
+    let subject =
+        luna_factoryd::store::repository_subject(&factory.config.repositories["fixture"].root)
+            .unwrap();
+    std::fs::write(dir.path().join("report.json"),json!({"state":"NEEDS_INPUT","subject":subject,"acceptance":[],"checks":[],"candidates":[{"id":"repairable","title":"One necessary task","criterion_ids":["A1"],"dependencies":[],"assumptions":{},"necessary":true,"effects":["native_owner_turn"]}],"selected_task":"repairable","delta":"Bounded selected work","remaining_gap":"A1 needs proof","blocker":"Continue?"}).to_string()).unwrap();
+    std::fs::write(dir.path().join("mode"), "finish").unwrap();
+    factory
+        .steer(id, "turn-1", "Return proposal")
+        .await
+        .unwrap();
+    let proposed = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let result = factory.get(id).await.unwrap();
+            if result["state"] == "NEEDS_INPUT" {
+                break result;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let second = factory
+        .resume_with_decision(
+            id,
+            Some("Continue"),
+            proposed["pending_decision"]["id"].as_str(),
+        )
+        .await
+        .unwrap();
+    std::fs::write(
+        factory.config.repositories["fixture"]
+            .root
+            .join("failed-output.txt"),
+        "Retained failed candidate",
+    )
+    .unwrap();
+    let output =
+        luna_factoryd::store::repository_subject(&factory.config.repositories["fixture"].root)
+            .unwrap();
+    std::fs::write(dir.path().join("report.json"),json!({"state":"BLOCKED","subject":output,"acceptance":[],"checks":[],"delta":"Failed predicate with retained output","remaining_gap":"A1 remains unproved","blocker":"Repair the failed predicate"}).to_string()).unwrap();
+    factory
+        .steer(id, second["turn_id"].as_str().unwrap(), "Return failure")
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if factory.get(id).await.unwrap()["state"] == "BLOCKED" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let diagnosis = luna_factoryd::control::Diagnosis {
+        summary: "Inspect retained failed output and correct the predicate".into(),
+        basis: "operator_semantic".into(),
+        check_refs: vec![],
+        same_goal_replan: false,
+    };
+    let repaired = factory
+        .resume_with_diagnosis(id, None, None, None, Some(diagnosis))
+        .await
+        .unwrap();
+    let attempt = repaired["control"]["attempts"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
+    assert_eq!(attempt["task_id"], "repairable");
+    assert_eq!(attempt["subject"], output);
+    assert_eq!(repaired["deadline_at"], deadline);
+    assert_eq!(repaired["repairs_used"], 1);
+    assert_eq!(repaired["control"]["intent_generation"], 1);
+    factory.cancel(id).await.unwrap();
+}
+#[tokio::test]
+async fn optional_rejected_discovery_does_not_reopen_a_verified_objective() {
+    let (dir, factory, request) = setup();
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    predicate_report(&dir, &factory, "Current mandatory proof");
+    let path = dir.path().join("report.json");
+    let mut report: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    report["candidates"] = json!([{"id":"optional-note","title":"Unnecessary discovery","criterion_ids":["A1"],"dependencies":[],"assumptions":{},"necessary":false,"effects":["native_owner_turn"]}]);
+    report["selected_task"] = json!("objective");
+    std::fs::write(&path, report.to_string()).unwrap();
+    std::fs::write(dir.path().join("mode"), "finish").unwrap();
+    factory
+        .steer(id, "turn-1", "Return bounded result")
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let result = factory.get(id).await.unwrap();
+            if result["state"] == "CONVERGED" {
+                break result;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(result["claim_held"], false);
+    assert!(
+        result["control"]["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|task| task["id"] == "optional-note" && task["state"] == "blocked")
+    );
+}

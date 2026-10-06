@@ -364,7 +364,9 @@ impl Factory {
                         .id
                         .bytes()
                         .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
-                    && safe_summary(&candidate.id, 64) == candidate.id,
+                    && !["sk-", "ghp_", "github_pat_"]
+                        .iter()
+                        .any(|prefix| candidate.id.starts_with(prefix)),
                 "invalid_candidate_identity"
             );
             let task = crate::control::Task {
@@ -391,7 +393,16 @@ impl Factory {
                 native_thread: run.thread_id.clone(),
                 reason: None,
             };
-            let verdict = crate::control::admit_task(run.control.as_ref().unwrap(), &task);
+            let control = run.control.as_ref().unwrap();
+            let verdict = if task.criteria.iter().all(|id| {
+                control.criteria.iter().any(|criterion| {
+                    &criterion.id == id && crate::evidence::criterion_current(control, criterion)
+                })
+            }) {
+                Err(anyhow::anyhow!("criterion_already_proven"))
+            } else {
+                crate::control::admit_task(control, &task)
+            };
             if run.control.as_ref().unwrap().tasks.contains_key(&task.id) {
                 run.control.as_mut().unwrap().selection_blocker =
                     Some("duplicate_candidate".into());

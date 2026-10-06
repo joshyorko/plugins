@@ -5,17 +5,27 @@ use serde_json::{Value, json};
 fn descriptor(kind: &str, label: &str, reason: &str, tool: Option<&str>, allowed: bool) -> Value {
     json!({"kind":kind,"label":label,"reason":reason,"tool":tool,"allowed":allowed})
 }
+fn public_title(text: &str) -> String {
+    let safe = crate::lifecycle::safe_summary(text, 1000);
+    let mut units = 0;
+    safe.chars()
+        .take_while(|character| {
+            units += character.len_utf16();
+            units <= 1000
+        })
+        .collect()
+}
 pub fn public_control(run: &Run, control: &Control) -> Value {
     let criteria: Vec<_>=control.criteria.iter().enumerate().map(|(i,c)|json!({"id":c.id,"description":run.request.acceptance[i],
         "status":if criterion_current(control,c){"proven"}else if c.reason=="failed_or_contradictory_check"{"failed"}else{"unproved"},
         "reason":if criterion_current(control,c){Value::Null}else{json!(c.reason)},"check_refs":c.check_refs})).collect();
-    let tasks: Vec<_>=control.tasks.values().map(|t|json!({"id":t.id,"title":if t.id=="objective"{run.request.objective.as_str()}else{t.title.as_str()},
+    let tasks: Vec<_>=control.tasks.values().map(|t|json!({"id":t.id,"title":public_title(if t.id=="objective"{run.request.objective.as_str()}else{t.title.as_str()}),
         "criterion_ids":t.criteria,"dependencies":t.dependencies,"state":t.state,
         "admission":if t.necessity=="unverified_native_child"{"unverified"}else if t.state==crate::control::TaskState::Blocked{"rejected"}else{"admitted"},
         "reason":if t.necessity=="unverified_native_child"{json!("native_child_policy_unverified")}else{json!(t.reason)},
         "owner_thread":if t.id=="objective"{run.thread_id.as_ref()}else{t.native_thread.as_ref()},
-        "attempt_ids":control.attempts.iter().filter(|a|a.task_id==t.id).map(|a|&a.id).collect::<Vec<_>>()})).collect();
-    let attempts: Vec<_>=control.attempts.iter().map(|a|json!({"id":a.id,"task_id":a.task_id,"intent_generation":a.intent_generation,
+        "attempt_ids":control.attempts.iter().rev().filter(|a|a.task_id==t.id).take(64).map(|a|&a.id).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>()})).collect();
+    let attempts: Vec<_>=control.attempts.iter().rev().take(256).collect::<Vec<_>>().into_iter().rev().map(|a|json!({"id":a.id,"task_id":a.task_id,"intent_generation":a.intent_generation,
         "dispatch_generation":a.dispatch_generation,"subject":a.source_subject,"thread_id":run.thread_id,"turn_id":a.turn_id,"status":a.phase})).collect();
     let mut effects: Vec<_> = control.attempts.iter().filter(|a| a.phase=="intent_unknown").map(|a|json!({"id":a.id,"kind":"native_dispatch","status":"unknown","reason":"dispatch_acknowledgement_unknown"})).collect();
     effects.extend(control.effects.iter().filter(|effect|effect.status=="unknown").take(32).map(|effect|json!({"id":effect.id,"kind":effect.kind,"status":effect.status,"reason":if matches!(effect.kind,crate::control::EffectKind::Push|crate::control::EffectKind::Pr){"delivery_certification_unsupported"}else{"effect_outcome_unknown"}})));
@@ -201,7 +211,7 @@ pub fn project(run: &Run, control: &Control, timestamp: u64) -> Value {
     } else {
         ("unverified", "Execution or effect outcome remains unknown")
     };
-    let workers:Vec<_>=run.owned_threads.iter().map(|id|json!({"thread_id":id,"liveness":match control.child_liveness.get(id).copied().unwrap_or_default(){crate::control::Settlement::Live=>"active",crate::control::Settlement::Stopped=>"idle",crate::control::Settlement::Unknown=>"unknown"}})).collect();
+    let workers:Vec<_>=run.owned_threads.iter().rev().take(64).map(|id|json!({"thread_id":id,"liveness":match control.child_liveness.get(id).copied().unwrap_or_default(){crate::control::Settlement::Live=>"active",crate::control::Settlement::Stopped=>"idle",crate::control::Settlement::Unknown=>"unknown"}})).collect();
     json!({"revision":control.revision,"primary_action":primary,"actions":[wait,refresh,answer,steer,cancel,resume,reconcile,inspect],
         "criteria":{"proven":proven,"failed":failed,"unproved":control.criteria.len()-proven-failed,"mandatory":control.criteria.len()},
         "result":{"kind":kind,"label":label},"owner":{"thread_id":run.thread_id,"turn_id":run.turn_id,"liveness":match control.owner_liveness {crate::control::Settlement::Live=>"active",crate::control::Settlement::Stopped=>"idle",crate::control::Settlement::Unknown=>"unknown"}},

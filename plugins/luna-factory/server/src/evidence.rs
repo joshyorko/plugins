@@ -111,6 +111,27 @@ pub fn criterion_current(control: &Control, criterion: &Criterion) -> bool {
                     .is_some_and(|task| task.criteria.contains(&criterion.id))
         })
 }
+/// A necessary candidate must have its own task/attempt-scoped current proof.
+pub fn task_proof_current(control: &Control, task: &crate::control::Task) -> bool {
+    !task.criteria.is_empty()
+        && task.criteria.iter().all(|id| {
+            control
+                .criteria
+                .iter()
+                .find(|criterion| &criterion.id == id)
+                .is_some_and(|criterion| {
+                    criterion_current(control, criterion)
+                        && criterion.check_refs.iter().any(|reference| {
+                            control.checks.iter().any(|check| {
+                                &check.id == reference
+                                    && check.binding.task_id == task.id
+                                    && check.outcome == "passed"
+                                    && binding_current(control, &check.binding)
+                            })
+                        })
+                })
+        })
+}
 /// Each directory descriptor is anchored below the approved root. No path-based
 /// follow is permitted, including a parent swapped while verification runs.
 #[cfg(unix)]
@@ -381,22 +402,19 @@ pub fn reconcile_report(control: &mut Control, report: &Value, root: &Path) -> R
     for (criterion, reason) in control.criteria.iter_mut().zip(reasons) {
         criterion.reason = reason.into();
     }
-    let proven: std::collections::BTreeSet<_> = control
-        .criteria
-        .iter()
-        .filter(|criterion| criterion_current(control, criterion))
-        .map(|criterion| criterion.id.clone())
+    let proven_tasks: std::collections::BTreeSet<_> = control
+        .tasks
+        .values()
+        .filter(|task| task_proof_current(control, task))
+        .map(|task| task.id.clone())
         .collect();
+    let objective_proven = control.certified_count() == control.criteria.len();
     for task in control.tasks.values_mut() {
-        if !task.criteria.is_empty()
-            && task.necessity != "unverified_native_child"
-            && task.criteria.iter().all(|id| proven.contains(id))
-        {
+        if proven_tasks.contains(&task.id) || (task.id == "objective" && objective_proven) {
             task.state = TaskState::Done;
             task.subject = control.current_subject.clone();
         }
     }
-
     if let Some(attempt) = control.attempts.last() {
         if control.certified_count() > attempt.certified_before {
             control.no_progress_attempts = 0;

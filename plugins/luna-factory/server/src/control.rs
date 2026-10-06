@@ -441,6 +441,14 @@ impl Control {
     }
     pub fn converged(&self) -> bool {
         self.certified_count() == self.criteria.len()
+            && self.selection_blocker.is_none()
+            && self
+                .tasks
+                .values()
+                .filter(|task| {
+                    task.necessity == "owner_declared_necessary" && task.state != TaskState::Blocked
+                })
+                .all(|task| crate::evidence::task_proof_current(self, task))
     }
     pub fn unknown_effect(&self) -> bool {
         self.attempts
@@ -713,7 +721,11 @@ pub fn reduce(current: &Control, envelope: &EventEnvelope) -> Result<Control> {
             attempt.phase = "returned".into();
             next.run_control = RunControl::Verifying;
             let task_id = attempt.task_id.clone();
-            next.tasks.get_mut(&task_id).unwrap().state = TaskState::Verify;
+            let task = next.tasks.get_mut(&task_id).unwrap();
+            task.state = TaskState::Verify;
+            // Rebind only the owned task whose attempt actually returned. Its
+            // dependencies, assumptions, necessity and original budget persist.
+            task.subject = next.current_subject.clone();
         }
         Event::Subject { subject } => {
             ensure!(bounded_id(subject), "invalid_subject");
@@ -807,6 +819,14 @@ pub fn reduce(current: &Control, envelope: &EventEnvelope) -> Result<Control> {
             ensure!(
                 next.tasks.len() < 128 && !next.tasks.contains_key(&task.id),
                 "task_bound_or_duplicate"
+            );
+            ensure!(
+                !task.criteria.iter().all(|id| next
+                    .criteria
+                    .iter()
+                    .any(|criterion| &criterion.id == id
+                        && crate::evidence::criterion_current(&next, criterion))),
+                "criterion_already_proven"
             );
             admit_task(&next, task)?;
             let mut task = task.clone();
