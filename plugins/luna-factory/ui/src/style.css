@@ -10,3 +10,13 @@
 :root[data-theme="dark"] .delta-panel, :root[data-theme="dark"] .run-nav.selected { border-color: #44513a; }
 :root[data-theme="dark"] .decision-panel, :root[data-theme="dark"] .summary-card.attention { border-color: #51452b; }
 :root[data-theme="dark"] .notice.error { background: #402a25; border-color: #644337; color: #e6af9c; }
+/* Repository access remains separate from safe run defaults. */
+.repository-empty { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
+.repository-empty p { margin: 6px 0 0; }
+.repository-list { list-style: none; padding: 0; margin: 0; }
+.repository-list li { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; }
+.repository-list span, .repository-request .section-heading > span { color: var(--muted); font-size: 13px; }
+.repository-requests { margin-top: 28px; }
+.repository-request { border-top: 1px solid var(--line); padding: 16px 0; }
+.repository-request code { overflow-wrap: anywhere; }
+.editor-card + .editor-card { margin-top: 20px; }

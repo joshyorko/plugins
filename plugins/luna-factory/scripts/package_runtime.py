@@ -16,13 +16,16 @@ import re
 import stat
 import subprocess
 import sys
+import struct
 import tomllib
+import xml.etree.ElementTree as ET
 
 
 METADATA = (
     "plugin.json", "mcp.json", ".codex-plugin/plugin.json", ".mcp.json",
     ".claude-plugin/plugin.json", "plugin.yaml", "__init__.py", "README.md",
-    "docs/package.md", "docs/local-service.md",
+    "docs/package.md", "docs/local-service.md", "docs/repository-onboarding.md",
+    "assets/logo.svg", "assets/logo.png",
 )
 SKILL_FILES = (
     "SKILL.md", "agents/openai.yaml", "references/evals.md",
@@ -32,6 +35,33 @@ SKILL_FILES = (
 SHARED_FIELDS = ("name", "version", "description", "author", "homepage", "repository", "license", "keywords")
 MAX_UI = 4 * 1024 * 1024
 MAX_BINARY = 512 * 1024 * 1024
+
+
+def validate_branding(files: dict[str, bytes], interface: dict) -> None:
+    for field in ("logo", "composerIcon"):
+        if interface.get(field) != "./assets/logo.png":
+            raise ValueError(f"branding {field} must reference ./assets/logo.png")
+    png = files["assets/logo.png"]
+    if len(png) > 5 * 1024 * 1024 or len(png) < 33 or png[:16] != b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR":
+        raise ValueError("branding PNG is missing or invalid")
+    width, height = struct.unpack(">II", png[16:24])
+    if width != height or not 48 <= width <= 4096:
+        raise ValueError("branding PNG must be square, 48 to 4096 pixels")
+    svg = files["assets/logo.svg"]
+    if len(svg) > 5 * 1024 * 1024 or b"<!DOCTYPE" in svg.upper():
+        raise ValueError("branding SVG must be small and self-contained")
+    try:
+        root = ET.fromstring(svg)
+        size = tuple(float(value) for value in root.attrib["viewBox"].split())
+        if root.tag != "{http://www.w3.org/2000/svg}svg" or len(size) != 4 or size[2] != size[3] or not 48 <= size[2] <= 4096:
+            raise ValueError("branding SVG must have a valid square viewBox")
+        for element in root.iter():
+            if element.tag.rsplit("}", 1)[-1] not in {"svg", "rect", "g", "path", "title", "desc"}:
+                raise ValueError("branding SVG contains unsupported active or external content")
+            if any(name.lower().startswith("on") or "href" in name.lower() or "url(" in value.lower() for name, value in element.attrib.items()):
+                raise ValueError("branding SVG contains active or external content")
+    except (ET.ParseError, KeyError, TypeError, ValueError) as error:
+        raise ValueError("branding SVG must be valid, square, and self-contained") from error
 
 
 def checked_path(path: Path) -> Path:
@@ -115,6 +145,7 @@ def validate_metadata(files: dict[str, bytes], inputs: dict[str, dict[str, bytes
     extension = portable.get("extensions", {}).get("com.openai", {})
     if set(extension) != {"interface"}:
         raise ValueError("portable OpenAI metadata must contain only the existing interface; no private app mapping")
+    validate_branding(files, extension["interface"])
     for name in (".codex-plugin/plugin.json", ".claude-plugin/plugin.json"):
         compat = json.loads(files[name])
         for key in SHARED_FIELDS:
@@ -171,10 +202,10 @@ def stage(binary: Path, ui: Path, output: Path) -> None:
         raise ValueError(f"unexpected skill inventory: {sorted(actual_skill ^ set(SKILL_FILES))}")
     files = {}
     for name in (*METADATA, *("skills/luna-factory/" + name for name in SKILL_FILES)):
-        files[name] = read_file(root / name, name)[0]
+        files[name] = read_file(root / name, "branding " + name if name.startswith("assets/") else name)[0]
 
     input_names = {
-        "runtime": ["server/Cargo.toml", "server/Cargo.lock"],
+        "runtime": ["server/Cargo.toml", "server/Cargo.lock", "assets/logo.png"],
         "ui": ["ui/package.json", "ui/package-lock.json", "ui/index.html", "ui/tsconfig.json", "ui/vite.config.ts"],
     }
     for kind, directory in (("runtime", "server/src"), ("ui", "ui/src"), ("ui", "ui/tooling")):

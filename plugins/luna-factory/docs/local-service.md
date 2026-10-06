@@ -51,7 +51,9 @@ luna-factory-0.2.0/
   skills/luna-factory/                 one canonical skill and its references
   bin/luna-factoryd                    executable for the build machine
   ui/dist/index.html                  self-contained MCP Apps workbench
+  assets/logo.svg, assets/logo.png    square workbench crescent branding
   README.md, docs/package.md, docs/local-service.md
+  docs/repository-onboarding.md       bounded discovery and local approval
   runtime-receipt.json                 versions, input hashes, file hashes/modes
   SHA256SUMS                          every package file and the receipt
 ```

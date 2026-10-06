@@ -51,6 +51,8 @@ mount.addEventListener("click", event => {
     case "refresh": void controller.refresh(); break;
     case "start": showEditor("start"); break;
     case "settings": showEditor("settings"); break;
+    case "repositories": showEditor("repositories"); void controller.discoverRepositories(); break;
+    case "discover-repositories": void controller.discoverRepositories(); break;
     case "steer": showEditor("steer"); break;
     case "stop": showEditor("stop"); break;
     case "close-editor": showEditor(null); break;
@@ -58,6 +60,13 @@ mount.addEventListener("click", event => {
   }
 });
 mount.addEventListener("change", event => {
+  if (event.target instanceof HTMLSelectElement && event.target.name === "candidate_id") {
+    const selected = event.target.value;
+    const candidate = controller.state.discovery?.candidates.find(item => item.id === selected);
+    const field = mount.querySelector<HTMLSelectElement>('select[name="max_finish"]');
+    if (candidate && field) field.replaceChildren(...allowedFinishes(candidate.max_finish).map(finish => new Option(finishLabels[finish], finish)));
+    return;
+  }
   if (!(event.target instanceof HTMLSelectElement) || event.target.name !== "repository") return;
   const repo = controller.state.capabilities?.repositories.find(item => item.alias === (event.target instanceof HTMLSelectElement ? event.target.value : ""));
   const field = mount.querySelector<HTMLSelectElement>('select[name="finish"]');
@@ -85,6 +94,9 @@ mount.addEventListener("submit", event => {
       } else if (form.dataset.form === "settings") {
         const settings = settingsSchema.parse({ ...fields, capacity: Number(fields.capacity) });
         success = await controller.saveSettings(settings);
+      } else if (form.dataset.form === "repositories") {
+        await controller.requestRepository(fields);
+        return;
       } else if (form.dataset.form === "steer") {
         success = await controller.sendOwnerInput(fields.message ?? "");
       } else if (form.dataset.form === "stop" && controller.selected) {

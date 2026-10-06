@@ -38,6 +38,16 @@ enum Command {
         #[arg(long)]
         root: PathBuf,
     },
+    RepositoryRequests {
+        #[arg(long)]
+        config: PathBuf,
+    },
+    ApproveRepository {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        request_id: String,
+    },
     Version,
 }
 #[tokio::main]
@@ -45,6 +55,30 @@ async fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Version => println!("luna-factoryd {}", env!("CARGO_PKG_VERSION")),
         Command::Subject { root } => println!("{}", repository_subject(&root.canonicalize()?)?),
+        Command::RepositoryRequests { config } => {
+            let config = Config::load(&config)?;
+            let store = luna_factoryd::store::Store::open(&config)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &store
+                        .repository_registrations()?
+                        .iter()
+                        .map(|r| r.public())
+                        .collect::<Vec<_>>()
+                )?
+            );
+        }
+        Command::ApproveRepository { config, request_id } => {
+            let config = Config::load(&config)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&luna_factoryd::repositories::approve(
+                    &config,
+                    &request_id
+                )?)?
+            );
+        }
         Command::Status { config } => {
             let config = Config::load(&config)?;
             // Status must not run startup reconciliation or contact native Codex.

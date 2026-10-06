@@ -10,6 +10,7 @@ use axum::{
     middleware::{self, Next},
     response::Response,
 };
+use base64::Engine;
 use rmcp::{
     ErrorData, RoleServer, ServerHandler,
     model::*,
@@ -74,7 +75,7 @@ impl McpServer {
             "get_factory_run" => self.factory.get(&parse::<RunId>(args)?.run_id).await,
             "get_factory_capabilities" => {
                 ensure_empty(&args)?;
-                Ok(self.factory.capabilities())
+                self.factory.capabilities().await
             }
             "open_factory" | "open_factory_panel" => {
                 ensure_empty(&args)?;
@@ -106,6 +107,11 @@ impl McpServer {
                 ensure_empty(&args)?;
                 self.factory.settings().await
             }
+            "discover_factory_repositories" => {
+                ensure_empty(&args)?;
+                self.factory.discover_repositories().await
+            }
+            "request_factory_repository" => self.factory.request_repository(parse(args)?).await,
             "update_factory_settings" => self.factory.update_settings(args).await,
             _ => anyhow::bail!("unknown_tool"),
         }
@@ -120,7 +126,17 @@ fn ensure_empty(value: &Value) -> anyhow::Result<()> {
 }
 impl ServerHandler for McpServer {
     fn get_info(&self) -> ServerConfig {
-        serde_json::from_value(json!({"protocolVersion":"2025-11-25","capabilities":capabilities(),"serverInfo":{"name":"luna-factory","title":"Luna Factory","version":env!("CARGO_PKG_VERSION")},"instructions":"One canonical Luna Factory runtime. Status and UI reads make no inference calls. Start requests require an approved repository alias and explicit bounded authority. Never treat a tool response as live model-route or tunnel/UI proof."})).expect("static server metadata")
+        let mut config: ServerConfig = serde_json::from_value(json!({"protocolVersion":"2025-11-25","capabilities":capabilities(),"serverInfo":{"name":"luna-factory","title":"Luna Factory","version":env!("CARGO_PKG_VERSION")},"instructions":"One canonical Luna Factory runtime. Status and UI reads make no inference calls. Start requests require an approved repository alias and explicit bounded authority. Never treat a tool response as live model-route or tunnel/UI proof."})).expect("static server metadata");
+        config.server_info.icons = Some(vec![
+            Icon::new(format!(
+                "data:image/png;base64,{}",
+                base64::engine::general_purpose::STANDARD
+                    .encode(include_bytes!("../../assets/logo.png"))
+            ))
+            .with_mime_type("image/png")
+            .with_sizes(vec!["512x512".into()]),
+        ]);
+        config
     }
     async fn list_tools(
         &self,

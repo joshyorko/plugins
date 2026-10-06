@@ -73,6 +73,30 @@ describe("accessible workbench", () => {
     expect(root.textContent).toContain("No runs yet");
     expect(root.textContent).toContain("No repositories configured");
     expect(root.querySelector('[data-action="start"]')?.hasAttribute("disabled")).toBe(true);
+    expect(root.querySelector('[data-action="repositories"]')?.textContent).toContain("Add repository");
+  });
+  it("allows repository onboarding from settings even with no approved repositories", () => {
+    const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
+    controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [], capabilities: { ...fixtureWorkbench.capabilities, repositories: [] } } });
+    controller.setConnected(true);
+    const root = document.createElement("div");
+    renderWorkbench(root, controller.state, "settings", false);
+    expect(root.querySelector('[data-action="repositories"]')?.textContent).toContain("Add repository");
+    expect(root.querySelector('input[name="path"]')).toBeNull();
+  });
+  it("renders discovered choices, explicit finish caps and pending local approval without path controls", () => {
+    const { root, controller } = render();
+    controller.state.capabilities = { ...fixtureWorkbench.capabilities, repository_onboarding: { enabled: true, approval: "local_operator" } };
+    controller.state.discovery = { candidates: [{ id: "a".repeat(64), name: "sample", root_alias: "tests", max_finish: "local_candidate" }], requests: [{ id: "request-1", alias: "sandbox-test", name: "sample", root_alias: "tests", max_finish: "local_candidate", status: "pending" }], approval: "local_operator" };
+    renderWorkbench(root, controller.state, "repositories", false);
+    expect(root.querySelector('form[data-form="repositories"]')).not.toBeNull();
+    expect(root.querySelector<HTMLSelectElement>('[name="candidate_id"]')?.value).toBe("a".repeat(64));
+    expect(root.querySelector<HTMLSelectElement>('[name="max_finish"]')?.options.length).toBe(1);
+    expect(root.querySelector('input[name="path"]')).toBeNull();
+    expect(root.querySelector('input[name="approved"]')).toBeNull();
+    expect(root.textContent).toContain("Pending operator approval");
+    expect(root.textContent).toContain("request-1");
+    expect(root.textContent).not.toContain("Starts native Codex execution");
   });
   it("explains unavailable effective routing without implying future telemetry", () => {
     const { root } = render();

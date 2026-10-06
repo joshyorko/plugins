@@ -8,6 +8,7 @@ description = "Durable local control plane for the canonical Luna Factory plugin
 
 [dependencies]
 anyhow = "1"
+base64 = "=0.23.1"
 axum = "0.8"
 fs2 = "0.4"
 clap = { version = "4", features = ["derive"] }

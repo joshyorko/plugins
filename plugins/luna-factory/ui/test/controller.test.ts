@@ -16,6 +16,34 @@ function setup(call = vi.fn<Bridge["call"]>()) {
 }
 
 describe("workbench state and MCP lifecycle", () => {
+  it("requests a bounded repository without treating a pending request as access", async () => {
+    const candidate = { id: "a".repeat(64), name: "sample", root_alias: "tests", max_finish: "local_candidate" };
+    const requests: { tool: string; args: Record<string, unknown> }[] = [];
+    const controller = new WorkbenchController({
+      call: async (tool, args) => {
+        requests.push({ tool, args });
+        if (tool === "discover_factory_repositories") return { structuredContent: { candidates: [candidate], requests: [], approval: "local_operator" } };
+        if (tool === "refresh_factory") return { structuredContent: { ...fixtureWorkbench, runs: [], selected_run: null, capabilities: { ...fixtureWorkbench.capabilities, repositories: [] } } };
+        if (tool === "request_factory_repository") return { structuredContent: { id: "request-1", alias: "sandbox-test", name: "sample", root_alias: "tests", max_finish: "local_candidate", status: "pending" } };
+        throw new Error("Unexpected tool");
+      }, context: async () => undefined,
+    }, () => undefined);
+    controller.setConnected(true);
+    await controller.discoverRepositories();
+    expect(await controller.requestRepository({ candidate_id: candidate.id, alias: "sandbox-test", max_finish: "local_candidate", path: "/etc", approved: "true" })).toBe(true);
+    expect(controller.state.capabilities?.repositories).toEqual([]);
+    expect(controller.state.discovery?.requests[0]?.status).toBe("pending");
+    expect(controller.state.notice).toContain("local operator");
+    expect(requests.at(-1)).toEqual({ tool: "request_factory_repository", args: { candidate_id: "a".repeat(64), alias: "sandbox-test", max_finish: "local_candidate" } });
+  });
+  it("rejects discovery responses containing private absolute-path fields", async () => {
+    const { controller, call } = setup();
+    call.mockResolvedValue({ structuredContent: { candidates: [{ id: "a".repeat(64), name: "sample", root_alias: "tests", max_finish: "local_candidate", path: "/private/operator/root" }], requests: [], approval: "local_operator" } });
+    await controller.discoverRepositories();
+    expect(controller.state.discovery).toBeNull();
+    expect(controller.state.discovering).toBe(false);
+    expect(controller.state.error).not.toContain("/private/operator/root");
+  });
   it("uses the initial result without a duplicate read", () => {
     const { controller, call } = setup();
     expect(controller.state.runs).toHaveLength(1);

@@ -147,6 +147,10 @@ pub fn tool_definitions() -> Vec<Tool> {
             false,
         ),
     ];
+    tools.extend([
+        definition("discover_factory_repositories", "Discover local repositories", "Read a bounded catalog under operator-approved local roots. Returns opaque candidate IDs, never absolute paths or file contents. No inference.", object(json!({}), &[]), true),
+        definition("request_factory_repository", "Request repository access", "Request one discovered repository alias and explicit finish cap. This queues a security-sensitive request; only local operator approval grants access. Never accepts filesystem paths or remote approval.", object(json!({"candidate_id":{"type":"string","pattern":"^[a-f0-9]{64}$"},"alias":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"},"max_finish":{"type":"string","enum":["local_candidate","push","pr"]}}), &["candidate_id","alias","max_finish"]), false),
+    ]);
     for tool in &mut tools {
         let name = tool.name.as_ref();
         if matches!(
@@ -158,7 +162,13 @@ pub fn tool_definitions() -> Vec<Tool> {
                 meta["openai/ui"] = json!({"entrypoints":[{"type":if name=="open_factory" {"global"} else {"thread"}}]});
             }
             tool.meta = Some(serde_json::from_value(meta).expect("static UI metadata"));
-        } else if matches!(name, "read_factory_settings" | "update_factory_settings") {
+        } else if matches!(
+            name,
+            "read_factory_settings"
+                | "update_factory_settings"
+                | "discover_factory_repositories"
+                | "request_factory_repository"
+        ) {
             tool.meta = Some(
                 serde_json::from_value(json!({"ui":{"visibility":["app"]}}))
                     .expect("static settings metadata"),

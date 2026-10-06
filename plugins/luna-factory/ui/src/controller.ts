@@ -1,4 +1,4 @@
-import { boundedContext, parseToolResult, runId, settingsSchema, structuredResult, type Capabilities, type RunView, type Settings, type ToolData } from "./domain";
+import { allowedFinishes, boundedContext, finishSchema, parseToolResult, repositoryDiscoverySchema, repositoryRegistrationSchema, runId, settingsSchema, structuredResult, type Capabilities, type RepositoryDiscovery, type RunView, type Settings, type ToolData } from "./domain";
 
 export interface Bridge {
   call(tool: string, args: Record<string, unknown>): Promise<unknown>;
@@ -10,9 +10,10 @@ export interface ViewState {
   selectedId: string | null; initialized: boolean; connected: boolean; refreshing: boolean;
   pending: { tool: string; runId: string | null } | null;
   error: string | null; notice: string | null; contextError: string | null;
+  discovery: RepositoryDiscovery | null; discovering: boolean;
 }
 export class WorkbenchController {
-  readonly state: ViewState = { runs: [], capabilities: null, settings: {}, selectedId: null, initialized: false, connected: false, refreshing: false, pending: null, error: null, notice: null, contextError: null };
+  readonly state: ViewState = { runs: [], capabilities: null, settings: {}, selectedId: null, initialized: false, connected: false, refreshing: false, pending: null, error: null, notice: null, contextError: null, discovery: null, discovering: false };
   private initialSeen = false;
   private readVersion = 0;
   private contextVersion = 0;
@@ -145,6 +146,40 @@ export class WorkbenchController {
       this.state.notice = "Defaults saved. Trusted server limits still apply.";
       return true;
     } catch (error) { this.state.error = errorMessage(error); return false; }
+    finally { this.state.pending = null; this.changed(); }
+  }
+  async discoverRepositories(): Promise<void> {
+    if (this.state.discovering || this.state.pending) return;
+    this.state.discovering = true;
+    this.state.error = null;
+    this.changed();
+    try {
+      const parsed = repositoryDiscoverySchema.safeParse(structuredResult(await this.bridge.call("discover_factory_repositories", {})));
+      if (!parsed.success) throw new Error("The repository catalog is invalid. Refresh before retrying.");
+      this.state.discovery = parsed.data;
+      await this.refresh();
+    } catch (error) { this.state.error = errorMessage(error); }
+    finally { this.state.discovering = false; this.changed(); }
+  }
+  async requestRepository(fields: Record<string, string>): Promise<boolean> {
+    if (this.state.pending || this.state.discovering) return false;
+    const candidate = this.state.discovery?.candidates.find(item => item.id === fields.candidate_id);
+    const finish = finishSchema.parse(fields.max_finish);
+    if (!candidate || !allowedFinishes(candidate.max_finish).includes(finish)) throw new Error("Choose a discovered repository and permitted finish authority");
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(fields.alias ?? "")) throw new Error("Use 1 to 64 letters, digits, hyphens or underscores for the alias");
+    this.state.pending = { tool: "request_factory_repository", runId: null };
+    this.state.error = null;
+    this.state.notice = null;
+    this.changed();
+    try {
+      const parsed = repositoryRegistrationSchema.safeParse(structuredResult(await this.bridge.call("request_factory_repository", { candidate_id: candidate.id, alias: fields.alias, max_finish: finish })));
+      if (!parsed.success) throw new Error("The repository request result is invalid. Refresh before retrying.");
+      const request = parsed.data;
+      if (request.alias !== fields.alias || request.root_alias !== candidate.root_alias || request.name !== candidate.name || request.max_finish !== finish) throw new Error("The server returned a different repository request. Refresh before retrying.");
+      if (this.state.discovery) this.state.discovery.requests = [...this.state.discovery.requests.filter(item => item.id !== request.id), request];
+      this.state.notice = request.status === "approved" ? "Repository already approved. Refresh repositories to use its alias." : "Access requested. A local operator must approve it before a run can start.";
+      return true;
+    } catch (error) { this.state.error = `${errorMessage(error)} Refresh before retrying; the request may have reached the server.`; return false; }
     finally { this.state.pending = null; this.changed(); }
   }
   private syncContext(): void {

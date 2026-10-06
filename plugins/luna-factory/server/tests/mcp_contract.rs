@@ -57,3 +57,25 @@ fn status_and_ui_reads_are_truthfully_read_only() {
         assert!(value["inputSchema"]["additionalProperties"] == false);
     }
 }
+
+#[test]
+fn server_identity_contains_a_portable_png_icon() {
+    use luna_factoryd::{config::Config, http::McpServer, lifecycle::Factory};
+    use rmcp::ServerHandler;
+    use std::sync::Arc;
+    let dir = tempfile::tempdir().unwrap();
+    let config: Config = serde_json::from_value(json!({"listen":"127.0.0.1:8787","database":dir.path().join("state/runs.sqlite"),"codex_binary":"/absent","skill_path":dir.path().join("SKILL.md"),"repositories":{},"profiles":{},"limits":{"capacity":1,"repair_attempts":0,"wall_seconds":30}})).unwrap();
+    let server = McpServer {
+        factory: Factory::new(config).unwrap(),
+        html: Arc::new("html".into()),
+    };
+    let info: Value = serde_json::to_value(server.get_info()).unwrap();
+    assert_eq!(info["serverInfo"]["icons"][0]["mimeType"], "image/png");
+    assert_eq!(info["serverInfo"]["icons"][0]["sizes"], json!(["512x512"]));
+    assert!(
+        info["serverInfo"]["icons"][0]["src"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,iVBORw0KGgo")
+    );
+}

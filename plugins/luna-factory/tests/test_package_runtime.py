@@ -7,16 +7,19 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import struct
 import sys
 import tempfile
 import unittest
+import zlib
 
 
 PLUGIN = Path(__file__).resolve().parents[1]
 METADATA = (
     "plugin.json", "mcp.json", ".codex-plugin/plugin.json", ".mcp.json",
     ".claude-plugin/plugin.json", "plugin.yaml", "__init__.py", "README.md",
-    "docs/package.md", "docs/local-service.md",
+    "docs/package.md", "docs/local-service.md", "docs/repository-onboarding.md",
+    "assets/logo.svg", "assets/logo.png",
 )
 SKILL_FILES = (
     "SKILL.md", "agents/openai.yaml", "references/evals.md",
@@ -34,7 +37,7 @@ class PackageRuntimeTests(unittest.TestCase):
         self.plugin.mkdir(parents=True)
         for name in METADATA:
             source = PLUGIN / name
-            self.write(name, source.read_text() if source.exists() else "Local service runbook\n")
+            self.write(name, source.read_bytes() if source.exists() else "Local service runbook\n")
         for name in SKILL_FILES:
             self.write("skills/luna-factory/" + name, (PLUGIN / "skills/luna-factory" / name).read_text())
         for name in ("server/Cargo.toml", "server/Cargo.lock", "ui/package.json", "ui/package-lock.json",
@@ -60,7 +63,10 @@ class PackageRuntimeTests(unittest.TestCase):
     def write(self, name, content):
         path = self.plugin / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+        if isinstance(content, bytes):
+            path.write_bytes(content)
+        else:
+            path.write_text(content)
         return path
 
     def run_package(self, output=None):
@@ -114,6 +120,39 @@ class PackageRuntimeTests(unittest.TestCase):
     def test_missing_binary_is_rejected(self):
         self.binary.unlink()
         self.assert_rejected("binary")
+
+    def branding(self, width=512, height=512, path="./assets/logo.png"):
+        def chunk(kind, data):
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+        png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+        png += chunk(b"IDAT", zlib.compress((b"\0" + b"\x7c\x3a\xed\xff" * width) * height)) + chunk(b"IEND", b"")
+        asset = self.plugin / "assets/logo.png"
+        asset.parent.mkdir(exist_ok=True)
+        asset.write_bytes(png)
+        os.utime(self.binary, None)
+        for name in ("plugin.json", ".codex-plugin/plugin.json"):
+            document = json.loads((self.plugin / name).read_text())
+            interface = document["extensions"]["com.openai"]["interface"] if name == "plugin.json" else document["interface"]
+            interface.update(logo=path, composerIcon=path)
+            self.write(name, json.dumps(document))
+        return png
+
+    def test_branding_is_present_in_staging_and_checksum_inventory(self):
+        png = self.branding()
+        result = self.run_package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.output / "assets/logo.png").is_file(), "manifest branding asset was not staged")
+        self.assertEqual((self.output / "assets/logo.png").read_bytes(), png)
+        self.assertIn("assets/logo.png", (self.output / "SHA256SUMS").read_text())
+
+    def test_missing_non_square_small_and_escaping_branding_are_rejected(self):
+        for index, (width, height, path) in enumerate([(512, 128, "./assets/logo.png"), (16, 16, "./assets/logo.png"), (512, 512, "../outside.png")]):
+            with self.subTest(width=width, height=height, path=path):
+                self.branding(width, height, path)
+                self.assert_rejected("branding", self.base / f"invalid-branding-{index}")
+        self.branding()
+        (self.plugin / "assets/logo.png").unlink()
+        self.assert_rejected("branding", self.base / "missing-branding")
 
     def test_missing_ui_is_rejected(self):
         self.ui.unlink()

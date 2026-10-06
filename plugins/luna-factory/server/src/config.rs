@@ -18,6 +18,8 @@ pub struct Config {
     pub codex_binary: PathBuf,
     pub skill_path: PathBuf,
     pub repositories: BTreeMap<String, Repository>,
+    #[serde(default)]
+    pub discovery_roots: BTreeMap<String, Repository>,
     pub profiles: BTreeMap<String, Profile>,
     pub limits: Limits,
 }
@@ -105,7 +107,8 @@ impl Config {
             "invalid_wall_limit"
         );
         let database = canonical_destination(&self.database)?;
-        for (alias, repo) in &self.repositories {
+        ensure!(self.discovery_roots.len() <= 8, "too_many_discovery_roots");
+        for (alias, repo) in self.repositories.iter().chain(self.discovery_roots.iter()) {
             ensure!(valid_alias(alias), "invalid_repository_alias");
             let root = repo
                 .root
@@ -120,6 +123,7 @@ impl Config {
                 "database_must_be_outside_repositories"
             );
             finish_rank(&repo.max_finish)?;
+            ensure!(root.parent().is_some(), "filesystem_root_not_allowed");
         }
         for (alias, profile) in &self.profiles {
             ensure!(valid_alias(alias), "invalid_profile_alias");

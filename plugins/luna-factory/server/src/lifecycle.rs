@@ -252,13 +252,46 @@ impl Factory {
                 .collect::<Vec<_>>()
         ))
     }
-    pub fn capabilities(&self) -> Value {
-        json!({"plugin_version":env!("CARGO_PKG_VERSION"),"mcp_protocol":"2026-07-28","native_transport":self.config.native_transport,
-            "repositories":self.config.repositories.iter().map(|(alias,repo)|json!({"alias":alias,"max_finish":repo.max_finish})).collect::<Vec<_>>(),
+    async fn effective_config(&self) -> Result<Config> {
+        Ok(crate::repositories::effective_config(
+            &self.config,
+            &self.store.lock().await.repository_registrations()?,
+        ))
+    }
+    pub async fn discover_repositories(&self) -> Result<Value> {
+        let registrations = self.store.lock().await.repository_registrations()?;
+        let config = crate::repositories::effective_config(&self.config, &registrations);
+        let candidates = crate::repositories::discover(&self.config)?
+            .into_iter()
+            .filter(|candidate| {
+                !config
+                    .repositories
+                    .values()
+                    .any(|repo| repo.root == candidate.root)
+            })
+            .collect::<Vec<_>>();
+        Ok(
+            json!({"candidates":candidates,"requests":registrations.iter().map(|r|r.public()).collect::<Vec<_>>(),"approval":"local_operator"}),
+        )
+    }
+    pub async fn request_repository(
+        &self,
+        request: crate::repositories::RegistrationRequest,
+    ) -> Result<Value> {
+        let _guard = self.mutation.lock().await;
+        crate::repositories::request(&self.config, &mut *self.store.lock().await, request)
+    }
+    pub async fn capabilities(&self) -> Result<Value> {
+        let config = self.effective_config().await?;
+        Ok(
+            json!({"plugin_version":env!("CARGO_PKG_VERSION"),"mcp_protocol":"2026-07-28","native_transport":self.config.native_transport,
+            "repositories":config.repositories.iter().map(|(alias,repo)|json!({"alias":alias,"max_finish":repo.max_finish})).collect::<Vec<_>>(),
+            "repository_onboarding":{"enabled":!self.config.discovery_roots.is_empty(),"approval":"local_operator"},
             "profiles":self.config.profiles.iter().map(|(alias,profile)|json!({"alias":alias,"effort":profile.effort,"supported":profile.codex_profile.is_none()})).collect::<Vec<_>>(),
             "limits":self.config.limits,"observed_routing":"unverified","status_inference_calls":0,
             "routing_telemetry":{"model":"turn-bound model/rerouted mismatch notifications only","effort":"unavailable","provider":"configuration only; downstream execution and billing unverified"},
-            "live_proof":"Live owner/worker, native ChatGPT and tunnel acceptance must be recorded on the operator runtime."})
+            "live_proof":"Live owner/worker, native ChatGPT and tunnel acceptance must be recorded on the operator runtime."}),
+        )
     }
     pub async fn workbench(&self, id: Option<&str>) -> Result<Value> {
         let selected = match id {
@@ -266,7 +299,7 @@ impl Factory {
             None => None,
         };
         Ok(
-            json!({"runs":self.list(100).await?,"selected_run":selected,"capabilities":self.capabilities(),"settings":self.settings().await?["values"]}),
+            json!({"runs":self.list(100).await?,"selected_run":selected,"capabilities":self.capabilities().await?,"settings":self.settings().await?["values"]}),
         )
     }
     async fn connect(&self) -> Result<NativeClient> {
@@ -283,7 +316,14 @@ impl Factory {
     }
     pub async fn start(&self, request: StartRequest) -> Result<Value> {
         let guard = self.mutation.lock().await;
-        let admission = self.store.lock().await.admit(&self.config, &request)?;
+        let admission = {
+            let mut store = self.store.lock().await;
+            let config = crate::repositories::effective_config(
+                &self.config,
+                &store.repository_registrations()?,
+            );
+            store.admit(&config, &request)?
+        };
         if !admission.created {
             return self.get(&admission.run.id).await;
         }
@@ -436,7 +476,7 @@ impl Factory {
         let runs = self.store.lock().await.list_all_claimed()?;
         for mut run in runs {
             self.watch_deadline(run.id.clone(), run.deadline_at);
-            if self.validate_current_authority(&run).is_err() {
+            if self.validate_current_authority(&run).await.is_err() {
                 self.block(
                     &run.id,
                     "Current operator configuration no longer authorizes continuation of this run.",
@@ -1006,9 +1046,10 @@ impl Factory {
         self.clients.lock().await.insert(id.into(), client.clone());
         Ok(client)
     }
-    fn validate_current_authority(&self, run: &Run) -> Result<()> {
-        crate::store::validate_request(&self.config, &run.request)?;
-        let root = &self.config.repositories[&run.request.repository].root;
+    async fn validate_current_authority(&self, run: &Run) -> Result<()> {
+        let config = self.effective_config().await?;
+        crate::store::validate_request(&config, &run.request)?;
+        let root = &config.repositories[&run.request.repository].root;
         ensure!(
             root.to_str() == Some(&run.canonical_root),
             "repository_alias_was_remapped"
@@ -1049,7 +1090,7 @@ impl Factory {
     pub async fn steer(&self, id: &str, expected_turn: &str, message: &str) -> Result<Value> {
         let _guard = self.mutation.lock().await;
         let run = self.store.lock().await.get(id)?;
-        self.validate_current_authority(&run)?;
+        self.validate_current_authority(&run).await?;
         ensure!(
             run.state == "RUNNING" && run.turn_id.as_deref() == Some(expected_turn),
             "stale_turn_or_not_running"
@@ -1135,7 +1176,7 @@ impl Factory {
         }
         let guard = self.mutation.lock().await;
         let mut run = self.store.lock().await.get(id)?;
-        self.validate_current_authority(&run)?;
+        self.validate_current_authority(&run).await?;
         let answer_fingerprint = message.map(|message| {
             format!(
                 "{:x}",

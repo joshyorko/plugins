@@ -80,6 +80,19 @@ The daemon serves the built `ui/dist/index.html` from the plugin root by default
 
 The checked-in MCP maps connect to `http://127.0.0.1:8787/mcp`. Keep the listener on loopback. The daemon and the installed plugin run in the same local environment; installing a manifest does not build or launch the service.
 
+## Add repositories from the workbench
+
+Choose **Add repository** from the empty state or **Settings**. Optional trusted
+`discovery_roots` in the private operator config offer a bounded local catalog.
+The app requests an opaque candidate, alias and finish cap; only a local operator
+approval can register access. See the [repository onboarding guide](docs/repository-onboarding.md)
+for configuration, approval commands and revocation. Safe settings cannot add
+repositories. No GitHub connector, clone service or arbitrary remote path is used.
+
+The packaged plugin includes square crescent branding in `assets/logo.png` and
+standard self-contained MCP server icons. Custom hosts may require a discovery
+refresh or one-time manual icon if they do not render server icons.
+
 ## Open the workbench
 
 Install this repository's `luna-factory` package in a compatible local host, then connect its MCP endpoint. For private ChatGPT access, run the official Secure MCP Tunnel client beside the daemon and create the private developer-mode connection. Follow the [connection guidance](docs/package.md#private-chatgpt-connection); no account-specific registration or tunnel identity is shipped here.

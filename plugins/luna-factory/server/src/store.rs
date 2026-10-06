@@ -301,8 +301,101 @@ impl Store {
           CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, idem TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL, root TEXT NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS claims (identity TEXT PRIMARY KEY, run_id TEXT NOT NULL UNIQUE REFERENCES runs(id));
           CREATE TABLE IF NOT EXISTS receipts (sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES runs(id), subject TEXT NOT NULL, kind TEXT NOT NULL, summary TEXT NOT NULL, created_at INTEGER NOT NULL);
-          CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);")?;
+          CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS repository_registrations (id TEXT PRIMARY KEY, alias TEXT NOT NULL UNIQUE, payload TEXT NOT NULL);")?;
         Ok(Self { connection })
+    }
+    pub fn repository_registrations(&self) -> Result<Vec<crate::repositories::Registration>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT payload FROM repository_registrations ORDER BY alias LIMIT 101")?;
+        let mut registrations = Vec::new();
+        for payload in statement.query_map([], |row| row.get::<_, String>(0))? {
+            registrations.push(serde_json::from_str(&payload?)?);
+        }
+        ensure!(
+            registrations.len() <= crate::repositories::MAX_REGISTRATIONS,
+            "repository_registration_limit"
+        );
+        Ok(registrations)
+    }
+    pub fn repository_request(&self, id: &str) -> Result<crate::repositories::Registration> {
+        let payload: String = self
+            .connection
+            .query_row(
+                "SELECT payload FROM repository_registrations WHERE id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .context("unknown_repository_request")?;
+        Ok(serde_json::from_str(&payload)?)
+    }
+    pub fn request_repository(
+        &mut self,
+        registration: &crate::repositories::Registration,
+    ) -> Result<crate::repositories::Registration> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(payload) = tx
+            .query_row(
+                "SELECT payload FROM repository_registrations WHERE alias=?1",
+                [&registration.alias],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            let existing: crate::repositories::Registration = serde_json::from_str(&payload)?;
+            ensure!(
+                existing.same_request(registration),
+                "repository_alias_conflict"
+            );
+            return Ok(existing);
+        }
+        let count: i64 =
+            tx.query_row("SELECT COUNT(*) FROM repository_registrations", [], |row| {
+                row.get(0)
+            })?;
+        ensure!(
+            count < i64::try_from(crate::repositories::MAX_REGISTRATIONS)?,
+            "repository_registration_limit"
+        );
+        tx.execute(
+            "INSERT INTO repository_registrations(id,alias,payload) VALUES(?1,?2,?3)",
+            params![
+                registration.id,
+                registration.alias,
+                serde_json::to_string(registration)?
+            ],
+        )?;
+        tx.commit()?;
+        Ok(registration.clone())
+    }
+    pub(crate) fn approve_repository(
+        &mut self,
+        expected: &crate::repositories::Registration,
+    ) -> Result<crate::repositories::Registration> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let payload: String = tx
+            .query_row(
+                "SELECT payload FROM repository_registrations WHERE id=?1",
+                [&expected.id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .context("unknown_repository_request")?;
+        let mut current: crate::repositories::Registration = serde_json::from_str(&payload)?;
+        ensure!(current.same_request(expected), "repository_request_changed");
+        current.status = crate::repositories::Approval::Approved;
+        tx.execute(
+            "UPDATE repository_registrations SET payload=?1 WHERE id=?2",
+            params![serde_json::to_string(&current)?, current.id],
+        )?;
+        tx.commit()?;
+        Ok(current)
     }
     pub fn admit(&mut self, config: &Config, request: &StartRequest) -> Result<Admission> {
         validate_request(config, request)?;

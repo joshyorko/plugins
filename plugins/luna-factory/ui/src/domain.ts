@@ -31,8 +31,25 @@ export const capabilitiesSchema = z.object({
   repositories: z.array(z.object({ alias: z.string().min(1).max(64), max_finish: finishSchema })).max(1000),
   profiles: z.array(z.object({ alias: z.string().min(1).max(64), effort: z.string().max(64), supported: z.boolean().optional() })).max(100).transform(profiles => profiles.filter(profile => profile.supported !== false)),
   limits: z.object({ capacity: z.number().int().min(1).max(8), repair_attempts: z.number().int().min(0).max(10), wall_seconds: z.number().int().min(30).max(86400) }),
+  repository_onboarding: z.object({ enabled: z.boolean(), approval: z.literal("local_operator") }).optional(),
 });
 export type Capabilities = z.infer<typeof capabilitiesSchema>;
+const repositoryName = z.string().min(1).max(256).refine(value => !/^[A-Za-z]:/.test(value) && !/[\x00-\x1f\x7f]/.test(value) && value.split(/[\\/]/).every(part => part !== "" && part !== "." && part !== ".."), "Expected a relative repository name");
+export const repositoryCandidateSchema = z.object({
+  id: z.string().regex(/^[a-f0-9]{64}$/), name: repositoryName,
+  root_alias: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/), max_finish: finishSchema,
+}).strict();
+export const repositoryRegistrationSchema = z.object({
+  id: runId, alias: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  root_alias: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/), max_finish: finishSchema,
+  name: repositoryName,
+  status: z.enum(["pending", "approved"]),
+}).strict();
+export const repositoryDiscoverySchema = z.object({
+  candidates: z.array(repositoryCandidateSchema).max(100),
+  requests: z.array(repositoryRegistrationSchema).max(100), approval: z.literal("local_operator"),
+}).strict();
+export type RepositoryDiscovery = z.infer<typeof repositoryDiscoverySchema>;
 export const settingsSchema = z.object({ capacity: z.number().int().min(1).max(8).optional(), finish: finishSchema.optional(), profile: z.string().max(64).optional() });
 export type Settings = z.infer<typeof settingsSchema>;
 const summarySchema = runSchema.extend({ receipts: runSchema.shape.receipts.default([]) });
