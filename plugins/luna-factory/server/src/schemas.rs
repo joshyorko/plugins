@@ -200,6 +200,13 @@ pub fn output_schema(tool_name: &str) -> Value {
         "get_factory_backends" => object(
             json!({"schema_version":{"const":1},"discovery":{"const":"configuration_only"},"policy":{"const":"subscription_only"},"targets":array(reference("backend"),5)}),
         ),
+        "inspect_factory_cas" => object(json!({
+            "schema_version":{"const":1},"target_alias":text(64),
+            "target":object(json!({"target":text(128),"status":enumeration(&["resolved","unresolved"]),"binding_verified":{"const":false},"execution_eligible":{"const":false},"reason":text(256)})),
+            "qualification":object(json!({"execution_eligible":{"const":false},"blockers":array(text(256),16)})),
+            "receipt":nullable(object(json!({"request_id":text(128),"state":enumeration(&["not_found","unknown","in_progress","accepted","created_not_materialized","completed","failed","interrupted"]),"thread_id":nullable(text(512)),"turn_id":nullable(text(512)),"binding_verified":{"const":false},"execution_eligible":{"const":false},"reason":text(256)}))),
+            "thread":nullable(object(json!({"target":text(128),"cwd":text(512),"thread_id":text(512),"liveness":enumeration(&["active","idle","unknown"]),"execution_eligible":{"const":false},"reason":text(256)})))
+        })),
         _ => panic!("missing output schema for {tool_name}"),
     };
     // Include only reachable definitions, keeping discovery payloads compact.

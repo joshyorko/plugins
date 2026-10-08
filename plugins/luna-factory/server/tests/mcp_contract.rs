@@ -19,7 +19,7 @@ fn every_structured_tool_declares_an_object_output_contract() {
 #[test]
 fn graph_catalog_requires_revision_and_is_callable_by_both_audiences() {
     let tools = tool_definitions();
-    assert_eq!(tools.len(), 20);
+    assert_eq!(tools.len(), 21);
     for name in [
         "create_factory_graph",
         "get_factory_graph",
