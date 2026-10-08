@@ -1,0 +1,86 @@
+{
+  "scope": "Disposable fixtures only; no production ledger, real native worker, or CAS service used",
+  "sources": {
+    "pr60": "1ccac51591d0466250448531632b82732ddac3fe",
+    "pr63": "d97e8f263bed9b710301d1d9804611d3e2df39b7",
+    "current": "35fdf6e714d5ae606579fdfd884b9fb8ecee35f0"
+  },
+  "binaries": {
+    "current-factoryd": "ad6eca5770e209fc21e6075a80165210abb1357fc79b41806a1d6ff7c2ad2725",
+    "pr63-factoryd": "e0506b03f7ce8f1510d56f92faf688a17e2627a8258858ab3243ad79e460b495",
+    "pr60-factoryd": "7931df27310b98de289f4b6156d98c6f8f2e359dbdff07b2f7747059e1c5f726"
+  },
+  "shared_debug_restored": "ad6eca5770e209fc21e6075a80165210abb1357fc79b41806a1d6ff7c2ad2725",
+  "build_commands": [
+    "CARGO_TARGET_DIR=/workspace/plugins/plugins/luna-factory/server/target cargo build --locked --manifest-path /workspace/lf08-rollback/pr63/plugins/luna-factory/server/Cargo.toml",
+    "CARGO_TARGET_DIR=/workspace/plugins/plugins/luna-factory/server/target cargo build --locked --manifest-path /workspace/lf08-rollback/pr60/plugins/luna-factory/server/Cargo.toml"
+  ],
+  "verify_command": "python3 /workspace/lf08-rollback/verify.py",
+  "limitations": [
+    "CAS row synthetic with updated latest snapshot SHA256; proves parser/journal compatibility, not real event dispatch or remote evidence",
+    "No live schema/provider/entitlement/callback/cessation or ChatGPT acceptance",
+    "Matching backup restore proved only for disposable no-intervening-work history",
+    "Initial archive omitted embedded logo asset and first service start omitted UI; corrected only under artifact directory before final successful verification"
+  ],
+  "current_source_tree": "1138cb24641518b501046079411d3ab49679dd98",
+  "assertions": [
+    {
+      "gate": "current opens genuine PR63 schema2; raw rows and journal unchanged",
+      "passed": true
+    },
+    {
+      "gate": "PR63 rejects CAS config and synthetic nonempty CAS record; rejection leaves raw rows unchanged",
+      "passed": true,
+      "synthetic": true,
+      "note": "Synthetic payload and latest journal digest; not a real CasPlanned event or dispatch"
+    },
+    {
+      "gate": "matching PR63 backup restored and accepted by old/current binaries with identical rows",
+      "passed": true
+    },
+    {
+      "gate": "genuine PR60 no-native refusal schema2 accepted unchanged by all three; PR60 rejects genuine PR63 graph; matching PR60 state still accepted",
+      "passed": true
+    },
+    {
+      "gate": "all offline rollback assertions",
+      "passed": true
+    }
+  ],
+  "expected_rejections": [
+    {
+      "command": [
+        "/workspace/lf08-rollback/pr63-factoryd",
+        "status",
+        "--config",
+        "/workspace/lf08-rollback/synthetic-cas-config.json"
+      ],
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "Error: invalid_operator_config\n\nCaused by:\n    unknown field `cas_targets`, expected one of `listen`, `native_transport`, `native_socket`, `database`, `codex_binary`, `skill_path`, `repositories`, `discovery_roots`, `profiles`, `limits` at line 1 column 445\n"
+    },
+    {
+      "command": [
+        "/workspace/lf08-rollback/pr63-factoryd",
+        "status",
+        "--config",
+        "/workspace/lf08-rollback/synthetic-cas-old-config.json"
+      ],
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "Error: unknown field `cas_requests`, expected one of `schema_version`, `revision`, `intent_generation`, `dispatch_generation`, `current_subject`, `assumptions`, `tasks`, `attempts`, `criteria`, `checks`, `repair_limit`, `repairs_used`, `deadline_at`, `no_progress_attempts`, `diagnosis`, `replan_used`, `child_policy`, `migrated`, `run_control`, `settlement`, `owner_liveness`, `child_liveness`, `selected_task`, `selection_blocker`, `effects`, `graph_sources`, `target_preferences`, `graph_changes` at line 1 column 2666\n"
+    },
+    {
+      "command": [
+        "/workspace/lf08-rollback/pr60-factoryd",
+        "status",
+        "--config",
+        "/workspace/lf08-rollback/pr63-fixture/config.json"
+      ],
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "Error: unknown field `graph_sources`, expected one of `schema_version`, `revision`, `intent_generation`, `dispatch_generation`, `current_subject`, `assumptions`, `tasks`, `attempts`, `criteria`, `checks`, `repair_limit`, `repairs_used`, `deadline_at`, `no_progress_attempts`, `diagnosis`, `replan_used`, `child_policy`, `migrated`, `run_control`, `settlement`, `owner_liveness`, `child_liveness`, `selected_task`, `selection_blocker`, `effects` at line 1 column 2605\n"
+    }
+  ],
+  "results_sha256": "ba135c2ba0bcd60b1e072faf9839d7370ba9b919068e6806a992c76fa816b0a9"
+}
