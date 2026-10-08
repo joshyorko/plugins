@@ -200,6 +200,12 @@ pub struct Control {
     pub selection_blocker: Option<String>,
     #[serde(default)]
     pub effects: Vec<Effect>,
+    #[serde(default)]
+    pub graph_sources: BTreeMap<String, crate::graph::SourceBinding>,
+    #[serde(default)]
+    pub target_preferences: BTreeMap<String, String>,
+    #[serde(default)]
+    pub graph_changes: BTreeMap<String, crate::graph::Proposal>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -211,6 +217,12 @@ pub struct EventEnvelope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Event {
+    GraphProposed {
+        proposal: crate::graph::Proposal,
+    },
+    GraphApplied {
+        change_id: String,
+    },
     Dispatch {
         id: String,
         generation: u64,
@@ -306,6 +318,9 @@ impl Control {
             selected_task: objective_task(),
             selection_blocker: None,
             effects: vec![],
+            graph_sources: BTreeMap::new(),
+            target_preferences: BTreeMap::new(),
+            graph_changes: BTreeMap::new(),
         };
         let task = Task {
             id: "objective".into(),
@@ -327,6 +342,7 @@ impl Control {
         Ok(control)
     }
     pub fn validate(&self) -> Result<()> {
+        crate::graph::validate_metadata(self)?;
         ensure!(
             self.schema_version == SCHEMA_VERSION,
             "unsupported_control_schema"
@@ -631,6 +647,36 @@ pub fn reduce(current: &Control, envelope: &EventEnvelope) -> Result<Control> {
     );
     let mut next = current.clone();
     match &envelope.event {
+        Event::GraphProposed { proposal } => {
+            ensure!(
+                proposal.base_revision == current.revision
+                    && proposal.subject == current.current_subject
+                    && proposal.status == "proposed"
+                    && !next.graph_changes.contains_key(&proposal.id),
+                "invalid_graph_proposal"
+            );
+            let mut validation = next.clone();
+            crate::graph::apply_change(&mut validation, &proposal.change)?;
+            next.graph_changes
+                .insert(proposal.id.clone(), proposal.clone());
+        }
+        Event::GraphApplied { change_id } => {
+            let proposal = next
+                .graph_changes
+                .get(change_id)
+                .ok_or_else(|| anyhow::anyhow!("graph_proposal_missing"))?
+                .clone();
+            ensure!(
+                proposal.status == "proposed"
+                    && proposal.base_revision + 1 == current.revision
+                    && proposal.subject == current.current_subject,
+                "stale_graph_proposal"
+            );
+            crate::graph::apply_change(&mut next, &proposal.change)?;
+            let proposal = next.graph_changes.get_mut(change_id).unwrap();
+            proposal.status = "applied".into();
+            proposal.applied_revision = Some(current.revision + 1);
+        }
         Event::Dispatch {
             id,
             generation,

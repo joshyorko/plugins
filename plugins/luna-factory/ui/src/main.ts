@@ -1,8 +1,9 @@
 import { App, applyDocumentTheme, applyHostStyleVariables } from "@modelcontextprotocol/ext-apps";
-import { OpenAIExtensions } from "@openai/mcp-extensions/app";
+import { applyDeepLink, HostBridge } from "./bridge";
 import { WorkbenchController, type Bridge } from "./controller";
-import { allowedFinishes, finishLabels, parseRunLink, settingsSchema, startRequest } from "./domain";
+import { allowedFinishes, finishLabels, settingsSchema, startRequest } from "./domain";
 import { renderWorkbench, type Editor } from "./view";
+import { submitNewRun } from "./submission";
 import "./style.css";
 
 const root = document.getElementById("app");
@@ -12,25 +13,18 @@ let editor: Editor = null;
 let pendingStart: { fingerprint: string; key: string } | null = null;
 const fixturePreview = import.meta.env.DEV && new URLSearchParams(location.search).get("preview") === "fixture";
 const app = new App({ name: "Luna Factory", version: "0.2.0" }, { availableDisplayModes: ["inline", "fullscreen"] });
-const extensions = new OpenAIExtensions(app);
+const hostBridge = new HostBridge(app, (id, nodeId) => { void controller.restoreContext(id, nodeId); });
+const extensions = hostBridge.extensions;
 let connection: Promise<void> | null = null;
 const bridge: Bridge = {
   async call(tool, args) {
     if (fixturePreview) throw new Error("Fixture preview is read-only. Open Luna Factory in an MCP Apps host to run actions.");
-    if (!connection) throw new Error("The host is not connected");
-    await connection;
-    if (!app.getHostCapabilities()?.serverTools) throw new Error("This host does not support app tool calls");
-    return app.callServerTool({ name: tool, arguments: args });
+    return hostBridge.call(tool, args);
   },
   async context(context) {
-    if (fixturePreview || !connection) return;
-    await connection;
-    const helper = extensions.modelContext;
-    if (helper) { await helper.update({ structuredContent: context }); return; }
-    const support = app.getHostCapabilities()?.updateModelContext;
-    if (support?.structuredContent) await app.updateModelContext({ structuredContent: context });
-    else if (support?.text) await app.updateModelContext({ content: [{ type: "text", text: JSON.stringify(context) }] });
+    if (!fixturePreview) await hostBridge.context(context);
   },
+  selectContext() { hostBridge.selectContext(); },
 };
 const controller = new WorkbenchController(bridge, () => renderWorkbench(mount, controller.state, editor, fixturePreview));
 renderWorkbench(mount, controller.state, editor, fixturePreview);
@@ -48,7 +42,11 @@ mount.addEventListener("click", event => {
   if (target.dataset.runId) { editor = null; void controller.select(target.dataset.runId); return; }
   switch (target.dataset.action) {
     case "overview": editor = null; void controller.select(null); break;
-    case "refresh": void controller.refresh(); break;
+    case "refresh": void (async () => { await controller.refresh(); if (controller.state.graph) await controller.loadGraph(); })(); break;
+    case "graph": editor = null; void controller.loadGraph(); break;
+    case "graph-node": if (target.dataset.nodeId) controller.selectNode(target.dataset.nodeId); break;
+    case "apply-change": void controller.applyChange(); break;
+    case "share-context": void controller.select(controller.state.selectedId); break;
     case "start": showEditor("start"); break;
     case "settings": showEditor("settings"); break;
     case "repositories": showEditor("repositories"); void controller.discoverRepositories(); break;
@@ -93,6 +91,7 @@ mount.addEventListener("submit", event => {
   event.preventDefault();
   if (!event.target.reportValidity()) return;
   const form = event.target;
+  const intent = event.submitter instanceof HTMLButtonElement ? event.submitter.value : "";
   const fields: Record<string, string> = {};
   for (const [key, value] of new FormData(form)) if (typeof value === "string") fields[key] = value;
   void (async () => {
@@ -100,11 +99,17 @@ mount.addEventListener("submit", event => {
       let success = false;
       if (form.dataset.form === "start") {
         if (!controller.state.capabilities) throw new Error("Approved capabilities have not loaded");
-        const fingerprint = JSON.stringify(fields);
+        const fingerprint = JSON.stringify({ fields, intent });
         if (pendingStart?.fingerprint !== fingerprint) pendingStart = { fingerprint, key: crypto.randomUUID() };
         const request = startRequest(fields, controller.state.capabilities, pendingStart.key);
-        success = await controller.mutate("start_factory", request);
+        success = await submitNewRun(controller, intent, request);
         if (success) pendingStart = null;
+        if (success && intent !== "start") { await controller.refresh(); await controller.loadGraph(); }
+      } else if (form.dataset.form === "graph-node") {
+        const nodeId = controller.state.selectedNodeId;
+        if (!nodeId) throw new Error("Select a task first");
+        success = await controller.proposeChange(intent === "target" ? { kind: "set_target", node_id: nodeId, target_id: fields.target_id ?? "" } : { kind: "set_dependencies", node_id: nodeId, dependencies: new FormData(form).getAll("dependencies").filter((value): value is string => typeof value === "string") });
+        return;
       } else if (form.dataset.form === "settings") {
         const settings = settingsSchema.parse({ ...fields, capacity: Number(fields.capacity) });
         success = await controller.saveSettings(settings);
@@ -129,19 +134,12 @@ function applyHostContext(): void {
   const deepLink = extensions.deepLink.getCurrent();
   if (deepLink && deepLink.url !== lastDeepLink) {
     lastDeepLink = deepLink.url;
-    if (deepLink.url === "/") { editor = null; void controller.select(null); }
-    else {
-      const id = parseRunLink(deepLink.url);
-      if (id) { editor = null; void controller.select(id); }
-      else controller.reportError("This exact-run link is invalid");
-    }
+    editor = null; void applyDeepLink(controller, deepLink.url);
   }
   // Rich elicitation is negotiated and rendered by the host during tools/call.
   // There is no client-side native form API in the published extension SDK.
   // Keep complete HTML forms on every host, including mobile and hosts without elicitation.
-  const elicitation = app.getHostCapabilities()?.experimental?.["openai/elicitation"];
-  const nativeForms = elicitation && "form" in elicitation && elicitation.form;
-  mount.dataset.nativeForms = nativeForms ? "host-supported" : "html-fallback";
+  mount.dataset.nativeForms = "html-fallback";
 }
 app.ontoolresult = result => controller.receiveInitial(result);
 app.ontoolcancelled = () => controller.reportError("The host cancelled the opening request. Refresh to read the current state.");
@@ -158,7 +156,7 @@ if (fixturePreview) {
   controller.setConnected(true);
   mount.dataset.nativeForms = "html-fallback";
 } else {
-  connection = app.connect();
+  connection = hostBridge.connect();
   void connection.then(() => {
     controller.setConnected(true);
     applyHostContext();

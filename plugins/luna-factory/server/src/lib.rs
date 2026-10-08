@@ -11,3 +11,7 @@ pub mod store;
 pub mod control;
 pub mod evidence;
 pub mod presentation;
+
+pub mod backends;
+pub mod graph;
+pub mod schemas;

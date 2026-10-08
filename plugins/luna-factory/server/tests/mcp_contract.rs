@@ -2,6 +2,160 @@ use luna_factoryd::mcp::{app_resource, capabilities, tool_definitions};
 use serde_json::{Value, json};
 
 #[test]
+fn every_structured_tool_declares_an_object_output_contract() {
+    for tool in tool_definitions() {
+        let value = serde_json::to_value(&tool).unwrap();
+        assert_eq!(value["outputSchema"]["type"], "object", "{}", tool.name);
+        assert!(
+            value["outputSchema"]["required"]
+                .as_array()
+                .is_some_and(|a| !a.is_empty()),
+            "{}",
+            tool.name
+        );
+    }
+}
+
+#[test]
+fn graph_catalog_requires_revision_and_is_callable_by_both_audiences() {
+    let tools = tool_definitions();
+    assert_eq!(tools.len(), 20);
+    for name in [
+        "create_factory_graph",
+        "get_factory_graph",
+        "get_factory_backends",
+        "propose_factory_change",
+        "apply_factory_change",
+    ] {
+        let tool = tools.iter().find(|t| t.name == name).unwrap();
+        let value = serde_json::to_value(tool).unwrap();
+        assert_eq!(value["_meta"]["ui"]["visibility"], json!(["model", "app"]));
+        if matches!(
+            name,
+            "create_factory_graph" | "propose_factory_change" | "apply_factory_change"
+        ) {
+            assert_eq!(value["annotations"]["idempotentHint"], true);
+            assert_eq!(value["annotations"]["openWorldHint"], false);
+        }
+        if name == "propose_factory_change" || name == "apply_factory_change" {
+            assert!(
+                value["inputSchema"]["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("expected_revision"))
+            );
+            assert_eq!(
+                value["inputSchema"]["properties"]["expected_revision"]["maximum"],
+                9_007_199_254_740_991_u64
+            );
+        }
+    }
+    let settings = tools
+        .iter()
+        .find(|t| t.name == "update_factory_settings")
+        .unwrap();
+    let input = serde_json::to_value(&settings.input_schema).unwrap();
+    let validator = jsonschema::validator_for(&input).unwrap();
+    assert!(validator.is_valid(&json!({"set":{"capacity":1}})));
+    assert!(!validator.is_valid(&json!({"capacity":1})));
+    assert!(!validator.is_valid(&json!({"set":{}})));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_partial_settings_updates_retain_both_fields_and_revalidate_defaults() {
+    use luna_factoryd::{config::Config, lifecycle::Factory, store::Store};
+    let dir = tempfile::tempdir().unwrap();
+    let config: Config = serde_json::from_value(json!({"listen":"127.0.0.1:8787","database":dir.path().join("state/runs.sqlite"),"codex_binary":"/absent","skill_path":dir.path().join("SKILL.md"),"repositories":{},"profiles":{"default":{"effort":"high"}},"limits":{"capacity":2,"repair_attempts":0,"wall_seconds":30}})).unwrap();
+    Store::open(&config)
+        .unwrap()
+        .save_settings(&json!({"capacity":8,"profile":"removed","finish":"deploy"}))
+        .unwrap();
+    let factory = Factory::new(config).unwrap();
+    assert_eq!(
+        factory.settings().await.unwrap()["values"],
+        json!({"capacity":1,"profile":"default","finish":"local_candidate"})
+    );
+    for _ in 0..16 {
+        factory
+            .update_settings(json!({"capacity":1,"finish":"local_candidate"}))
+            .await
+            .unwrap();
+        let a = factory.clone();
+        let b = factory.clone();
+        let (left, right) = tokio::join!(
+            tokio::spawn(async move { a.update_settings(json!({"capacity":2})).await }),
+            tokio::spawn(async move { b.update_settings(json!({"finish":"push"})).await })
+        );
+        left.unwrap().unwrap();
+        right.unwrap().unwrap();
+        assert_eq!(
+            factory.settings().await.unwrap()["values"],
+            json!({"capacity":2,"profile":"default","finish":"push"})
+        );
+    }
+}
+
+#[tokio::test]
+async fn native_settings_patch_is_strict_partial_and_returns_effective_values() {
+    use luna_factoryd::{config::Config, http::McpServer, lifecycle::Factory};
+    use std::sync::Arc;
+    let dir = tempfile::tempdir().unwrap();
+    let config: Config = serde_json::from_value(json!({"listen":"127.0.0.1:8787","database":dir.path().join("state/runs.sqlite"),"codex_binary":"/absent","skill_path":dir.path().join("SKILL.md"),"repositories":{},"profiles":{"default":{"effort":"high"}},"limits":{"capacity":2,"repair_attempts":0,"wall_seconds":30}})).unwrap();
+    let server = McpServer {
+        factory: Factory::new(config).unwrap(),
+        html: Arc::new(String::new()),
+    };
+    let first = server
+        .invoke("update_factory_settings", json!({"set":{"capacity":2}}))
+        .await
+        .unwrap();
+    assert_eq!(
+        first["values"],
+        json!({"capacity":2,"finish":"local_candidate","profile":"default"})
+    );
+    let second = server
+        .invoke("update_factory_settings", json!({"set":{"finish":"push"}}))
+        .await
+        .unwrap();
+    assert_eq!(second["values"]["capacity"], 2);
+    for bad in [
+        json!({"capacity":1}),
+        json!({"set":{}}),
+        json!({"set":{"capacity":3}}),
+        json!({"set":{"capacity":true}}),
+        json!({"set":{"profile":"foreign"}}),
+        json!({"set":{"root":"/tmp"}}),
+        json!({"set":{"capacity":1},"actor":"admin"}),
+    ] {
+        assert!(
+            server
+                .invoke("update_factory_settings", bad.clone())
+                .await
+                .is_err(),
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        server
+            .invoke("read_factory_settings", json!({}))
+            .await
+            .unwrap()["values"],
+        second["values"]
+    );
+}
+
+#[tokio::test]
+async fn settings_without_profiles_does_not_invent_an_allowed_profile() {
+    use luna_factoryd::{config::Config, lifecycle::Factory};
+    let dir = tempfile::tempdir().unwrap();
+    let config: Config = serde_json::from_value(json!({"listen":"127.0.0.1:8787","database":dir.path().join("state/runs.sqlite"),"codex_binary":"/absent","skill_path":dir.path().join("SKILL.md"),"repositories":{},"profiles":{},"limits":{"capacity":1,"repair_attempts":0,"wall_seconds":30}})).unwrap();
+    let factory = Factory::new(config).unwrap();
+    let settings = factory.settings().await.unwrap();
+    assert!(settings["schema"]["properties"].get("profile").is_none());
+    assert!(settings["values"].get("profile").is_none());
+}
+
+#[test]
 fn rust_sdk_preserves_standard_and_openai_metadata() {
     let tools = serde_json::to_value(tool_definitions()).unwrap();
     let global = tools

@@ -4,6 +4,7 @@ const text = z.string().max(16_000);
 const nullableText = text.nullable();
 const timestamp = z.number().nonnegative().max(253_402_300_799);
 export const runId = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/);
+export const nodeId = z.string().min(1).max(256).refine(value => !/[\u0000-\u001f\u007f-\u009f]/.test(value) && new TextEncoder().encode(value).length <= 256);
 export const finishSchema = z.enum(["local_candidate", "push", "pr"]);
 const revision = z.number().int().nonnegative().refine(Number.isSafeInteger, "Expected a safe revision integer");
 const actionKind = z.enum(["wait", "refresh", "answer", "steer", "cancel", "resume", "reconcile", "inspect"]);
@@ -11,8 +12,8 @@ const actionSchema = z.object({ kind: actionKind, label: z.string().min(1).max(1
 const controlSchema = z.object({
   schema_version: z.literal(1), revision, intent_generation: revision, dispatch_generation: revision,
   criteria: z.array(z.object({ id: z.string().max(128), description: text, status: z.enum(["proven", "failed", "unproved"]), reason: nullableText, check_refs: z.array(z.string().max(256)).max(64) })).max(32),
-  tasks: z.array(z.object({ id: z.string().max(128), title: z.string().max(1000), criterion_ids: z.array(z.string().max(128)).max(32), dependencies: z.array(z.string().max(128)).max(128), state: z.string().max(64), admission: z.string().max(64), reason: nullableText, owner_thread: nullableText, attempt_ids: z.array(z.string().max(128)).max(64) })).max(128),
-  attempts: z.array(z.object({ id: z.string().max(128), task_id: z.string().max(128), intent_generation: revision, dispatch_generation: revision, subject: text, thread_id: nullableText, turn_id: nullableText, status: z.string().max(64) })).max(256),
+  tasks: z.array(z.object({ id: nodeId, title: z.string().max(1000), criterion_ids: z.array(nodeId).max(32), dependencies: z.array(nodeId).max(128), state: z.string().max(64), admission: z.string().max(64), reason: nullableText, owner_thread: nullableText, attempt_ids: z.array(nodeId).max(64) })).max(128),
+  attempts: z.array(z.object({ id: nodeId, task_id: nodeId, intent_generation: revision, dispatch_generation: revision, subject: text, thread_id: nullableText, turn_id: nullableText, status: z.string().max(64) })).max(256),
   effects: z.array(z.unknown()).max(128), child_policy: z.literal("cooperative_unverified"),
 });
 const presentationSchema = z.object({
@@ -37,6 +38,7 @@ export const runSchema = z.object({
   delta: text, remaining_gap: nullableText, blocker: nullableText,
   pending_decision: z.object({ id: z.string().min(1).max(128), question: text }).nullish(),
   deadline_at: timestamp, claim_held: z.boolean(),
+  planning_only: z.boolean().optional(),
   updated_at: timestamp.optional(), generation: z.number().int().nonnegative().optional(),
   route: z.object({
     requested_model: nullableText, requested_effort: nullableText,
@@ -73,6 +75,24 @@ export const repositoryDiscoverySchema = z.object({
   requests: z.array(repositoryRegistrationSchema).max(100), approval: z.literal("local_operator"),
 }).strict();
 export type RepositoryDiscovery = z.infer<typeof repositoryDiscoverySchema>;
+const graphSourceSchema = z.object({ provider: nodeId, repository_id: nodeId, item_id: nodeId, revision: nodeId });
+const graphNodeSchema = controlSchema.shape.tasks.element.extend({ id: nodeId, dependencies: z.array(nodeId).max(128), source: graphSourceSchema.nullable(), target_preference: nodeId.nullable() });
+export const graphChangeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("set_target"), node_id: nodeId, target_id: nodeId }),
+  z.object({ kind: z.literal("set_dependencies"), node_id: nodeId, dependencies: z.array(nodeId).max(128) }),
+  z.object({ kind: z.literal("import_candidates"), nodes: z.array(z.object({ id: nodeId, title: z.string().min(1).max(4000), criterion_ids: z.array(nodeId).min(1).max(32), dependencies: z.array(nodeId).max(128), source: graphSourceSchema })).min(1).max(32) }),
+]);
+const proposalSchema = z.object({ id: nodeId, idempotency_key: nodeId, fingerprint: z.string().max(256), actor: z.literal("local_operator"), base_revision: revision, subject: text, change: graphChangeSchema, status: z.enum(["proposed", "applied"]), applied_revision: revision.nullable() });
+export const graphEnvelopeSchema = z.object({
+  graph: z.object({ run_id: runId, revision, repository: z.object({ alias: z.string().max(64), identity: z.string().max(256), base_head: text, subject: text }), planning_only: z.boolean(), nodes: z.array(graphNodeSchema).max(128), criteria: controlSchema.shape.criteria, attempts: controlSchema.shape.attempts, claim: presentationSchema.shape.claim, changes: z.array(proposalSchema).max(256) }),
+  proposal: proposalSchema.nullable(),
+});
+export type GraphEnvelope = z.infer<typeof graphEnvelopeSchema>;
+export type FactoryGraph = GraphEnvelope["graph"];
+export type GraphChange = z.infer<typeof graphChangeSchema>;
+const operationSchema = z.object({ advertised: z.boolean(), enabled: z.boolean(), qualified: z.boolean() });
+export const backendCatalogSchema = z.object({ schema_version: z.literal(1), discovery: z.literal("configuration_only"), policy: z.literal("subscription_only"), targets: z.array(z.object({ id: z.string().max(128), label: z.string().max(160), kind: z.string().max(128), namespace: z.string().max(256), operator_enabled: z.boolean(), planning_eligible: z.boolean(), execution_eligible: z.boolean(), qualification: z.enum(["unverified", "unsupported", "qualified"]), authentication: z.string().max(128), entitlement: z.string().max(128), reason: z.string().max(2000), operations: z.object({ discover: operationSchema, start: operationSchema, observe: operationSchema, steer: operationSchema, stop: operationSchema, reconcile: operationSchema }), limits: z.array(z.string().max(1000)).max(32) })).max(32) });
+export type BackendCatalog = z.infer<typeof backendCatalogSchema>;
 export const settingsSchema = z.object({ capacity: z.number().int().min(1).max(8).optional(), finish: finishSchema.optional(), profile: z.string().max(64).optional() });
 export type Settings = z.infer<typeof settingsSchema>;
 const summarySchema = runSchema.extend({ receipts: runSchema.shape.receipts.default([]) });
