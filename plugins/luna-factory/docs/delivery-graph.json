@@ -177,7 +177,7 @@
         "Subscription-only policy rejects API-billed, unknown or changed routes; it never silently substitutes inference.",
         "Read-only identity diagnostics do not start, authenticate or restart a daemon."
       ],
-      "status": "implemented_verified_fixture_and_compiled_host",
+      "status": "planning_discovery_verified_execution_qualification_deferred",
       "proposed_new_files": [
         "plugins/luna-factory/server/src/backends/mod.rs",
         "plugins/luna-factory/server/tests/backend_contract.rs"
@@ -190,7 +190,7 @@
         "Prepare a separately reviewable change and verified canonical documentation delta; no deployment authorization is implied."
       ],
       "live_host_acceptance": "not_performed",
-      "acceptance_scope": "Code and deterministic/compiled-host contracts; live ChatGPT acceptance remains separately blocked.",
+      "acceptance_scope": "Configuration-only discovery and planning preference are verified. Backend execution identity, live auth and entitlement qualification remain LF-08 work.",
       "deferred_execution_work": [
         "Persist backend-independent execution identity and capability snapshots when LF-08 adds dispatch; planning graphs create no execution identity.",
         "Authenticate and qualify subscription entitlement per exact target before enabling new backend execution; current discovery deliberately reports unknown."

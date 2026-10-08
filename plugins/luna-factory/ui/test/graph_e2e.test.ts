@@ -82,8 +82,15 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
       expect(result.isError, JSON.stringify(result)).not.toBe(true);
       return result.structuredContent;
     };
+    const objectivePrefix = "Plan the existing bounded-continuation issue: ";
+    const objective = objectivePrefix + "😀".repeat(700);
+    const titleCases = [
+      { id: "long-ascii-title", raw: "a".repeat(2000), public: "a".repeat(1000) },
+      { id: "long-unicode-title", raw: "😀".repeat(1000), public: "😀".repeat(500) },
+      { id: "unicode-boundary-title", raw: "a".repeat(999) + "😀", public: "a".repeat(999) },
+    ];
     const created = graphEnvelopeSchema.parse(await model("create_factory_graph", {
-      repository: "plugins", objective: "Plan the existing bounded-continuation issue", acceptance: ["Retain execution identity and prove convergence"], non_goals: ["No execution in this planning graph"],
+      repository: "plugins", objective, acceptance: ["Retain execution identity and prove convergence"], non_goals: ["No execution in this planning graph"],
       finish: "local_candidate", profile: "default", capacity: 1, repair_attempts: 0, wall_seconds: 300, idempotency_key: "real-issue-plan",
     }));
     const runId = created.graph.run_id;
@@ -91,8 +98,15 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
       run_id: runId, expected_revision: created.graph.revision, idempotency_key: "import-issue-61", change: { kind: "import_candidates", nodes: [{
         id: "issue-61", title: issue.title, criterion_ids: ["A1"], dependencies: [],
         source: { provider: "github", repository_id: created.graph.repository.identity, item_id: `${issue.repository_id}:${issue.node_id}`, revision: issueRevision },
-      }] },
+      }, ...titleCases.map(title => ({
+        id: title.id, title: title.raw, criterion_ids: ["A1"], dependencies: [],
+        source: { provider: "fixture", repository_id: created.graph.repository.identity, item_id: title.id, revision: "title-contract-v1" },
+      }))] },
     }));
+    // Proposals retain original import data; only the public task projection is shortened.
+    expect(proposal.proposal?.change.kind).toBe("import_candidates");
+    if (proposal.proposal?.change.kind !== "import_candidates") throw new Error("Missing import proposal");
+    for (const title of titleCases) expect(proposal.proposal.change.nodes.find(node => node.id === title.id)?.title).toBe(title.raw);
     await model("apply_factory_change", { run_id: runId, expected_revision: proposal.graph.revision, change_id: proposal.proposal?.id });
     host.oncalltool = params => call(params.name, params.arguments ?? {});
     host.onupdatemodelcontext = async params => {
@@ -107,6 +121,15 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
     await host.sendToolInput({ arguments: {} });
     await host.sendToolResult(await call("open_factory", {}));
     await controller.select(runId); await controller.loadGraph();
+    expect(controller.state.error).toBeNull();
+    for (const title of titleCases) {
+      expect(controller.state.graph?.nodes.find(node => node.id === title.id)?.title).toBe(title.public);
+      expect(controller.selected?.control?.tasks.find(node => node.id === title.id)?.title).toBe(title.public);
+    }
+    const publicObjective = objectivePrefix + "😀".repeat(Math.floor((1000 - objectivePrefix.length) / 2));
+    expect(controller.state.graph?.nodes.find(node => node.id === "objective")?.title).toBe(publicObjective);
+    expect(controller.selected?.control?.tasks.find(node => node.id === "objective")?.title).toBe(publicObjective);
+    expect(controller.selected?.objective).toBe(objective);
     controller.selectNode("issue-61");
     await vi.waitFor(() => expect(contexts.at(-1)).toMatchObject({ run_id: runId, node_id: "issue-61" }));
     expect(root.textContent).toContain(issue.title);
@@ -118,6 +141,9 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
     expect(controller.state.graph).toEqual(fromModel);
     expect(fromModel.nodes.find(node => node.id === "issue-61")?.target_preference).toBe("native-local");
     expect(fromModel.changes.filter(change => change.status === "applied")).toHaveLength(2);
+    const persistedImport = fromModel.changes.find(change => change.change.kind === "import_candidates")?.change;
+    if (persistedImport?.kind !== "import_candidates") throw new Error("Missing persisted import");
+    for (const title of titleCases) expect(persistedImport.nodes.find(node => node.id === title.id)?.title).toBe(title.raw);
     expect(fromModel.changes.every(change => change.actor === "local_operator")).toBe(true);
     expect(fromModel.attempts).toEqual([]); expect(fromModel.claim.held).toBe(false);
     expect(controller.state.backends?.targets.every(target => !target.execution_eligible)).toBe(true);

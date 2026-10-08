@@ -24,6 +24,18 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
       - run: cargo build --locked --release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test compiled graph and workbench contract
+        working-directory: plugins/luna-factory/ui
+        env:
+          LUNA_GRAPH_E2E: '1'
+          LUNA_FACTORY_BINARY: ${{ github.workspace }}/plugins/luna-factory/server/target/release/luna-factoryd
+        run: |
+          npm ci
+          npm run build
+          npm test -- --run test/graph_e2e.test.ts
       - name: Test local package staging
         working-directory: .
         run: python3 -m unittest discover -s plugins/luna-factory/tests -p 'test_package_runtime.py' -v
