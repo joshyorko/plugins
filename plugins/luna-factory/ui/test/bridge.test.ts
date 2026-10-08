@@ -112,6 +112,76 @@ describe("production host bridge", () => {
     await expect(bridge.context({ run_id: "r1" })).rejects.toThrow("does not support");
     expect(updates).toEqual([]);
   });
+  it.each(["structured", "text"] as const)("an outstanding %s Overview clear cannot suppress a newer queued selection", async mode => {
+    const { bridge, host } = await setup(mode);
+    let releaseClear!: () => void;
+    const requests: Parameters<NonNullable<typeof host.onupdatemodelcontext>>[0][] = [];
+    host.onupdatemodelcontext = async params => {
+      requests.push(params);
+      if (requests.length === 2) await new Promise<void>(resolve => { releaseClear = resolve; });
+      return { _meta: { "openai/modelContext": { updateId: `opaque-${requests.length}` } } };
+    };
+    bridge.selectContext(); await bridge.context({ run_id: "r1" });
+    bridge.selectContext(); const clearing = bridge.context({});
+    await vi.waitFor(() => expect(releaseClear).toBeTypeOf("function"));
+    bridge.selectContext(); const selecting = bridge.context({ run_id: "r2" });
+    host.setHostContext({ "openai/modelContext": null });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    // The old clear is still outstanding; the newer attachment is not on the host yet.
+    const suppressed = bridge.contextCleared;
+    releaseClear(); await clearing; await selecting;
+    expect(suppressed).toBe(false);
+    expect(requests).toHaveLength(3);
+    expect(requests[2]).toEqual(mode === "structured" ? { structuredContent: { run_id: "r2" } } : { content: [{ type: "text", text: '{"run_id":"r2"}' }] });
+  });
+  it("a second null while clearing still suppresses the queued selection", async () => {
+    const { bridge, host } = await setup();
+    let releaseClear!: () => void;
+    const requests: unknown[] = [];
+    host.onupdatemodelcontext = async params => {
+      requests.push(params);
+      if (requests.length === 1) await new Promise<void>(resolve => { releaseClear = resolve; });
+      return { _meta: { "openai/modelContext": { updateId: "opaque-clear" } } };
+    };
+    const clearing = bridge.context({});
+    await vi.waitFor(() => expect(releaseClear).toBeTypeOf("function"));
+    bridge.selectContext(); const selecting = bridge.context({ run_id: "r2" });
+    host.setHostContext({ "openai/modelContext": null });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    // setHostContext coalesces equal state; emit the second wire notification explicitly.
+    await host.sendHostContextChange({ "openai/modelContext": null });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const suppressed = bridge.contextCleared;
+    releaseClear(); await clearing; await selecting;
+    expect(suppressed).toBe(true);
+    expect(requests).toEqual([{ structuredContent: {} }]);
+    await bridge.context({ run_id: "r2", state: "BLOCKED" });
+    expect(requests).toHaveLength(1);
+  });
+  it("a null after clear acknowledgment is removal, not a retained echo token", async () => {
+    const { bridge, host, updates } = await setup();
+    await bridge.context({});
+    bridge.selectContext(); await bridge.context({ run_id: "r2" });
+    host.setHostContext({ "openai/modelContext": null });
+    await vi.waitFor(() => expect(bridge.contextCleared).toBe(true));
+    await bridge.context({ run_id: "r2", state: "BLOCKED" });
+    expect(updates).toEqual([{ structuredContent: {} }, { structuredContent: { run_id: "r2" } }]);
+  });
+  it("a clear in flight without newer user navigation does not exempt a removal", async () => {
+    const { bridge, host } = await setup();
+    let releaseClear!: () => void;
+    host.onupdatemodelcontext = async () => {
+      await new Promise<void>(resolve => { releaseClear = resolve; });
+      return {};
+    };
+    const clearing = bridge.context({});
+    await vi.waitFor(() => expect(releaseClear).toBeTypeOf("function"));
+    host.setHostContext({ "openai/modelContext": null });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const suppressed = bridge.contextCleared;
+    releaseClear(); await clearing;
+    expect(suppressed).toBe(true);
+  });
   it.each([false, true])("fences host clear against delayed acknowledgment (new selection %s)", async reselect => {
     const { bridge, host } = await setup();
     let release: (() => void) | undefined;

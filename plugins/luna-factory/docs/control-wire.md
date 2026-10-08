@@ -194,3 +194,7 @@ pins to 20 total and 13 model-visible tools, preserve the settings wrapper and
 required graph revision fields, and qualify model context/remount/removal against
 the actual host. No tunnel, Executor, registration or production package is changed
 by this slice. Live replacement remains blocked while original cessation is unknown.
+
+### Context clear ordering
+
+The bridge tracks each outstanding write as clear or attachment. While an app-originated clear is still awaiting acknowledgment, its first null notification cannot suppress a newer explicit selection queued behind that write. A second null, or a null without such a newer selection, remains a removal. No expected-clear token survives acknowledgment. Since the host's bare null has no update ID, a post-acknowledgment null is treated as removal even if a host delayed it; the bridge cannot infer undocumented causal order. Nonempty writes racing genuine removal still settle and clear again.

@@ -3,6 +3,10 @@ import { OpenAIExtensions, type OpenAIModelContextHostState } from "@openai/mcp-
 import { nodeId, parseRunLink, runId } from "./domain";
 import type { Bridge, WorkbenchController } from "./controller";
 
+type ContextWrite =
+  | { kind: "clear"; selectionEpoch: number; notificationSeen: boolean }
+  | { kind: "publish"; payload: string };
+
 /** Host routing restores a view; it does not override a removed attachment. */
 export async function applyDeepLink(controller: Pick<WorkbenchController, "select" | "reportError">, url: string): Promise<void> {
   const id = url === "/" ? null : parseRunLink(url);
@@ -17,7 +21,8 @@ export class HostBridge implements Bridge {
   private connection: Promise<void> | null = null;
   private queue = Promise.resolve();
   private epoch = 0;
-  private inFlight: string | null = null;
+  private selectionEpoch = 0;
+  private inFlight: ContextWrite | null = null;
   private lastHostId: string | null = null;
   private readonly ownIds = new Set<string>();
 
@@ -41,7 +46,7 @@ export class HostBridge implements Bridge {
     return this.app.callServerTool({ name: tool, arguments: args });
   }
   /** Only explicit navigation/reattachment overrides a user's context removal. */
-  selectContext(): void { this.contextCleared = false; ++this.epoch; }
+  selectContext(): void { this.contextCleared = false; ++this.epoch; ++this.selectionEpoch; }
   async context(context: Record<string, unknown>): Promise<void> {
     if (this.contextCleared) return;
     const epoch = ++this.epoch;
@@ -60,7 +65,9 @@ export class HostBridge implements Bridge {
     if (!support?.structuredContent && !support?.text) throw new Error("This host does not support model context updates");
     const empty = Object.keys(context).length === 0;
     const params = support.structuredContent ? { structuredContent: context } : { content: empty ? [] : [{ type: "text" as const, text: JSON.stringify(context) }] };
-    this.inFlight = empty ? null : JSON.stringify(context);
+    this.inFlight = empty
+      ? { kind: "clear", selectionEpoch: this.selectionEpoch, notificationSeen: false }
+      : { kind: "publish", payload: JSON.stringify(context) };
     try {
       const helper = this.extensions.modelContext;
       if (helper) {
@@ -77,11 +84,20 @@ export class HostBridge implements Bridge {
     const current = this.extensions.modelContext?.getCurrent();
     if (current === undefined) return;
     if (current === null) {
+      const pending = this.inFlight;
+      if (pending?.kind === "clear" && !pending.notificationSeen) {
+        pending.notificationSeen = true;
+        // Only one null can be attributed to this still-outstanding clear.
+        // Serialization guarantees the newer explicit selection is not attached yet.
+        if (!this.contextCleared && this.selectionEpoch > pending.selectionEpoch) return;
+      }
+      // Bare null carries no updateId. After acknowledgment, or after the first
+      // notification, there is no safe echo correlation: honor it as removal.
       this.contextCleared = true;
       const clearEpoch = ++this.epoch;
       // An already-sent update can reach the host after its clear notification.
       // Settle that request, then clear this instance again; never reattach it.
-      if (this.inFlight !== null) {
+      if (pending?.kind === "publish") {
         this.queue = this.queue.then(async () => {
           if (this.contextCleared && this.epoch === clearEpoch) await this.publish({});
         }).catch(() => undefined);
@@ -91,7 +107,7 @@ export class HostBridge implements Bridge {
     if (this.ownIds.has(current.updateId) || current.updateId === this.lastHostId) return;
     this.lastHostId = current.updateId;
     const payload = contextData(current);
-    if (this.inFlight !== null && JSON.stringify(payload) === this.inFlight) return;
+    if (this.inFlight?.kind === "publish" && JSON.stringify(payload) === this.inFlight.payload) return;
     const id = runId.safeParse(payload?.run_id);
     if (!id.success) return;
     ++this.epoch;
