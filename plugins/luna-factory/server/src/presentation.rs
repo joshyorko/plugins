@@ -75,7 +75,9 @@ pub fn project(run: &Run, control: &Control, timestamp: u64) -> Value {
             });
     let time = run.deadline_at.saturating_sub(timestamp);
     let repairs = run.request.repair_attempts.saturating_sub(run.repairs_used);
-    let needs_diagnosis = control.no_progress_attempts >= 2 && control.diagnosis.is_none();
+    let fresh_task = crate::continuation::fresh_selected(control);
+    let needs_diagnosis =
+        !fresh_task && control.no_progress_attempts >= 2 && control.diagnosis.is_none();
     let decision = run.pending_decision.is_some() && stopped;
     let verified = control.run_control == crate::control::RunControl::Converged
         && control.converged()
@@ -111,7 +113,7 @@ pub fn project(run: &Run, control: &Control, timestamp: u64) -> Value {
         "owned_liveness_unknown"
     } else if time == 0 {
         "time_budget_exhausted"
-    } else if repairs == 0 && !decision {
+    } else if repairs == 0 && !decision && !fresh_task {
         "repair_budget_exhausted"
     } else if needs_diagnosis && !decision {
         "diagnosis_required"
@@ -161,7 +163,7 @@ pub fn project(run: &Run, control: &Control, timestamp: u64) -> Value {
         "Continue the same objective",
         resume_reason,
         Some("resume_factory_run"),
-        resumable && !decision && repairs > 0 && !needs_diagnosis,
+        resumable && !decision && (repairs > 0 || fresh_task) && !needs_diagnosis,
     );
     let reconcile = descriptor(
         "reconcile",

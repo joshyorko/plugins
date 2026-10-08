@@ -255,8 +255,13 @@ pub fn owner_output_schema_with_assumptions(
         "id":{"type":"string"},"kind":{"type":"string","enum":["file_sha256","native_command"]},"binding":binding,
         "path":{"type":["string","null"]},"sha256":{"type":["string","null"]},"native_item":{"type":["string","null"]}},
         "required":["id","kind","binding","path","sha256","native_item"]});
+    let diagnosis = json!({"type":["object","null"],"additionalProperties":false,"properties":{
+        "summary":{"type":"string"},"check_refs":{"type":"array","items":{"type":"string"},"maxItems":32}},"required":["summary","check_refs"]});
+    let continuation = json!({"type":["object","null"],"additionalProperties":false,"properties":{
+        "kind":{"type":"string","enum":["next","repair"]},"task_id":{"type":"string"},"diagnosis":diagnosis},"required":["kind","task_id","diagnosis"]});
     let candidate = json!({"type":"object","additionalProperties":false,"properties":{"id":{"type":"string"},"title":{"type":"string"},"criterion_ids":{"type":"array","items":{"type":"string"}},"dependencies":{"type":"array","items":{"type":"string"}},"assumptions":assumption_schema,"necessary":{"type":"boolean"},"effects":{"type":"array","items":{"type":"string","enum":["native_owner_turn","read_only_file_check"]}}},"required":["id","title","criterion_ids","dependencies","assumptions","necessary","effects"]});
     json!({"type":"object","additionalProperties":false,"properties":{
+        "continuation":continuation,
         "candidates":{"type":"array","maxItems":16,"items":candidate},"selected_task":{"type":"string"},
         "state":{"type":"string","enum":["CONVERGED","QUIESCENT","NEEDS_INPUT","BLOCKED"]},
         "subject":{"type":"string"},"delta":{"type":"string"},"remaining_gap":{"type":"string"},"blocker":{"type":["string","null"]},
@@ -264,7 +269,7 @@ pub fn owner_output_schema_with_assumptions(
         "acceptance":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{
             "id":{"type":"string"},"passed":{"type":"boolean"},"accepted":{"type":"boolean"},"evidence":{"type":"string"},
             "check_refs":{"type":"array","items":{"type":"string"}}},"required":["id","passed","accepted","evidence","check_refs"]}}
-    },"required":["state","subject","delta","remaining_gap","blocker","acceptance","checks","candidates","selected_task"]})
+    },"required":["state","subject","delta","remaining_gap","blocker","acceptance","checks","candidates","selected_task","continuation"]})
 }
 
 #[derive(serde::Deserialize)]
@@ -278,6 +283,12 @@ struct OwnerCandidate {
     necessary: bool,
     effects: Vec<String>,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FinishOrigin {
+    LiveOwnerEvent,
+    RecoveryReadOnly,
+}
+
 /// Arc ownership tracks the service lifetime, independently of transient fork
 /// inheritance during Command spawning. CLOEXEC alone closes only after exec.
 struct ServiceLease(std::fs::File);
@@ -941,7 +952,7 @@ impl Factory {
             subject_exe,
             run.canonical_root,
             serde_json::to_string(&run.request)?
-        ).to_string()+&format!("\nCONTROL: task_id={}, attempt_id={}, intent_generation=1, dispatch_generation={}, current assumptions={}. Returned work remains VERIFY until daemon-observed structured checks and your explicit semantic acceptance. Supply accepted and check_refs for each A# and checks with kind=file_sha256, id, binding={{task_id,attempt_id,intent_generation,dispatch_generation,subject,assumptions}}, path relative to approved source root, sha256 lowercase. path/sha256 are not arbitrary command execution. Native exit has unverified output completeness and environment. Use a fresh check ID per distinct predicate/binding. Your semantic acceptance is a recorded judgment, not independently proved natural-language truth. Child policies remain cooperative/unverified because native Codex has no verified pre-spawn enforcement. Push/PR URLs or prose do not prove delivery. No merge/release/deploy authority.",run.control.as_ref().unwrap().selected_task,run.dispatch_id.as_deref().unwrap_or("unassigned"),run.generation,serde_json::to_string(&run.control.as_ref().context("control_missing")?.assumptions)?)+&format!("\nMANAGED_TASK: {}. Only this selected task is structurally admitted for this continuation. To propose next bounded work, return candidates with id,title,criterion_ids,dependencies,assumptions,necessary,effects and selected_task. Necessity is your labelled semantic judgment. Unknown prerequisites, cycles, stale assumptions or unapproved effects do not grant admission. Child work remains cooperative/unverified.",serde_json::to_string(run.control.as_ref().unwrap().tasks.get(&run.control.as_ref().unwrap().selected_task).context("selected_task_unavailable")?)?))
+        ).to_string()+&format!("\nCONTROL: task_id={}, attempt_id={}, intent_generation=1, dispatch_generation={}, current assumptions={}. Returned work remains VERIFY until daemon-observed structured checks and your explicit semantic acceptance. Supply accepted and check_refs for each A# and checks with kind=file_sha256, id, binding={{task_id,attempt_id,intent_generation,dispatch_generation,subject,assumptions}}, path relative to approved source root, sha256 lowercase. path/sha256 are not arbitrary command execution. Native exit has unverified output completeness and environment. Use a fresh check ID per distinct predicate/binding. Your semantic acceptance is a recorded judgment, not independently proved natural-language truth. Child policies remain cooperative/unverified because native Codex has no verified pre-spawn enforcement. Push/PR URLs or prose do not prove delivery. No merge/release/deploy authority.",run.control.as_ref().unwrap().selected_task,run.dispatch_id.as_deref().unwrap_or("unassigned"),run.generation,serde_json::to_string(&run.control.as_ref().context("control_missing")?.assumptions)?)+&format!("\nMANAGED_TASK: {}. Only this selected task is structurally admitted for this continuation. Return continuation:null for genuine quiescence, NEEDS_INPUT or BLOCKED. For routine selected READY necessary work, return state QUIESCENT, blocker:null and continuation={{kind:next,task_id:selected_task,diagnosis:null}}; this explicitly requests one next turn under the original limits. For same-task repair, kind:repair requires diagnosis={{summary,check_refs}} citing exact current daemon-observed failed checks; prose, missing evidence and operator_semantic claims cannot authorize automatic repair. No directive means stop, including older reports. To propose next bounded work, return candidates with id,title,criterion_ids,dependencies,assumptions,necessary,effects and selected_task. Necessity is your labelled semantic judgment. Unknown prerequisites, cycles, stale assumptions or unapproved effects do not grant admission. Child work remains cooperative/unverified.",serde_json::to_string(run.control.as_ref().unwrap().tasks.get(&run.control.as_ref().unwrap().selected_task).context("selected_task_unavailable")?)?))
     }
     // The deadline belongs to the durable run, not an event subscription or turn.
     fn watch_deadline(&self, id: String, deadline: u64) {
@@ -1299,7 +1310,7 @@ impl Factory {
             && is_owner
             && event["params"]["turn"]["id"].as_str() == run.turn_id.as_deref()
         {
-            self.finish_turn_locked(id, &event["params"]["turn"])
+            self.finish_turn_locked(id, &event["params"]["turn"], FinishOrigin::LiveOwnerEvent)
                 .await?;
             return Ok(!self.store.lock().await.get(id)?.claim_held);
         }
@@ -1356,7 +1367,215 @@ impl Factory {
         self.cancel(id).await?;
         Ok(true)
     }
-    async fn finish_turn_locked(&self, id: &str, turn: &Value) -> Result<()> {
+    /// The caller owns the mutation lock and the live listener (or subscribes
+    /// before calling). This never replaces a monitor from inside that monitor.
+    async fn dispatch_existing_owner_locked(
+        &self,
+        run: &mut Run,
+        client: &NativeClient,
+        repair: bool,
+        message: Option<&str>,
+        automatic: bool,
+    ) -> Result<()> {
+        self.validate_current_authority(run).await?;
+        if automatic || run.graph_repository_stamp.is_some() {
+            self.validate_graph_repository(run).await?;
+        }
+        ensure!(now() < run.deadline_at, "time_budget_exhausted");
+        ensure!(
+            run.claim_held && run.observed_claim == crate::store::ObservedClaim::Owned,
+            "foreign_or_unknown_claim"
+        );
+        ensure!(
+            repository_subject(Path::new(&run.canonical_root))? == run.current_subject,
+            "continuation_source_changed"
+        );
+        if crate::evidence::revalidate_files(
+            run.control.as_mut().context("control_missing")?,
+            Path::new(&run.canonical_root),
+        )? {
+            self.store.lock().await.save(run)?;
+        }
+        let control = run.control.as_ref().context("control_missing")?;
+        let mut task = control
+            .tasks
+            .get(&control.selected_task)
+            .context("selected_task_unavailable")?
+            .clone();
+        if !automatic && task.id == "objective" {
+            task.subject = control.current_subject.clone();
+            task.assumptions = control.assumptions.clone();
+        }
+        crate::control::admit_task(control, &task)?;
+        if automatic && repair {
+            ensure!(
+                control
+                    .diagnosis
+                    .as_ref()
+                    .is_some_and(|diagnosis| diagnosis.basis == "observed_failure"),
+                "continuation_diagnosis_required"
+            );
+        }
+        if let Some(diagnosis) = &control.diagnosis
+            && diagnosis.basis == "observed_failure"
+        {
+            crate::evidence::revalidate_failures(
+                control,
+                &diagnosis.check_refs,
+                Path::new(&run.canonical_root),
+            )?;
+        }
+        ensure!(
+            repository_subject(Path::new(&run.canonical_root))? == run.current_subject
+                && now() < run.deadline_at,
+            "continuation_source_or_deadline_changed"
+        );
+        let old_attempt = run.dispatch_id.clone().unwrap_or_default();
+        let thread = run.thread_id.clone().context("owner_identity_unknown")?;
+        run.observed_model = None;
+        run.observed_effort = None;
+        if repair {
+            run.repairs_used += 1;
+        }
+        run.generation += 1;
+        run.set_state(crate::control::RunControl::Starting);
+        run.blocker = None;
+        run.dispatch_phase = "turn_start_pending".into();
+        run.dispatch_id = Some(uuid::Uuid::new_v4().to_string());
+        run.turn_id = None;
+        self.control_event(
+            run,
+            crate::control::Event::Dispatch {
+                id: run.dispatch_id.clone().unwrap(),
+                generation: run.generation,
+                repair,
+            },
+        )
+        .await?;
+        self.store.lock().await.receipt(run, if automatic {"automatic_continuation"} else {"native_dispatch"},
+            &format!("{} task {}; subject {}; prior attempt {}; next attempt {}; generation {}; intent persisted before turn/start",
+                if repair {"repair observed failure"} else {"continue selected work"},run.control.as_ref().unwrap().selected_task,
+                run.current_subject,old_attempt,run.dispatch_id.as_deref().unwrap(),run.generation))?;
+        let mut prompt = self.owner_prompt(run)?;
+        if let Some(message) = message {
+            prompt.push_str(
+                "\nIn-scope operator answer; original authority and acceptance remain binding:\n",
+            );
+            prompt.push_str(message);
+        }
+        // Expiry after durable intent stops here; an uncertain intent is never
+        // replayed automatically, including when no native call was made.
+        ensure!(now() < run.deadline_at, "time_budget_exhausted");
+        let result = client
+            .start_skill_turn_with_id(
+                &thread,
+                &self.config.skill_path,
+                &prompt,
+                &self.config.profiles[&run.request.profile].effort,
+                Some(owner_output_schema_with_assumptions(
+                    &run.control.as_ref().unwrap().assumptions,
+                )),
+                run.dispatch_id.as_deref(),
+            )
+            .await;
+        let turn = match result {
+            Ok(turn) => turn,
+            Err(_) => {
+                run.set_state(crate::control::RunControl::Blocked);
+                run.blocker=Some("Continuation outcome is uncertain. Reconcile the same owner; no inference will be replayed automatically.".into());
+                self.store.lock().await.save(run)?;
+                return Ok(());
+            }
+        };
+        run.turn_id = Some(
+            turn["turn"]["id"]
+                .as_str()
+                .context("resume_turn_missing")?
+                .into(),
+        );
+        self.control_event(
+            run,
+            crate::control::Event::Acknowledged {
+                id: run.dispatch_id.clone().unwrap(),
+                turn_id: run.turn_id.clone().unwrap(),
+            },
+        )
+        .await?;
+        run.dispatch_phase = "active".into();
+        if turn["turn"]["status"] == "inProgress" {
+            run.control.as_mut().unwrap().settlement = crate::control::Settlement::Live;
+            run.control.as_mut().unwrap().owner_liveness = crate::control::Settlement::Live;
+        }
+        run.set_state(crate::control::RunControl::Running);
+        run.delta =
+            "Continued the same owner with original authority and remaining budgets.".into();
+        self.store.lock().await.save(run)?;
+        Ok(())
+    }
+    async fn continue_live_owner_locked(
+        &self,
+        run: &mut Run,
+        client: &NativeClient,
+        directive: &crate::continuation::Directive,
+    ) -> Result<()> {
+        ensure!(
+            !run.planning_only
+                && run.state == "QUIESCENT"
+                && run.pending_decision.is_none()
+                && run.blocker.is_none()
+                && run.dispatch_phase == "terminal_observed",
+            "continuation_not_requested"
+        );
+        ensure!(
+            run.graph_repository_stamp.is_some(),
+            "legacy_continuation_repository_unqualified"
+        );
+        ensure!(
+            run.route_observations.is_empty(),
+            "continuation_route_unverified"
+        );
+        self.validate_current_authority(run).await?;
+        self.validate_graph_repository(run).await?;
+        ensure!(
+            run.claim_held && run.observed_claim == crate::store::ObservedClaim::Owned,
+            "foreign_or_unknown_claim"
+        );
+        ensure!(
+            self.observe_stopped(client, run).await?,
+            "owned_execution_not_stopped"
+        );
+        ensure!(
+            repository_subject(Path::new(&run.canonical_root))? == run.current_subject,
+            "continuation_source_changed"
+        );
+        if crate::evidence::revalidate_files(
+            run.control.as_mut().unwrap(),
+            Path::new(&run.canonical_root),
+        )? {
+            self.store.lock().await.save(run)?;
+        }
+        let control = run.control.as_ref().unwrap();
+        ensure!(
+            control
+                .attempts
+                .last()
+                .is_some_and(|attempt| Some(&attempt.id) == run.dispatch_id.as_ref()),
+            "continuation_attempt_mismatch"
+        );
+        let plan = crate::continuation::decide(control, directive, now())?;
+        if let Some(diagnosis) = plan.diagnosis {
+            crate::evidence::revalidate_failures(
+                control,
+                &diagnosis.check_refs,
+                Path::new(&run.canonical_root),
+            )?;
+            self.control_event(run, crate::control::Event::Diagnose { diagnosis })
+                .await?;
+        }
+        self.dispatch_existing_owner_locked(run, client, plan.repair, None, true)
+            .await
+    }
+    async fn finish_turn_locked(&self, id: &str, turn: &Value, origin: FinishOrigin) -> Result<()> {
         let mut run = self.store.lock().await.get(id)?;
         if !run.claim_held
             || turn["id"].as_str() != run.turn_id.as_deref()
@@ -1367,6 +1586,7 @@ impl Factory {
         }
         run.set_state(crate::control::RunControl::Verifying);
         self.store.lock().await.save(&mut run)?;
+        let mut continuation = None;
         let failure = native_turn_failure_kind(turn);
         if let Some(kind) = failure {
             self.store
@@ -1523,6 +1743,39 @@ impl Factory {
             } else {
                 None
             };
+            if origin == FinishOrigin::LiveOwnerEvent
+                && report["state"] == "QUIESCENT"
+                && report
+                    .get("continuation")
+                    .is_some_and(|value| !value.is_null())
+            {
+                if run.state == "QUIESCENT"
+                    && report.get("blocker") == Some(&Value::Null)
+                    && report
+                        .get("remaining_gap")
+                        .and_then(Value::as_str)
+                        .is_some_and(|gap| gap.len() <= 2000)
+                    && report.get("checks").is_some_and(Value::is_array)
+                    && report.get("candidates").is_some_and(Value::is_array)
+                    && report.get("selected_task").and_then(Value::as_str)
+                        == Some(run.control.as_ref().unwrap().selected_task.as_str())
+                    && checked.is_ok()
+                    && source_unchanged
+                {
+                    match serde_json::from_value::<crate::continuation::Directive>(
+                        report["continuation"].clone(),
+                    ) {
+                        Ok(directive) => continuation = Some(directive),
+                        Err(_) => {
+                            run.set_state(crate::control::RunControl::Blocked);
+                            run.blocker = Some("invalid_continuation_directive".into());
+                        }
+                    }
+                } else if run.state == "QUIESCENT" {
+                    run.set_state(crate::control::RunControl::Blocked);
+                    run.blocker = Some("continuation_report_unverified".into());
+                }
+            }
             self.store.lock().await.receipt(&run,"owner_acceptance",&format!("Owner report state {}; {} criterion receipts bound to current subject. Raw evidence retained in native thread.",run.state,report["acceptance"].as_array().map_or(0,Vec::len)))?;
             if let Some(receipts) = report["acceptance"].as_array() {
                 for receipt in receipts {
@@ -1549,6 +1802,21 @@ impl Factory {
         }
         run.updated_at = now();
         run.dispatch_phase = "terminal_observed".into();
+        if let Some(directive) = continuation {
+            // The observed terminal state is durable and remains claimed before
+            // preparing the next intent. Restart/reconciliation cannot replay it.
+            self.store.lock().await.save(&mut run)?;
+            if let Err(error) = self
+                .continue_live_owner_locked(&mut run, &client, &directive)
+                .await
+            {
+                let mut persisted = self.store.lock().await.get(id)?;
+                persisted.set_state(crate::control::RunControl::Blocked);
+                persisted.blocker = Some(safe_summary(&error.to_string(), 256));
+                self.store.lock().await.save(&mut persisted)?;
+            }
+            return Ok(());
+        }
         let mut store = self.store.lock().await;
         if ["CONVERGED", "QUIESCENT"].contains(&run.state.as_str())
             && !run.control.as_ref().unwrap().unknown_effect()
@@ -1900,7 +2168,8 @@ impl Factory {
             self.monitor(run.id.clone(), client.subscribe()).await;
         } else {
             self.store.lock().await.save(run)?;
-            self.finish_turn_locked(&run.id, &turn).await?;
+            self.finish_turn_locked(&run.id, &turn, FinishOrigin::RecoveryReadOnly)
+                .await?;
             *run = self.store.lock().await.get(&run.id)?;
         }
         Ok(true)
@@ -2029,8 +2298,10 @@ impl Factory {
                 .any(|effect| effect.status == "unknown"),
             "effect_outcome_unknown"
         );
+        let fresh_task = crate::continuation::fresh_selected(run.control.as_ref().unwrap());
         ensure!(
             run.pending_decision.is_some()
+                || fresh_task
                 || run.control.as_ref().unwrap().no_progress_attempts < 2
                 || run.control.as_ref().unwrap().diagnosis.is_some(),
             "diagnosis_required"
@@ -2060,7 +2331,7 @@ impl Factory {
                 run.answered_decisions.len() < 100,
                 "decision_history_bound_reached"
             );
-        } else {
+        } else if !fresh_task {
             ensure!(
                 run.repairs_used < run.request.repair_attempts,
                 "repair_budget_exhausted"
@@ -2072,7 +2343,7 @@ impl Factory {
             self.observe_stopped(&client, &mut run).await?,
             "owned_execution_not_stopped"
         );
-        if !answering_decision {
+        if !answering_decision && !fresh_task {
             ensure!(
                 run.control
                     .as_ref()
@@ -2142,89 +2413,24 @@ impl Factory {
             crate::control::Event::EffectSettled { id: resume_effect },
         )
         .await?;
-        run.observed_model = None;
-        run.observed_effort = None;
-        if !answering_decision {
-            run.repairs_used += 1;
-        } else if let Some(decision) = run.pending_decision.take() {
+        if answering_decision && let Some(decision) = run.pending_decision.take() {
             run.answered_decisions.insert(
                 decision.id,
                 answer_fingerprint.context("operator_answer_required")?,
             );
         }
-        run.generation += 1;
-        run.current_subject = repository_subject(Path::new(&run.canonical_root))?;
-        run.set_state(crate::control::RunControl::Starting);
-        run.blocker = None;
-        run.dispatch_phase = "turn_start_pending".into();
-        run.dispatch_id = Some(uuid::Uuid::new_v4().to_string());
-        run.turn_id = None;
-        let event = crate::control::Event::Dispatch {
-            id: run.dispatch_id.clone().unwrap(),
-            generation: run.generation,
-            repair: !answering_decision,
-        };
-        self.control_event(&mut run, event).await?;
-        self.store.lock().await.receipt(
-            &run,
-            "native_dispatch",
-            &format!(
-                "Generation {} dispatch {} persisted before turn/start",
-                run.generation,
-                run.dispatch_id.as_deref().unwrap()
-            ),
-        )?;
         let events = client.subscribe();
-        let effort = &self.config.profiles[&run.request.profile].effort;
-        let mut prompt = self.owner_prompt(&run)?;
-        if let Some(message) = message {
-            prompt.push_str(
-                "\nIn-scope operator answer; original authority and acceptance remain binding:\n",
-            );
-            prompt.push_str(message);
-        }
-        let result = client
-            .start_skill_turn_with_id(
-                &thread,
-                &self.config.skill_path,
-                &prompt,
-                effort,
-                Some(owner_output_schema_with_assumptions(
-                    &run.control.as_ref().context("control_missing")?.assumptions,
-                )),
-                run.dispatch_id.as_deref(),
+        let result = self
+            .dispatch_existing_owner_locked(
+                &mut run,
+                &client,
+                !answering_decision && !fresh_task,
+                message,
+                false,
             )
             .await;
-        let turn = match result {
-            Ok(turn) => turn,
-            Err(_) => {
-                run.set_state(crate::control::RunControl::Blocked);
-                run.blocker=Some("Resume outcome is uncertain. Reconcile the same owner; no inference will be replayed automatically.".into());
-                self.store.lock().await.save(&mut run)?;
-                self.monitor(id.into(), events).await;
-                return self.get(id).await;
-            }
-        };
-        run.turn_id = Some(
-            turn["turn"]["id"]
-                .as_str()
-                .context("resume_turn_missing")?
-                .into(),
-        );
-        let event = crate::control::Event::Acknowledged {
-            id: run.dispatch_id.clone().unwrap(),
-            turn_id: run.turn_id.clone().unwrap(),
-        };
-        self.control_event(&mut run, event).await?;
-        run.dispatch_phase = "active".into();
-        if turn["turn"]["status"] == "inProgress" {
-            run.control.as_mut().unwrap().settlement = crate::control::Settlement::Live;
-            run.control.as_mut().unwrap().owner_liveness = crate::control::Settlement::Live;
-        }
-        run.set_state(crate::control::RunControl::Running);
-        run.delta = "Resumed the same owner with original authority and remaining budgets.".into();
-        self.store.lock().await.save(&mut run)?;
         self.monitor(id.into(), events).await;
+        result?;
         drop(guard);
         self.get(id).await
     }
@@ -2273,7 +2479,8 @@ impl Factory {
                 return self.get(id).await;
             }
             self.store.lock().await.save(&mut run)?;
-            self.finish_turn_locked(id, &turn).await?;
+            self.finish_turn_locked(id, &turn, FinishOrigin::RecoveryReadOnly)
+                .await?;
             return self.get(id).await;
         }
         if self.observe_stopped(&client, &mut run).await? {

@@ -15,3 +15,5 @@ pub mod presentation;
 pub mod backends;
 pub mod graph;
 pub mod schemas;
+
+pub mod continuation;

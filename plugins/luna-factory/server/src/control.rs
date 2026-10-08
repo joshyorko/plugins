@@ -147,10 +147,23 @@ impl Diagnosis {
         ensure!(
             !self.summary.trim().is_empty()
                 && self.summary.len() <= 1000
-                && matches!(self.basis.as_str(), "operator_semantic" | "observed_checks")
+                && matches!(
+                    self.basis.as_str(),
+                    "operator_semantic" | "observed_checks" | "observed_failure"
+                )
                 && self.check_refs.len() <= 32,
             "invalid_diagnosis"
         );
+        if self.basis == "observed_failure" {
+            ensure!(
+                !self.same_goal_replan
+                    && !self.check_refs.is_empty()
+                    && self.check_refs.iter().all(|id| bounded_id(id)
+                        && crate::continuation::observed_failure_current(control, id)),
+                "diagnosis_failure_unproved"
+            );
+            return Ok(());
+        }
         ensure!(
             self.check_refs.iter().all(|id| bounded_id(id)
                 && control.checks.iter().any(|check| &check.id == id
@@ -497,11 +510,12 @@ impl Control {
         if self.run_control == RunControl::Converged {
             self.run_control = RunControl::Quiescent;
         }
-        if self
-            .diagnosis
-            .as_ref()
-            .is_some_and(|diagnosis| diagnosis.basis == "observed_checks")
-        {
+        if self.diagnosis.as_ref().is_some_and(|diagnosis| {
+            matches!(
+                diagnosis.basis.as_str(),
+                "observed_checks" | "observed_failure"
+            )
+        }) {
             self.diagnosis = None;
         }
         for check in &mut self.checks {
