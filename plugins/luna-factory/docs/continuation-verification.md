@@ -10,7 +10,7 @@ A valid report still needs semantic judgment from the owner; the Factory neither
 
 Each new attempt is recorded before contacting the same native owner. Direct startup and reconciliation reads cannot replay a continuation directive. After read-only correlation reattaches an observer to an active dispatch, a genuinely subsequent live completion can request a new attempt under all guards. Genuine decisions still pause; exact answer retries return the same run without duplicate inference. Unknown effects/liveness or acknowledgement retain the claim.
 
-See the [wire contract](control-wire.md#bounded-owner-continuation-lf-07) and [design](../../../../docs/superpowers/specs/2026-10-08-luna-continuation-design.md).
+See the [wire contract](control-wire.md#bounded-owner-continuation-lf-07) and [design](../../../docs/superpowers/specs/2026-10-08-luna-continuation-design.md).
 
 ## Exact source and tests
 
@@ -38,7 +38,8 @@ The implementation was independently reviewed for claims, generations, source/ev
 
 - `1045ebb1407eaf995459e62c9b48fdcb6008d832` enforces the compiled graph demo in hosted CI and marks LF-05 execution qualification deferred. All four checks passed on that head.
 - `84856562e9a0aaac4dbedf82fe60c44d38333188` fixes the reproduced in-flight context-clear race. Local typecheck/build and 123 UI/host/demo tests passed. A post-acknowledgment bare null remains an uncorrelated removal, as documented in the host contract.
-- Both changes remain in draft PR #62; LF-07 is a separate stacked draft.
+- All four hosted checks passed on final PR #62 head `84856562e9a0aaac4dbedf82fe60c44d38333188`: [Luna Factory](https://github.com/joshyorko/plugins/actions/runs/37846183865) includes the compiled-server demo; [Bootstrap Smoke](https://github.com/joshyorko/plugins/actions/runs/37846183743) includes Linux and Windows validation.
+- Both changes remain in draft [PR #62](https://github.com/joshyorko/plugins/pull/62); LF-07 is separate stacked draft [PR #63](https://github.com/joshyorko/plugins/pull/63).
 
 ## Remaining acceptance and rollback
 
