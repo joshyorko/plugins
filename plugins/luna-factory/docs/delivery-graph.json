@@ -239,7 +239,10 @@
         "plugins/luna-factory/server/src/lifecycle.rs",
         "plugins/luna-factory/server/src/control.rs",
         "plugins/luna-factory/server/src/store.rs",
-        "plugins/luna-factory/server/tests/factory_integration.rs"
+        "plugins/luna-factory/server/tests/factory_integration.rs",
+        "plugins/luna-factory/server/src/continuation.rs",
+        "plugins/luna-factory/server/tests/continuation.rs",
+        "plugins/luna-factory/server/tests/continuation_policy.rs"
       ],
       "acceptance": [
         "Two necessary tasks continue after verified settlement with zero external resume calls.",
@@ -247,7 +250,7 @@
         "Crash before/after acknowledgement reconciles before effects; unknown remains held.",
         "A genuine operator decision pauses once and an idempotent answer continues the same intent."
       ],
-      "status": "ready_for_fixture_implementation",
+      "status": "implemented_verified_fixture_live_execution_unqualified",
       "existing_issue": "https://github.com/joshyorko/plugins/issues/61",
       "implementation_cycle": [
         "Read current repository instructions and rebase this source-pinned proposal on the actual target head.",
@@ -259,8 +262,12 @@
       "implementation_notes": [
         "Reuse plugins#61; continue through the existing same-owner dispatch boundary only after verified settlement.",
         "Do not convert planning-only graphs into executable runs; explicit execution admission remains separate.",
-        "No new scheduler or queue. Preserve original deadline, repair lineage, READY gating, decision fingerprints and held-claim recovery."
-      ]
+        "No new scheduler or queue. Preserve original deadline, repair lineage, READY gating, decision fingerprints and held-claim recovery.",
+        "Live completion may execute an explicit validated one-step directive; direct recovery remains read-only and cannot replay it.",
+        "Fresh necessary READY tasks do not spend repair budget; repairs require exact current independently observed failure and retain original lineage/deadline."
+      ],
+      "live_execution_acceptance": "not_performed",
+      "verification_document": "continuation-verification.md"
     },
     {
       "id": "LF-08",
@@ -513,10 +520,10 @@
     "graph-host-evidence.md",
     "graph-backend-evidence.md",
     "control-wire.md",
-    "graph-verification.md"
+    "graph-verification.md",
+    "continuation-verification.md"
   ],
   "ready_next_nodes": [
-    "LF-07",
     "LF-08"
   ],
   "documentation_decisions": [
@@ -530,5 +537,8 @@
     }
   ],
   "verification_document": "graph-verification.md",
-  "implementation_commit": "5491033cd1ee4fd6a1676a0d0e69e70eae60c01c"
+  "implementation_commit": "5491033cd1ee4fd6a1676a0d0e69e70eae60c01c",
+  "continuation_implementation_commit": "37e513795127289796fe4032c5578671d4d21229",
+  "graph_followup_commit": "84856562e9a0aaac4dbedf82fe60c44d38333188",
+  "continuation_branch": "feat/luna-factory-bounded-continuation"
 }

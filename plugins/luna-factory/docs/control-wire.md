@@ -198,3 +198,36 @@ by this slice. Live replacement remains blocked while original cessation is unkn
 ### Context clear ordering
 
 The bridge tracks each outstanding write as clear or attachment. While an app-originated clear is still awaiting acknowledgment, its first null notification cannot suppress a newer explicit selection queued behind that write. A second null, or a null without such a newer selection, remains a removal. No expected-clear token survives acknowledgment. Since the host's bare null has no update ID, a post-acknowledgment null is treated as removal even if a host delayed it; the bridge cannot infer undocumented causal order. Nonempty writes racing genuine removal still settle and clear again.
+
+## Bounded owner continuation (LF-07)
+
+Native owner reports now include a required nullable `continuation` field. Null
+means stop; older reports without the field also stop. A non-null request is:
+
+```json
+{"kind":"next","task_id":"admitted-task","diagnosis":null}
+```
+
+or `kind: "repair"` with `diagnosis: {summary, check_refs}`. The server accepts a
+request only from a live completed owner event with a validated current-subject
+QUIESCENT report, explicit null blocker, and no pending decision. It revalidates
+repository identity/authority, source, stopped owner/descendants/terminals, claim,
+dependencies, effects, deadline and attempt bounds. The requested task must match
+the admitted selection. Next work must be necessary, READY and never attempted.
+Repair must concern the just-returned task and exact current failed observations;
+its retained diagnosis is server-labelled `observed_failure`. Model text cannot
+supply operator-semantic authority or reset any budget.
+
+The existing journal records terminal settlement, diagnosis and the next dispatch
+intent before `turn/start`. The attempt retains lineage and increments only the
+dispatch generation. The existing observer is retained, including notifications
+that arrive before acknowledgement. An unknown acknowledgement holds the claim
+and requires correlation of that same dispatch. Direct recovery/startup/reconcile
+never executes a report's continuation request. A subsequently observed live
+completion of an exactly correlated active dispatch can request new work normally.
+
+The model and app still read/control the same canonical run revision. No new MCP
+tool, scheduler or execution backend is added. Manual continuation of a fresh
+admitted task also no longer consumes repair allowance; existing decision-answer
+idempotency remains unchanged. Legacy unstamped runs retain manual recovery but
+cannot enter new automatic continuation. Planning-only records never dispatch.
