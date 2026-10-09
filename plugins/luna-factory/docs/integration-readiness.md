@@ -2,6 +2,8 @@
 
 Assessment date: October 8, 2026. **Feature development is frozen after bounded LF-08.** Code acceptance and live-deployment acceptance are separate. No merge, tag, deployment, production configuration change, real worker dispatch or preserved-owner reconciliation was performed.
 
+**Maintainer update, October 9, 2026:** the maintainer explicitly authorized finishing release-blocking fixes, merging #60 → #62 → #63 → #64 after exact-source checks and independent review, publishing the installable `0.2.0` package from `main`, and coordinating safe Dakota/Cutover activation. This supersedes the historical approval and draft-retention restrictions in this assessment; see the [audited decision in #59](https://github.com/joshyorko/plugins/issues/59#issuecomment-6089593813). It does not broaden the Factory owner's runtime authority or waive execution ownership, backup, callback, host-acceptance, security, or CI gates. The October 8 evidence below remains a historical snapshot; release and activation receipts must identify their actual later source and outcomes.
+
 ## Stack and code-merge gates
 
 | PR | Exact implementation/head inspected | Base | Exact-head evidence |

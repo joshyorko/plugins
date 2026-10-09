@@ -329,3 +329,76 @@ async fn terminal_identity_is_validated_and_refreshed_before_targeted_stop() {
     );
     c.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn dispatch_guard_rechecks_deadline_after_each_native_preflight() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    for operation in ["thread/start", "turn/start"] {
+        let c = client().await;
+        let dir = tempfile::tempdir().unwrap();
+        let entered = dir.path().join("entered");
+        let release = dir.path().join("release");
+        let skill = dir.path().join("luna-factory/SKILL.md");
+        std::fs::create_dir(skill.parent().unwrap()).unwrap();
+        std::fs::write(&skill, "Synthetic canonical skill").unwrap();
+        c.request(
+            "test/preflightBarrier",
+            json!({
+                "method":if operation == "thread/start" {"model/list"} else {"thread/read"},
+                "entered":entered,"release":release
+            }),
+        )
+        .await
+        .unwrap();
+        // A controlled wall clock advances only once the native read is in
+        // flight. This exercises expiry without a 30-second integration sleep.
+        let clock = AtomicU64::new(99);
+        let original_deadline = 100;
+        let guard = || {
+            anyhow::ensure!(
+                clock.load(Ordering::SeqCst) < original_deadline,
+                "time_budget_exhausted"
+            );
+            Ok(())
+        };
+        let dispatch = async {
+            if operation == "thread/start" {
+                c.start_thread_guarded(dir.path(), "high", 1, &guard).await
+            } else {
+                c.start_skill_turn_with_id_guarded(
+                    "owner",
+                    &skill,
+                    "Bounded test",
+                    "high",
+                    None,
+                    Some("dispatch-one"),
+                    &guard,
+                )
+                .await
+            }
+        };
+        let advance_clock = async {
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while !entered.exists() {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+            clock.store(original_deadline, Ordering::SeqCst);
+            std::fs::write(&release, "").unwrap();
+        };
+        let (result, ()) = tokio::join!(dispatch, advance_clock);
+        assert_eq!(result.unwrap_err().to_string(), "time_budget_exhausted");
+        let counts = c.request("counts", json!({})).await.unwrap();
+        assert!(
+            counts[operation].is_null(),
+            "expired {operation} reached native transport"
+        );
+        assert!(
+            !c.is_closed(),
+            "refusal before writing must preserve read-only reconciliation"
+        );
+        c.shutdown().await.unwrap();
+    }
+}

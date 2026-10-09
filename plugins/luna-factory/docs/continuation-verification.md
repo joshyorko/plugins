@@ -10,7 +10,7 @@ A valid report still needs semantic judgment from the owner; the Factory neither
 
 Each new attempt is recorded before contacting the same native owner. Direct startup and reconciliation reads cannot replay a continuation directive. After read-only correlation reattaches an observer to an active dispatch, a genuinely subsequent live completion can request a new attempt under all guards. Genuine decisions still pause; exact answer retries return the same run without duplicate inference. Unknown effects/liveness or acknowledgement retain the claim.
 
-See the [wire contract](control-wire.md#bounded-owner-continuation-lf-07) and [design](../../../docs/superpowers/specs/2026-10-08-luna-continuation-design.md).
+See the [wire contract](control-wire.md#bounded-owner-continuation-lf-07) and [design](https://github.com/joshyorko/plugins/blob/d97e8f263bed9b710301d1d9804611d3e2df39b7/docs/superpowers/specs/2026-10-08-luna-continuation-design.md).
 
 ## Exact source and tests
 

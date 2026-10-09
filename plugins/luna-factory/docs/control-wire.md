@@ -95,6 +95,8 @@ The recoverable live Cutover package/database stays at 6cc2062 until a complete
 exact tested production-path checkpoint is safe to use. No real first run,
 ChatGPT-side registration, merge, release or deployment is performed by the swarm.
 
+This is historical swarm evidence. The [October 9 maintainer decision](https://github.com/joshyorko/plugins/issues/59#issuecomment-6089593813) authorizes verified integration, release and safe activation; it does not prove cessation of that preserved owner or permit replacing its service while ownership is unknown. See [integration readiness](integration-readiness.md) for the separate code and live acceptance gates.
+
 
 ## Planning graph contract, LF-01 through LF-06
 

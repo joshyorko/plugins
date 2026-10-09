@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import struct
@@ -21,6 +22,11 @@ METADATA = (
     "docs/package.md", "docs/local-service.md", "docs/repository-onboarding.md",
     "docs/control-adoption.md", "docs/control-plan.md", "docs/control-wire.md",
     "docs/dogfood-recovery.md",
+    "docs/integration-readiness.md", "docs/stack-ci-evidence.json",
+    "docs/rollback-verification.json", "docs/cas-verification.md",
+    "docs/cas-verification-results.txt", "docs/cas-runtime-evidence.json",
+    "docs/graph-backend-evidence.md", "docs/continuation-verification.md",
+    "docs/continuation-verification-results.txt",
     "assets/logo.svg", "assets/logo.png",
 )
 SKILL_FILES = (
@@ -118,6 +124,22 @@ class PackageRuntimeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((second / "SHA256SUMS").read_bytes(), (self.output / "SHA256SUMS").read_bytes())
         self.assertEqual((second / "runtime-receipt.json").read_bytes(), (self.output / "runtime-receipt.json").read_bytes())
+
+    def test_staged_operator_runbooks_have_resolvable_local_links(self):
+        result = self.run_package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        runbooks = [self.output / "README.md", *sorted((self.output / "docs").glob("*.md"))]
+        checked = 0
+        for document in runbooks:
+            for target in re.findall(r"\]\(([^)]+)\)", document.read_text()):
+                if re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:|#", target):
+                    continue
+                path = (document.parent / target.split("#", 1)[0]).resolve()
+                with self.subTest(document=str(document.relative_to(self.output)), target=target):
+                    self.assertTrue(path.is_relative_to(self.output), "local runbook link escapes installed package")
+                    self.assertTrue(path.is_file(), "local runbook dependency is absent from staged package")
+                checked += 1
+        self.assertGreater(checked, 10, "fixture must exercise real operator documentation")
 
     def test_missing_binary_is_rejected(self):
         self.binary.unlink()

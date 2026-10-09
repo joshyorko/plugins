@@ -20,6 +20,8 @@ model supplies the same action availability to MCP guards and the ChatGPT UI.
 
 ## Global constraints
 
+Historical implementation constraints below describe the original swarm. The [October 9 maintainer decision](https://github.com/joshyorko/plugins/issues/59#issuecomment-6089593813) supersedes their merge/release/activation prohibitions for the verified Luna Factory stack. Preserve the unknown owner and held claim; safe activation still requires the recovery and acceptance gates in [integration readiness](integration-readiness.md).
+
 - Baseline `6cc2062070f0ee6b7e8c51422580bd0743f972bb`; preserve onboarding/branding/tests.
 - Review and Changeplane are read-only donors, never runtime dependencies.
 - One authoritative SQLite state and native Codex execution owner.
