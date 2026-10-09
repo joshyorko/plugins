@@ -1,0 +1,18 @@
+{
+  "canonical_skill_sha256": "c03d30a21a67cf9a63e4262a4fbac172e53682e73c5bb12e6998950b736b1c74",
+  "codex_version": "codex-cli 0.159.2",
+  "native": {
+    "blocker": "state_runtime_initialization_failed",
+    "effective_routing": "unverified",
+    "failed_phase": "initialize",
+    "inference_calls": 0,
+    "process_exit_code": 1,
+    "profile_evidence": "inherited_config",
+    "read_only_requests": [
+      "initialize"
+    ],
+    "status": "blocked"
+  },
+  "protocol_generated_from_installed_binary": true,
+  "required_methods_present": true
+}

@@ -9,11 +9,11 @@ description: Use when a substantial objective has potentially independent workst
 
 The current Luna owner keeps the outcome; use the cheapest sufficient current Luna effort for delegated work and reserve stronger effort for a named unresolved need. Delegate only when delegation is cheaper than doing the work locally. Sol is a bounded exceptional interrupt, never the resident manager.
 
-This skill is an orchestration methodology. It does not authorize use of any runtime, command, tool namespace, extension, or product merely because it is also named Luna Factory. `luna_factory_*`, `/factory`, and Review Factory surfaces are not invoked unless the user explicitly asks to use that runtime for the current objective. Requests to use this skill, agents, delegation, fan-out, convergence, or unattended work are not runtime authorization. The standalone plugin uses native host/Codex collaboration primitives.
+This skill is the canonical orchestration policy of the Luna Factory plugin, which also bundles the local Rust runtime and MCP Apps workbench. Direct skill invocation uses native host/Codex collaboration primitives. Installing the plugin or asking to use this skill, agents, delegation, fan-out, convergence, or unattended work does not authorize runtime actions. Invoke Luna Factory runtime tools only when the user explicitly asks to use that runtime for the current objective. This authority does not extend to another runtime merely because its name is similar, including `luna_factory_*`, `/factory`, or Review Factory surfaces.
 
 For the current rollout, request `gpt-6-luna` only when the live Codex catalog exposes that exact model. This operational target is not a permanent generation policy: never silently substitute an older Luna, Sol, Astra, Terra, `/fast`, or another family when it is unavailable.
 
-Use native Codex collaboration primitives directly. Do not require another orchestration skill, daemon, database, broker, or repository telemetry file.
+Use native Codex collaboration primitives directly. Direct skill use does not require starting the bundled runtime. In an explicitly requested runtime-managed run, the Rust service owns durable identity, lifecycle, and evidence records while the native Luna owner retains semantic orchestration. Do not require another orchestration skill or write runtime state into target repositories.
 
 ## Capability gate
 

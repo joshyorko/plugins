@@ -1,0 +1,27 @@
+{
+  "claim_identity": "/tmp/.tmpR6HgiF/repo/.git",
+  "events": [
+    {
+      "envelope": "{\"kind\":\"admission\"}",
+      "event_id": "admission",
+      "fingerprint": "da4b935dd043ace0365fff61900b1ff0460654765b1a2afb235b051dc6d5408d",
+      "revision": 0,
+      "snapshot_sha256": "da4b935dd043ace0365fff61900b1ff0460654765b1a2afb235b051dc6d5408d"
+    },
+    {
+      "envelope": "{\"expected_revision\":0,\"kind\":\"snapshot\"}",
+      "event_id": "7b16d051-9074-4be4-8ea2-9bf634776b55",
+      "fingerprint": "3ed6d1f335ad609287d2ec9e3f59e8bc8027398134ddcfcb7eb52ddc5d38106a",
+      "revision": 1,
+      "snapshot_sha256": "3ed6d1f335ad609287d2ec9e3f59e8bc8027398134ddcfcb7eb52ddc5d38106a"
+    }
+  ],
+  "fingerprint": "008ff0532ed2532fc24e9512f34edbbc34863eb4de4093a328c43983dbeca37b",
+  "id": "d4f0b523-cb10-4773-a625-6d003e303eab",
+  "idem": "v1-encoder",
+  "payload": "{\"id\":\"d4f0b523-cb10-4773-a625-6d003e303eab\",\"request\":{\"repository\":\"fixture\",\"objective\":\"Synthetic v1 migration capture\",\"acceptance\":[\"Retain actual old encoding\"],\"non_goals\":[],\"finish\":\"local_candidate\",\"profile\":\"default\",\"capacity\":1,\"repair_attempts\":3,\"wall_seconds\":600,\"idempotency_key\":\"v1-encoder\"},\"canonical_root\":\"/tmp/.tmpR6HgiF/repo\",\"repository_identity\":\"/tmp/.tmpR6HgiF/repo/.git\",\"state\":\"NEEDS_INPUT\",\"base_head\":\"50f0ca54f326a0801f1deb3381809737102a38a0\",\"current_subject\":\"50f0ca54f326a0801f1deb3381809737102a38a0:fb8b9ba2480856fb90da890d6f38d53bfdc06aa28a7f59b6c74bf10e61b0c050\",\"thread_id\":\"synthetic-v1-owner\",\"dispatch_phase\":\"turn_start_pending\",\"dispatch_id\":\"synthetic-v1-dispatch-3\",\"turn_id\":null,\"owned_threads\":[\"synthetic-v1-child\"],\"active_threads\":[\"synthetic-v1-child\"],\"owned_commands\":{\"synthetic-v1-child:command\":false},\"command_processes\":{},\"terminal_stop_attempts\":{\"synthetic-v1-child:command\":\"outcome_unknown\"},\"generation\":3,\"repairs_used\":2,\"counted_failures\":[],\"pending_decision\":{\"id\":\"pending-v1-decision\",\"question\":\"Choose the bounded in-scope option\"},\"answered_decisions\":{\"consumed-v1-decision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"created_at\":1791310704,\"updated_at\":1791310704,\"deadline_at\":1791311304,\"delta\":\"Run admitted. Native owner has not started.\",\"blocker\":null,\"remaining_gap\":\"Mandatory acceptance needs current owner verification\",\"skill_sha256\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"observed_model\":null,\"observed_effort\":null,\"configured_model\":\"gpt-6-luna\",\"configured_effort\":\"high\",\"requested_effort\":\"high\",\"configured_provider\":\"inherited-fixture\",\"route_observations\":[],\"claim_held\":true,\"control\":{\"schema_version\":1,\"revision\":1,\"intent_generation\":1,\"dispatch_generation\":3,\"current_subject\":\"50f0ca54f326a0801f1deb3381809737102a38a0:fb8b9ba2480856fb90da890d6f38d53bfdc06aa28a7f59b6c74bf10e61b0c050\",\"assumptions\":{},\"tasks\":{\"objective\":{\"id\":\"objective\",\"criteria\":[\"A1\"],\"dependencies\":[],\"assumptions\":{},\"subject\":\"50f0ca54f326a0801f1deb3381809737102a38a0:fb8b9ba2480856fb90da890d6f38d53bfdc06aa28a7f59b6c74bf10e61b0c050\",\"necessity\":\"explicit_user_objective\",\"effects\":[\"native_owner_turn\"],\"claim\":\"owned\",\"state\":\"ready\",\"native_thread\":null}},\"attempts\":[{\"id\":\"synthetic-v1-dispatch-3\",\"task_id\":\"objective\",\"parent\":null,\"intent_generation\":1,\"dispatch_generation\":3,\"source_subject\":\"50f0ca54f326a0801f1deb3381809737102a38a0:fb8b9ba2480856fb90da890d6f38d53bfdc06aa28a7f59b6c74bf10e61b0c050\",\"assumptions\":{},\"phase\":\"intent_unknown\",\"turn_id\":null,\"certified_before\":0,\"diagnosis\":null}],\"criteria\":[{\"id\":\"A1\",\"accepted\":false,\"check_refs\":[],\"subject\":null,\"reason\":\"evidence_missing\"}],\"checks\":[],\"repair_limit\":3,\"repairs_used\":2,\"deadline_at\":1791311304,\"no_progress_attempts\":0,\"diagnosis\":null,\"replan_used\":false,\"child_policy\":\"cooperative_unverified\",\"migrated\":false,\"effects\":[{\"id\":\"synthetic-v1-uncertain-resume\",\"kind\":\"native_thread_resume\",\"status\":\"unknown\"}]}}",
+  "producer_commit": "822cdf81ca3d52e5dd17ee74340d1621707db7a8",
+  "root": "/tmp/.tmpR6HgiF/repo",
+  "scope": "Actual schema-v1 encoder; synthetic identities, no native runtime proof",
+  "state": "NEEDS_INPUT"
+}

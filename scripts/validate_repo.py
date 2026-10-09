@@ -114,6 +114,14 @@ def validate_portable_manifest(plugin_root: Path) -> dict:
     return manifest
 
 
+def validate_openai_metadata(portable: dict, compatibility: dict, plugin_name: str) -> None:
+    openai_extension = portable.get("extensions", {}).get("com.openai")
+    if openai_extension is None:
+        return
+    if openai_extension.get("interface", {}) != compatibility.get("interface", {}):
+        fail(f"portable and Codex OpenAI interface differs for {plugin_name}")
+
+
 def contained_plugin_path(plugin_root: Path, value: str, field: str) -> Path:
     if not value.startswith("./"):
         fail(f"{field} must start with './': {value}")
@@ -580,6 +588,7 @@ def main() -> int:
                 fail(f"Codex and portable plugin metadata differ for {plugin['name']}: {field}")
         if codex_manifest.get("skills") != "./skills/":
             fail(f"Codex skills path must preserve portable fixed discovery for {plugin['name']}")
+        validate_openai_metadata(portable_manifest, codex_manifest, plugin["name"])
         validate_mcp_surfaces(plugin_root, codex_manifest)
         validate_hermes_plugin(plugin_root, plugin, codex_manifest)
 

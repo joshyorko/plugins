@@ -292,6 +292,39 @@ class AgentPluginManifestTest(unittest.TestCase):
         )
         return plugin_root
 
+    def test_accepts_matching_portable_and_compatibility_openai_interface(self) -> None:
+        interface = {"displayName": "Luna Factory", "defaultPrompt": ["Use $luna-factory"]}
+        validate_repo.validate_openai_metadata(
+            {"extensions": {"com.openai": {"interface": interface}}},
+            {"interface": interface},
+            "luna-factory",
+        )
+
+    def test_rejects_portable_and_compatibility_openai_interface_drift(self) -> None:
+        with self.assertRaises(SystemExit) as error:
+            validate_repo.validate_openai_metadata(
+                {"extensions": {"com.openai": {"interface": {"displayName": "Canonical"}}}},
+                {"interface": {"displayName": "Stale"}},
+                "luna-factory",
+            )
+        self.assertIn("OpenAI interface differs", str(error.exception))
+
+    def test_preserves_compatibility_interface_without_portable_extension(self) -> None:
+        validate_repo.validate_openai_metadata(
+            {"extensions": {"org.example": {}}},
+            {"interface": {"displayName": "Legacy plugin"}},
+            "legacy-plugin",
+        )
+
+    def test_rejects_compatibility_interface_when_portable_extension_omits_it(self) -> None:
+        with self.assertRaises(SystemExit) as error:
+            validate_repo.validate_openai_metadata(
+                {"extensions": {"com.openai": {}}},
+                {"interface": {"displayName": "Ignored interface"}},
+                "luna-factory",
+            )
+        self.assertIn("OpenAI interface differs", str(error.exception))
+
     def test_rejects_missing_portable_schema(self) -> None:
         plugin_root = self.make_plugin({"name": "test-plugin"})
 

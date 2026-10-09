@@ -1,6 +1,6 @@
 {
   "name": "luna-factory",
-  "version": "0.1.0",
-  "description": "Luna-first orchestration for economical delegation, bounded escalation, and evidence-backed completion.",
+  "version": "0.2.0",
+  "description": "Luna-first orchestration with a local Rust control plane, durable runs, and an MCP Apps workbench.",
   "kind": "standalone"
 }

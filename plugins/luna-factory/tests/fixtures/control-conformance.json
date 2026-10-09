@@ -1,0 +1,242 @@
+{
+  "schema_version": 1,
+  "scope": "eight matching donor invariants plus two explicitly Plugins-specific stronger rules; source tests are not native/runtime acceptance",
+  "intentional_differences": [
+    "Standalone native cancellation requires descendant/thread/terminal observations and cannot release unknown writers by ledger quiescence.",
+    "Supported same-thread decision/repair continuation stays in the same intent generation while dispatch generation advances; Changeplane terminal-new-plan rule is not copied.",
+    "Changeplane Python scheduling, recursive dependency evaluator without cycle guard, and same-key-only receipt reuse are excluded.",
+    "Native task/pre-spawn/action enforcement remains cooperative/unverified; observed identities are not execution proof."
+  ],
+  "cases": [
+    {
+      "id": "stale_revision",
+      "donor": {
+        "repository": "joshyorko/review",
+        "sha": "6b18ff1c35df4eb144a61add9c69271484195c02",
+        "path": "tests/luna_factory.test.ts",
+        "symbol": "stale expectedRevision rejection",
+        "line": 800
+      },
+      "input": {
+        "current_revision": 4,
+        "expected_revision": 3
+      },
+      "expected": {
+        "accepted": false,
+        "effects_executed": 0
+      },
+      "scope": "matching_invariant_with_explicit_mapping"
+    },
+    {
+      "id": "duplicate_event_conflict",
+      "donor": {
+        "repository": "joshyorko/plugins",
+        "sha": "94b444f67c32db064e4e97c3ccb3161cc1454306",
+        "path": "plugins/luna-factory/server/tests/control.rs",
+        "symbol": "sqlite_rejects_stale_writers_and_duplicate_event_payload_conflicts",
+        "line": 214
+      },
+      "input": {
+        "event_id": "event-1",
+        "first_payload": "dispatch-1",
+        "second_payload": "different-subject"
+      },
+      "expected": {
+        "accepted": false,
+        "state_overwritten": false
+      },
+      "scope": "plugins_specific_stronger_rule",
+      "note": "Review proves duplicate native identity observation, not same-event-id different-payload fingerprint conflict; this case is intentionally Plugins-specific."
+    },
+    {
+      "id": "unknown_effect_repair",
+      "donor": {
+        "repository": "joshyorko/review",
+        "sha": "6b18ff1c35df4eb144a61add9c69271484195c02",
+        "path": "tests/luna_factory_projection.test.ts",
+        "symbol": "unknown external effects expose reconciliation only",
+        "line": 211
+      },
+      "input": {
+        "effect": "pr_create",
+        "settlement": "unknown",
+        "repair_attempts_remaining": 2
+      },
+      "expected": {
+        "repair_allowed": false,
+        "reconciliation_available": true
+      },
+      "note": "Matches donor unknown PR effect retry denial. Native dispatch no-replay is separately tested in Plugins recovery cases.",
+      "scope": "matching_invariant_with_explicit_mapping"
+    },
+    {
+      "id": "dispatch_generation_same_goal",
+      "donor": {
+        "repository": "joshyorko/plugins",
+        "sha": "94b444f67c32db064e4e97c3ccb3161cc1454306",
+        "path": "plugins/luna-factory/server/tests/control.rs",
+        "symbol": "revisions_dispatch_generations_and_return_do_not_certify_completion",
+        "line": 8
+      },
+      "input": {
+        "intent_generation": 1,
+        "dispatch_generation": 1,
+        "new_dispatch_generation": 2
+      },
+      "expected": {
+        "intent_generation": 1,
+        "dispatch_generation": 2,
+        "budget_reset": false
+      },
+      "scope": "plugins_specific_namespace_mapping",
+      "note": "Review has attempt generation, not this separate intent/dispatch namespace. Do not call this cross-implementation conformance."
+    },
+    {
+      "id": "admission_missing_dependency",
+      "donor": {
+        "repository": "joshyorko/review",
+        "sha": "6b18ff1c35df4eb144a61add9c69271484195c02",
+        "path": "tests/luna_factory.test.ts",
+        "symbol": "missing or incomplete prerequisite defers",
+        "line": 185
+      },
+      "input": {
+        "candidate": "task-A",
+        "criteria": [
+          "A1"
+        ],
+        "dependencies": [
+          "missing"
+        ]
+      },
+      "expected": {
+        "ready": false,
+        "dispatch_allowed": false
+      },
+      "scope": "matching_invariant_with_explicit_mapping"
+    },
+    {
+      "id": "admission_cycle",
+      "donor": {
+        "repository": "joshyorko/review",
+        "sha": "6b18ff1c35df4eb144a61add9c69271484195c02",
+        "path": "tests/luna_factory.test.ts",
+        "symbol": "a dependency cycle escalates instead of dispatching a tangle",
+        "line": 196
+      },
+      "input": {
+        "candidate": "T2",
+        "dependencies": [
+          "T3"
+        ],
+        "known_tasks": [
+          {
+            "id": "T3",
+            "dependencies": [
+              "T2"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "ready": false,
+        "dispatch_allowed": false
+      },
+      "scope": "matching_invariant_with_explicit_mapping"
+    },
+    {
+      "id": "admission_stale_assumption",
+      "donor": {
+        "repository": "joshyorko/plugins",
+        "sha": "2bec221f0158ac8ef21a31324b2547b034d4dc4e",
+        "path": "plugins/changeplane/skills/changeplane/tests/fixtures/semantic_cases.json",
+        "symbol": "stale assumption admitted",
+        "line": 27
+      },
+      "input": {
+        "state": "UNKNOWN",
+        "fresh": false,
+        "movement": "CANDIDATE",
+        "reconcile": "stale",
+        "requested_admission": "READY"
+      },
+      "expected": {
+        "ready": false,
+        "dispatch_allowed": false
+      },
+      "scope": "matching_invariant_with_explicit_mapping"
+    },
+    {
+      "id": "admission_foreign_claim",
+      "donor": {
+        "repository": "joshyorko/review",
+        "sha": "6b18ff1c35df4eb144a61add9c69271484195c02",
+        "path": "tests/luna_factory.test.ts",
+        "symbol": "a second active writer on the same subject defers",
+        "line": 227
+      },
+      "input": {
+        "candidate": {
+          "id": "T2",
+          "effect": "write",
+          "subject": "subject-1"
+        },
+        "active_writer": {
+          "id": "T1",
+          "effect": "write",
+          "subject": "subject-1"
+        }
+      },
+      "expected": {
+        "ready": false,
+        "dispatch_allowed": false
+      },
+      "note": "Matching mutual exclusion invariant. Plugins also rejects an authoritative foreign claim; that stronger case remains separately tested.",
+      "scope": "matching_invariant_with_explicit_mapping"
+    },
+    {
+      "id": "evidence_wrong_binding",
+      "donor": {
+        "repository": "joshyorko/review",
+        "sha": "6b18ff1c35df4eb144a61add9c69271484195c02",
+        "path": "tests/luna_factory.test.ts",
+        "symbol": "task/attempt/generation/subject contradiction",
+        "line": 747
+      },
+      "input": {
+        "mismatches": [
+          "task",
+          "attempt",
+          "generation",
+          "subject"
+        ]
+      },
+      "expected": {
+        "criterion_proven": false
+      },
+      "note": "Intent/dispatch and assumption mismatches are additional Plugins tests, not the four-field donor binding case.",
+      "scope": "matching_invariant_with_explicit_mapping"
+    },
+    {
+      "id": "evidence_prose_only",
+      "donor": {
+        "repository": "joshyorko/review",
+        "sha": "6b18ff1c35df4eb144a61add9c69271484195c02",
+        "path": "tests/luna_factory.test.ts",
+        "symbol": "worker predicate without acceptance/observed evidence cannot finish",
+        "line": 554
+      },
+      "input": {
+        "worker_predicate_passed": true,
+        "verification_predicates": [],
+        "acceptance_predicates": [],
+        "observed_check_refs": []
+      },
+      "expected": {
+        "criterion_proven": false,
+        "converged": false
+      },
+      "scope": "matching_invariant_with_explicit_mapping"
+    }
+  ]
+}

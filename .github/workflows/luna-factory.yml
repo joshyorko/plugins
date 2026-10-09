@@ -1,0 +1,42 @@
+name: Luna Factory
+on:
+  pull_request:
+    paths:
+      - 'plugins/luna-factory/**'
+      - '.github/workflows/luna-factory.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/luna-factory/**'
+      - '.github/workflows/luna-factory.yml'
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/luna-factory/server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --locked --release
+      - name: Test local package staging
+        working-directory: .
+        run: python3 -m unittest discover -s plugins/luna-factory/tests -p 'test_package_runtime.py' -v
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --prefix plugins/luna-factory/ui
+      - run: npm run typecheck --prefix plugins/luna-factory/ui
+      - run: npm test --prefix plugins/luna-factory/ui
+      - run: npm run build --prefix plugins/luna-factory/ui
+      - name: Verify bundled UI parity
+        run: git diff --exit-code -- plugins/luna-factory/ui/dist/index.html
