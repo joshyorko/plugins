@@ -94,3 +94,107 @@ or restart the toolkit/Executor stack or claim those gates passed.
 The recoverable live Cutover package/database stays at 6cc2062 until a complete
 exact tested production-path checkpoint is safe to use. No real first run,
 ChatGPT-side registration, merge, release or deployment is performed by the swarm.
+
+
+## Planning graph contract, LF-01 through LF-06
+
+This slice adds five model-and-app tools. Total catalog: 20; model-visible: 13.
+All structured results now declare typed output schemas, including nested graph,
+control, presentation, settings and backend data. Existing native action methods
+retain their execution and evidence gates.
+
+| Tool | Input | Result |
+| --- | --- | --- |
+| `create_factory_graph` | Existing bounded `start_factory` request fields | `{graph, proposal:null}`; immutable planning-only record, no claim or native execution |
+| `get_factory_graph` | `run_id` | Same graph envelope, current ledger revision |
+| `get_factory_backends` | Empty object | Configuration-only target catalog, separate advertised/enabled/qualified operations, unknown authentication and entitlement |
+| `propose_factory_change` | `run_id`, required `expected_revision`, `idempotency_key`, typed `change` | Persisted proposal and revised graph |
+| `apply_factory_change` | `run_id`, `change_id`, required `expected_revision` | Applied proposal and revised graph; exact retry is a no-op |
+
+`graph` contains `run_id`, `revision`, `planning_only`, `repository`, `nodes`,
+`criteria`, `attempts`, `claim` and `changes`. Repository includes approved alias,
+opaque local identity, base commit and exact source subject. New records retain a
+local filesystem identity stamp as well as the original common-Git-directory claim
+identity. Replacing the root or Git directory at the same path invalidates graph
+mutation. Legacy records without this stamp are readable, but new graph mutations
+are denied until a future explicit qualification mechanism exists.
+
+Nodes project the existing Control task records. Additional `source` is nullable
+or `{provider,repository_id,item_id,revision}`; `repository_id` is the graph's
+opaque local repository binding, not a caller-selected filesystem path or a claim
+of authenticated GitHub provenance. Provider/item/revision strings are supplied
+source assertions. They confer no authority or accepted evidence. An external
+item ID can be qualified with its immutable forge repository ID. Reimporting an
+existing provider/repository/item at a new revision does not create another node.
+`target_preference` is nullable or a configured planning target ID.
+
+Changes are a closed tagged union:
+
+- `import_candidates`: `nodes` with id, title, criterion_ids, dependencies and source.
+- `set_dependencies`: `node_id` and explicit prerequisite IDs.
+- `set_target`: `node_id` and `target_id`.
+
+Imports remain CANDIDATE, without execution effects or owned claims. Dependency
+changes reject missing nodes, duplicate dependencies and cycles. Only unattempted
+candidate nodes are editable. Existing run ownership must be fully settled and
+released before graph mutations; an active or unknown native execution is never
+reassigned. Planning records can coexist beside an existing claim without touching
+it, and all native action APIs reject their immutable planning-only mode.
+
+Proposal actor is server-assigned `local_operator`, meaning the existing trusted
+loopback/tunnel boundary. It is not a claim of per-user OAuth authentication.
+There is no caller-provided actor/authorization field. Proposals bind source,
+revision and canonical payload digest in the existing SQLite control journal.
+Apply rechecks authorization and source, then performs one revision-fenced event.
+Neither proposal nor apply changes budgets, generations, acceptance or native
+identities. A planning run cannot later be converted into an executable run by
+changing preference or calling Resume.
+
+### Settings and app context
+
+The canonical settings update is now `{set:{...changedFields}}`; flat arguments
+are rejected. The result is `{values:{...allEffectiveFields}}`. Read retains
+`{schema,values}`. Partial updates merge atomically under one store lock. Invalid
+saved defaults fall back to current approved values; absent profiles omit the
+profile field and schema property. Deploy only matching server/UI bytes; an older
+flat-argument workbench is not compatible with this host-contract correction.
+
+Production `HostBridge` negotiates structured or text model context and uses the
+published `OpenAIExtensions.modelContext.getCurrent()`/`update()` lifecycle.
+Selection includes bounded run/node IDs and observed graph revision. Restored IDs
+are validated through graph reads; attached text is not workflow truth. Explicit
+host removal suppresses automatic refresh reattachment. Opaque update IDs suppress
+own echoes. Each mounted app keeps separate selection and attachment state; the
+extension does not promise cross-instance shared selection.
+
+Native-local is a planning preference only. The discovery catalog marks every
+execution route ineligible pending exact target/authentication/entitlement and
+lifecycle qualification. Existing native execution behavior is retained; this
+catalog does not retroactively certify it. CAS, experimental cloud CLI, newer
+Cloud and GitHub-mediated routes remain distinct and unsupported for dispatch.
+
+### Verification and integration handoff
+
+The opt-in `ui/test/graph_e2e.test.ts` runs the compiled Rust daemon with a temporary
+SQLite ledger, an isolated clone of this repository and no native executable. It
+imports the captured real issue #61, inspects through the model-filtered catalog,
+selects through the production controller, publishes node context through the
+actual App/AppBridge protocol, changes preference, and compares both interfaces'
+revision and audit state. This is a synthetic host, not live ChatGPT acceptance.
+
+Run after `cargo build --locked` and `npm run build`:
+
+```sh
+cd plugins/luna-factory/ui
+LUNA_GRAPH_E2E=1 npm test -- --run test/graph_e2e.test.ts
+```
+
+Toolkit PR #11 and any deployed host must refresh their exact source/catalog/schema
+pins to 20 total and 13 model-visible tools, preserve the settings wrapper and
+required graph revision fields, and qualify model context/remount/removal against
+the actual host. No tunnel, Executor, registration or production package is changed
+by this slice. Live replacement remains blocked while original cessation is unknown.
+
+### Context clear ordering
+
+The bridge tracks each outstanding write as clear or attachment. While an app-originated clear is still awaiting acknowledgment, its first null notification cannot suppress a newer explicit selection queued behind that write. A second null, or a null without such a newer selection, remains a removal. No expected-clear token survives acknowledgment. Since the host's bare null has no update ID, a post-acknowledgment null is treated as removal even if a host delayed it; the bridge cannot infer undocumented causal order. Nonempty writes racing genuine removal still settle and clear again.

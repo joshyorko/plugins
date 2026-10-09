@@ -1,0 +1,534 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-10-08",
+  "artifact_kind": "implementation_delivery_graph",
+  "execution_authorized": false,
+  "source_pins": {
+    "plugins": {
+      "repository": "joshyorko/plugins",
+      "ref": "refs/pull/60/head",
+      "sha": "1ccac51591d0466250448531632b82732ddac3fe",
+      "state": "open draft; not deployed by this audit"
+    },
+    "review": {
+      "repository": "joshyorko/review",
+      "ref": "self-hosted",
+      "sha": "dc5d35a42e689a697a1694301d59a4ee7caced99"
+    },
+    "codex_action_server": {
+      "repository": "joshyorko/codex-action-server",
+      "ref": "main",
+      "sha": "bf0b3823e033b9b5abd86904e0a565d6b3586206"
+    },
+    "actions": {
+      "repository": "joshyorko/actions",
+      "ref": "community",
+      "sha": "7c98236069171f57031218f938963238986293bd"
+    }
+  },
+  "constraints": [
+    "LF-01 through LF-06 implemented and tested on an isolated review branch; no real workers, deployment or production mutation.",
+    "Retain existing SQLite workflow authority and native execution ownership.",
+    "No blind retries, held-claim release or live-owner replacement.",
+    "Subscription-backed execution only when a legitimate supported path is qualified."
+  ],
+  "nodes": [
+    {
+      "id": "LF-01",
+      "title": "Freeze safety and host-contract baseline",
+      "depends_on": [],
+      "files": [
+        "plugins/luna-factory/server/tests/factory_integration.rs",
+        "plugins/luna-factory/server/tests/mcp_contract.rs",
+        "plugins/luna-factory/docs/control-wire.md"
+      ],
+      "acceptance": [
+        "Record exact native binary, generated schema, plugin head and transport identity.",
+        "Regression: absent loaded thread, failed turn and kill acknowledgement never release an uncertain claim.",
+        "Separate deterministic fixture, compiled transport, real host catalog and live execution evidence."
+      ],
+      "status": "implemented_verified_fixture_and_compiled_host",
+      "proposed_test_locations_verify_before_implementation": [
+        "plugins/luna-factory/server/tests/native_protocol.rs"
+      ],
+      "implementation_cycle": [
+        "Read current repository instructions and rebase this source-pinned proposal on the actual target head.",
+        "Add the named acceptance regressions and establish their failing baseline.",
+        "Implement the smallest change within the declared modules and shared contracts.",
+        "Run focused tests, then the affected repository package gates; disclose skips and fixture-only evidence.",
+        "Prepare a separately reviewable change and verified canonical documentation delta; no deployment authorization is implied."
+      ],
+      "live_host_acceptance": "not_performed",
+      "acceptance_scope": "Code and deterministic/compiled-host contracts; live ChatGPT acceptance remains separately blocked."
+    },
+    {
+      "id": "LF-02",
+      "title": "Complete MCP contracts and plugin settings",
+      "depends_on": [
+        "LF-01"
+      ],
+      "files": [
+        "plugins/luna-factory/server/src/mcp.rs",
+        "plugins/luna-factory/server/src/http.rs",
+        "plugins/luna-factory/ui/src/controller.ts",
+        "plugins/luna-factory/server/tests/mcp_contract.rs"
+      ],
+      "acceptance": [
+        "Every structured result validates against a declared outputSchema.",
+        "Native settings accepts the documented set envelope; custom workbench uses the same contract.",
+        "Compiled HTTP model-filtered catalog retains 13 model tools of 20 total; deployed host catalog requires separate acceptance.",
+        "Annotations and authorization are tested independently; native strict output objects remain closed."
+      ],
+      "status": "implemented_verified_fixture_and_compiled_host",
+      "proposed_test_locations_verify_before_implementation": [
+        "plugins/luna-factory/ui/test/protocol.test.ts"
+      ],
+      "implementation_cycle": [
+        "Read current repository instructions and rebase this source-pinned proposal on the actual target head.",
+        "Add the named acceptance regressions and establish their failing baseline.",
+        "Implement the smallest change within the declared modules and shared contracts.",
+        "Run focused tests, then the affected repository package gates; disclose skips and fixture-only evidence.",
+        "Prepare a separately reviewable change and verified canonical documentation delta; no deployment authorization is implied."
+      ],
+      "live_host_acceptance": "not_performed",
+      "acceptance_scope": "Code and deterministic/compiled-host contracts; live ChatGPT acceptance remains separately blocked."
+    },
+    {
+      "id": "LF-03",
+      "title": "Expose a repository-bound engineering graph",
+      "depends_on": [
+        "LF-01"
+      ],
+      "files": [
+        "plugins/luna-factory/server/src/control.rs",
+        "plugins/luna-factory/server/src/store.rs",
+        "plugins/luna-factory/server/src/presentation.rs",
+        "plugins/luna-factory/server/src/mcp.rs"
+      ],
+      "acceptance": [
+        "Proposed get_factory_graph returns bounded nodes, authoritative dependencies, current proof and claims.",
+        "Repository source identity includes immutable repository/item identifiers and exact source revision.",
+        "Importing an issue or inferred relation creates a candidate, never execution authority.",
+        "Existing SQLite history remains the only new-run workflow authority."
+      ],
+      "status": "implemented_verified_fixture_and_compiled_host",
+      "proposed_new_files": [
+        "plugins/luna-factory/server/src/graph.rs",
+        "plugins/luna-factory/server/tests/graph.rs"
+      ],
+      "implementation_cycle": [
+        "Read current repository instructions and rebase this source-pinned proposal on the actual target head.",
+        "Add the named acceptance regressions and establish their failing baseline.",
+        "Implement the smallest change within the declared modules and shared contracts.",
+        "Run focused tests, then the affected repository package gates; disclose skips and fixture-only evidence.",
+        "Prepare a separately reviewable change and verified canonical documentation delta; no deployment authorization is implied."
+      ],
+      "live_host_acceptance": "not_performed",
+      "acceptance_scope": "Code and deterministic/compiled-host contracts; live ChatGPT acceptance remains separately blocked."
+    },
+    {
+      "id": "LF-04",
+      "title": "Restore bidirectional conversational focus",
+      "depends_on": [
+        "LF-02",
+        "LF-03"
+      ],
+      "files": [
+        "plugins/luna-factory/ui/src/main.ts",
+        "plugins/luna-factory/ui/src/controller.ts",
+        "plugins/luna-factory/ui/src/domain.ts"
+      ],
+      "acceptance": [
+        "Node selection uses the documented Model-App Context helper; initialization/remount restores validated focus.",
+        "Cleared context is not silently reattached by refresh; stale updates and multiple app instances do not overwrite newer selection.",
+        "Context contains identifiers and observed revision, never authorization or claimed execution truth.",
+        "Unsupported hosts retain complete headless tools and honest fallback controls."
+      ],
+      "status": "implemented_verified_fixture_and_compiled_host",
+      "proposed_test_locations_verify_before_implementation": [
+        "plugins/luna-factory/ui/test/controller.test.ts",
+        "plugins/luna-factory/ui/test/protocol.test.ts"
+      ],
+      "implementation_cycle": [
+        "Read current repository instructions and rebase this source-pinned proposal on the actual target head.",
+        "Add the named acceptance regressions and establish their failing baseline.",
+        "Implement the smallest change within the declared modules and shared contracts.",
+        "Run focused tests, then the affected repository package gates; disclose skips and fixture-only evidence.",
+        "Prepare a separately reviewable change and verified canonical documentation delta; no deployment authorization is implied."
+      ],
+      "live_host_acceptance": "not_performed",
+      "acceptance_scope": "Code and deterministic/compiled-host contracts; live ChatGPT acceptance remains separately blocked."
+    },
+    {
+      "id": "LF-05",
+      "title": "Add capability and entitlement contracts",
+      "depends_on": [
+        "LF-01"
+      ],
+      "files": [
+        "plugins/luna-factory/server/src/backends.rs",
+        "plugins/luna-factory/server/tests/backends.rs",
+        "plugins/luna-factory/server/src/mcp.rs",
+        "plugins/luna-factory/ui/src/graph-view.ts"
+      ],
+      "acceptance": [
+        "Descriptors distinguish advertised, operator-enabled and qualified operations.",
+        "Execution identity includes backend/target/workspace/native IDs and capability snapshot.",
+        "Subscription-only policy rejects API-billed, unknown or changed routes; it never silently substitutes inference.",
+        "Read-only identity diagnostics do not start, authenticate or restart a daemon."
+      ],
+      "status": "planning_discovery_verified_execution_qualification_deferred",
+      "proposed_new_files": [
+        "plugins/luna-factory/server/src/backends/mod.rs",
+        "plugins/luna-factory/server/tests/backend_contract.rs"
+      ],
+      "implementation_cycle": [
+        "Read current repository instructions and rebase this source-pinned proposal on the actual target head.",
+        "Add the named acceptance regressions and establish their failing baseline.",
+        "Implement the smallest change within the declared modules and shared contracts.",
+        "Run focused tests, then the affected repository package gates; disclose skips and fixture-only evidence.",
+        "Prepare a separately reviewable change and verified canonical documentation delta; no deployment authorization is implied."
+      ],
+      "live_host_acceptance": "not_performed",
+      "acceptance_scope": "Configuration-only discovery and planning preference are verified. Backend execution identity, live auth and entitlement qualification remain LF-08 work.",
+      "deferred_execution_work": [
+        "Persist backend-independent execution identity and capability snapshots when LF-08 adds dispatch; planning graphs create no execution identity.",
+        "Authenticate and qualify subscription entitlement per exact target before enabling new backend execution; current discovery deliberately reports unknown."
+      ]
+    },
+    {
+      "id": "LF-06",
+      "title": "Guard graph and target preference changes",
+      "depends_on": [
+        "LF-02",
+        "LF-03",
+        "LF-05"
+      ],
+      "files": [
+        "plugins/luna-factory/server/src/control.rs",
+        "plugins/luna-factory/server/src/store.rs",
+        "plugins/luna-factory/server/src/lifecycle.rs",
+        "plugins/luna-factory/server/src/mcp.rs",
+        "plugins/luna-factory/ui/src/controller.ts",
+        "plugins/luna-factory/ui/src/view.ts"
+      ],
+      "acceptance": [
+        "Proposed propose_factory_change and apply_factory_change preserve revision, payload fingerprint, actor and authority.",
+        "Model and UI produce equivalent canonical events through the same effect boundary.",
+        "Preference changes do not dispatch, move an active execution, expand acceptance or reset budgets.",
+        "Active/unknown execution cannot be duplicated through a routing change."
+      ],
+      "status": "implemented_verified_fixture_and_compiled_host",
+      "implementation_cycle": [
+        "Read current repository instructions and rebase this source-pinned proposal on the actual target head.",
+        "Add the named acceptance regressions and establish their failing baseline.",
+        "Implement the smallest change within the declared modules and shared contracts.",
+        "Run focused tests, then the affected repository package gates; disclose skips and fixture-only evidence.",
+        "Prepare a separately reviewable change and verified canonical documentation delta; no deployment authorization is implied."
+      ],
+      "live_host_acceptance": "not_performed",
+      "acceptance_scope": "Code and deterministic/compiled-host contracts; live ChatGPT acceptance remains separately blocked."
+    },
+    {
+      "id": "LF-07",
+      "title": "Continue admitted work without routine manual resumes",
+      "depends_on": [
+        "LF-01"
+      ],
+      "files": [
+        "plugins/luna-factory/server/src/lifecycle.rs",
+        "plugins/luna-factory/server/src/control.rs",
+        "plugins/luna-factory/server/src/store.rs",
+        "plugins/luna-factory/server/tests/factory_integration.rs"
+      ],
+      "acceptance": [
+        "Two necessary tasks continue after verified settlement with zero external resume calls.",
+        "Repair preserves original lineage, diagnosis limits, deadline and acceptance.",
+        "Crash before/after acknowledgement reconciles before effects; unknown remains held.",
+        "A genuine operator decision pauses once and an idempotent answer continues the same intent."
+      ],
+      "status": "ready_for_fixture_implementation",
+      "existing_issue": "https://github.com/joshyorko/plugins/issues/61",
+      "implementation_cycle": [
+        "Read current repository instructions and rebase this source-pinned proposal on the actual target head.",
+        "Add the named acceptance regressions and establish their failing baseline.",
+        "Implement the smallest change within the declared modules and shared contracts.",
+        "Run focused tests, then the affected repository package gates; disclose skips and fixture-only evidence.",
+        "Prepare a separately reviewable change and verified canonical documentation delta; no deployment authorization is implied."
+      ],
+      "implementation_notes": [
+        "Reuse plugins#61; continue through the existing same-owner dispatch boundary only after verified settlement.",
+        "Do not convert planning-only graphs into executable runs; explicit execution admission remains separate.",
+        "No new scheduler or queue. Preserve original deadline, repair lineage, READY gating, decision fingerprints and held-claim recovery."
+      ]
+    },
+    {
+      "id": "LF-08",
+      "title": "Qualify the Codex Action Server adapter",
+      "depends_on": [
+        "LF-01",
+        "LF-05"
+      ],
+      "files": [
+        "plugins/luna-factory/server/src/lifecycle.rs",
+        "codex-action-server:src/codex_actions.py",
+        "codex-action-server:src/dispatch_receipts.py",
+        "codex-action-server:src/boundary.py"
+      ],
+      "acceptance": [
+        "Adapter validates exact CAS input/output and nested structuredContent envelopes against pinned schemas.",
+        "One Factory attempt maps to one CAS request ID; lost replies never generate new dispatch keys.",
+        "Task reads use exact target, workspace, cwd, thread and turn, not loaded-thread absence.",
+        "Detached callback/approval limitations and descendant/terminal settlement are represented explicitly.",
+        "No workspace provisioning or daemon restart is hidden in a read."
+      ],
+      "status": "ready_for_contract_and_fixture_implementation",
+      "proposed_new_files": [
+        "plugins/luna-factory/server/src/backends/cas.rs",
+        "plugins/luna-factory/server/tests/cas_contract.rs"
+      ],
+      "implementation_cycle": [
+        "Read current repository instructions and rebase this source-pinned proposal on the actual target head.",
+        "Add the named acceptance regressions and establish their failing baseline.",
+        "Implement the smallest change within the declared modules and shared contracts.",
+        "Run focused tests, then the affected repository package gates; disclose skips and fixture-only evidence.",
+        "Prepare a separately reviewable change and verified canonical documentation delta; no deployment authorization is implied."
+      ],
+      "qualification_blockers": [
+        "CAS account/read is not exposed; passive catalog/usage cannot prove subscription/model entitlement.",
+        "CAS action-scoped native connections do not provide a durable callback response broker; choose explicit retained-owner contract first.",
+        "Qualify method-specific native versions: 0.160.1 baseline, limited diagnostics/queue support at 0.161.0.",
+        "Persist Factory attempt request key before CAS dispatch; no new key after lost acknowledgement."
+      ]
+    },
+    {
+      "id": "LF-09",
+      "title": "Bind remote artifacts and integration acceptance",
+      "depends_on": [
+        "LF-03",
+        "LF-08"
+      ],
+      "files": [
+        "plugins/luna-factory/server/src/evidence.rs",
+        "plugins/luna-factory/server/src/store.rs",
+        "plugins/luna-factory/server/src/presentation.rs"
+      ],
+      "acceptance": [
+        "Artifact digest, repository, source/output subjects, attempt and generations are all bound.",
+        "A returned worker or PR moves work to verification, not accepted completion.",
+        "Integration onto a changed subject invalidates affected proof; captured required checks cannot be replaced by worker-proposed checks.",
+        "Incomplete command/environment evidence remains unverified."
+      ],
+      "status": "proposed_not_started",
+      "proposed_test_locations_verify_before_implementation": [
+        "plugins/luna-factory/server/tests/evidence.rs"
+      ],
+      "implementation_cycle": [
+        "Read current repository instructions and rebase this source-pinned proposal on the actual target head.",
+        "Add the named acceptance regressions and establish their failing baseline.",
+        "Implement the smallest change within the declared modules and shared contracts.",
+        "Run focused tests, then the affected repository package gates; disclose skips and fixture-only evidence.",
+        "Prepare a separately reviewable change and verified canonical documentation delta; no deployment authorization is implied."
+      ]
+    },
+    {
+      "id": "LF-10",
+      "title": "Add safe per-task parallel execution",
+      "depends_on": [
+        "LF-06",
+        "LF-07",
+        "LF-08",
+        "LF-09"
+      ],
+      "files": [
+        "plugins/luna-factory/server/src/control.rs",
+        "plugins/luna-factory/server/src/store.rs",
+        "plugins/luna-factory/server/src/lifecycle.rs",
+        "plugins/luna-factory/server/tests/factory_integration.rs"
+      ],
+      "acceptance": [
+        "Preserve the existing run-wide ambiguous-attempt prohibition until finer claims are proven.",
+        "Then allow only isolated, nonconflicting lanes with per-attempt settlement and one integration writer.",
+        "Unknown attempts retain their complete effect/resource scope; deadlines never force-unlock.",
+        "Parallel races, stale targets, replay and source drift fail closed."
+      ],
+      "status": "proposed_not_started",
+      "implementation_cycle": [
+        "Read current repository instructions and rebase this source-pinned proposal on the actual target head.",
+        "Add the named acceptance regressions and establish their failing baseline.",
+        "Implement the smallest change within the declared modules and shared contracts.",
+        "Run focused tests, then the affected repository package gates; disclose skips and fixture-only evidence.",
+        "Prepare a separately reviewable change and verified canonical documentation delta; no deployment authorization is implied."
+      ]
+    },
+    {
+      "id": "LF-11",
+      "title": "Qualify optional cloud mechanisms",
+      "depends_on": [
+        "LF-05"
+      ],
+      "files": [
+        "plugins/luna-factory/docs/control-wire.md",
+        "plugins/luna-factory/docs/implementation.md"
+      ],
+      "acceptance": [
+        "Distinguish new Codex Cloud tasks, experimental cloud CLI and legacy GitHub-triggered cloud chats.",
+        "Prove exact authentication, entitlement, namespace and operation separately; docs alone are not live qualification.",
+        "No API-billed Agents API default, browser credential extraction or invented REST endpoint.",
+        "One-way dispatch cannot satisfy required steer or termination capabilities.",
+        "Any future launch canary requires separate explicit authorization."
+      ],
+      "status": "official_interface_research_complete_adapters_unqualified",
+      "implementation_cycle": [
+        "Read current repository instructions and rebase this source-pinned proposal on the actual target head.",
+        "Add the named acceptance regressions and establish their failing baseline.",
+        "Implement the smallest change within the declared modules and shared contracts.",
+        "Run focused tests, then the affected repository package gates; disclose skips and fixture-only evidence.",
+        "Prepare a separately reviewable change and verified canonical documentation delta; no deployment authorization is implied."
+      ],
+      "qualification_blockers": [
+        "New Cloud, CLI Cloud and GitHub legacy Cloud identities are not proven interchangeable.",
+        "No supported full external steering/stop/reconciliation contract established for newer Cloud.",
+        "GitHub submission is not native acknowledgement or cessation evidence."
+      ]
+    },
+    {
+      "id": "LF-12",
+      "title": "Converge Review ownership without dual writers",
+      "depends_on": [
+        "LF-03",
+        "LF-05",
+        "LF-09"
+      ],
+      "files": [
+        "review:image/extension/luna-factory/omp/batch-service.ts",
+        "review:image/extension/luna-factory/omp/batch-store.ts",
+        "review:docs/factory/agentic-model.md",
+        "plugins/luna-factory/docs/control-adoption.md"
+      ],
+      "acceptance": [
+        "Read-only projection of existing OMP runs preserves their original authority and identity.",
+        "An ownership handoff requires settled old execution, explicit authorization and preserved original receipts.",
+        "New unified runs use one canonical ledger; no OMP/Rust dual writer for the same work.",
+        "Adopt matching pump/admission conformance cases, not the entire OMP execution harness."
+      ],
+      "status": "proposed_not_started",
+      "implementation_cycle": [
+        "Read current repository instructions and rebase this source-pinned proposal on the actual target head.",
+        "Add the named acceptance regressions and establish their failing baseline.",
+        "Implement the smallest change within the declared modules and shared contracts.",
+        "Run focused tests, then the affected repository package gates; disclose skips and fixture-only evidence.",
+        "Prepare a separately reviewable change and verified canonical documentation delta; no deployment authorization is implied."
+      ]
+    },
+    {
+      "id": "LF-13",
+      "title": "Add optional factory attention events",
+      "depends_on": [
+        "LF-02",
+        "LF-05"
+      ],
+      "files": [
+        "plugins/luna-factory/server/src/http.rs",
+        "plugins/luna-factory/server/src/mcp.rs",
+        "plugins/luna-factory/server/src/store.rs"
+      ],
+      "acceptance": [
+        "Implement authenticated MCP 2.0 event discovery/subscription/unsubscription and durable callback subscriptions.",
+        "Verify callback signatures, scope, expiry and duplicate deliveries without leaking credentials.",
+        "Notify only requested material attention/results; events do not bypass dispatch policy or act as UI synchronization.",
+        "Unsupported host surfaces remain explicit."
+      ],
+      "status": "optional_deferred",
+      "implementation_cycle": [
+        "Read current repository instructions and rebase this source-pinned proposal on the actual target head.",
+        "Add the named acceptance regressions and establish their failing baseline.",
+        "Implement the smallest change within the declared modules and shared contracts.",
+        "Run focused tests, then the affected repository package gates; disclose skips and fixture-only evidence.",
+        "Prepare a separately reviewable change and verified canonical documentation delta; no deployment authorization is implied."
+      ]
+    },
+    {
+      "id": "LF-14",
+      "title": "Run exact-head product acceptance",
+      "depends_on": [
+        "LF-04",
+        "LF-06",
+        "LF-07",
+        "LF-08",
+        "LF-09"
+      ],
+      "files": [
+        "plugins/luna-factory/docs/dogfood-recovery.md",
+        "plugins/luna-factory/docs/control-wire.md"
+      ],
+      "acceptance": [
+        "First demo actual graph read, click focus, conversational proposed preference and equivalent UI mutation with no dispatch.",
+        "Qualify sidebar, conversation panel, settings, context lifecycle and recovery in each intended actual host.",
+        "A separately authorized execution canary proves return -> verification -> acceptance and cancellation cessation.",
+        "Live replacement is blocked until original owner/descendants/terminals and held claim are safely settled.",
+        "Refresh tunnel/Executor exact pins only through a separately approved integration change."
+      ],
+      "status": "blocked_live_host_and_original_owner_cessation",
+      "proposed_test_locations_verify_before_implementation": [
+        "plugins/luna-factory/ui/test/protocol.test.ts"
+      ],
+      "implementation_cycle": [
+        "Read current repository instructions and rebase this source-pinned proposal on the actual target head.",
+        "Add the named acceptance regressions and establish their failing baseline.",
+        "Implement the smallest change within the declared modules and shared contracts.",
+        "Run focused tests, then the affected repository package gates; disclose skips and fixture-only evidence.",
+        "Prepare a separately reviewable change and verified canonical documentation delta; no deployment authorization is implied."
+      ],
+      "fixture_demo": "ui/test/graph_e2e.test.ts"
+    }
+  ],
+  "topological_order": [
+    "LF-01",
+    "LF-02",
+    "LF-03",
+    "LF-05",
+    "LF-07",
+    "LF-04",
+    "LF-06",
+    "LF-08",
+    "LF-11",
+    "LF-13",
+    "LF-09",
+    "LF-10",
+    "LF-12",
+    "LF-14"
+  ],
+  "smallest_demo_nodes": [
+    "LF-01",
+    "LF-02",
+    "LF-03",
+    "LF-04",
+    "LF-05",
+    "LF-06"
+  ],
+  "live_cutover_is_separately_gated": true,
+  "implementation_branch": "feat/luna-factory-graph-slice",
+  "validation_documents": [
+    "graph-host-evidence.md",
+    "graph-backend-evidence.md",
+    "control-wire.md",
+    "graph-verification.md"
+  ],
+  "ready_next_nodes": [
+    "LF-07",
+    "LF-08"
+  ],
+  "documentation_decisions": [
+    {
+      "repository": "actions",
+      "decision": "defer cross-repository canonical guide edit; record precise proposed delta in graph-backend-evidence.md until an actual adapter is implemented"
+    },
+    {
+      "repository": "codex-action-server",
+      "decision": "record method-specific compatibility correction in graph-backend-evidence.md; no unrelated backend documentation branch in first slice"
+    }
+  ],
+  "verification_document": "graph-verification.md",
+  "implementation_commit": "5491033cd1ee4fd6a1676a0d0e69e70eae60c01c"
+}

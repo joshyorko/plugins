@@ -1,0 +1,164 @@
+{
+  "proof": "actual Rust/SQLite/HTTP + production UI controller + synthetic AppBridge; not live ChatGPT acceptance",
+  "source_head": "5491033cd1ee4fd6a1676a0d0e69e70eae60c01c",
+  "issue_revision": "sha256:2365b6436c648180e138ae60ab72767685117abab90db7ceedf8dbc2301bc044",
+  "graph": {
+    "run_id": "93c55e56-ee4b-4784-89ae-b63a888879b3",
+    "revision": 6,
+    "repository": {
+      "alias": "plugins",
+      "identity": "e1a773e81eafdb76ff3e8b040038baad48fe3b7e9ec57601d28a910ff105a7f3",
+      "base_head": "5491033cd1ee4fd6a1676a0d0e69e70eae60c01c",
+      "subject": "5491033cd1ee4fd6a1676a0d0e69e70eae60c01c:3c0f669327e55545e5d4729b3d30abec1182a2799da85c23fe711e61deb4a186"
+    },
+    "planning_only": true,
+    "nodes": [
+      {
+        "id": "issue-61",
+        "title": "feat(luna-factory): autonomously continue admitted work across native owner turns",
+        "criterion_ids": [
+          "A1"
+        ],
+        "dependencies": [
+          "objective"
+        ],
+        "state": "candidate",
+        "admission": "candidate",
+        "reason": "planning_candidate_no_authority",
+        "owner_thread": null,
+        "attempt_ids": [],
+        "source": {
+          "provider": "github",
+          "repository_id": "e1a773e81eafdb76ff3e8b040038baad48fe3b7e9ec57601d28a910ff105a7f3",
+          "item_id": "1148934299:I_kwDORHtYm88AAAABV1y_2g",
+          "revision": "sha256:2365b6436c648180e138ae60ab72767685117abab90db7ceedf8dbc2301bc044"
+        },
+        "target_preference": "native-local"
+      },
+      {
+        "id": "objective",
+        "title": "Plan the existing bounded-continuation issue",
+        "criterion_ids": [
+          "A1"
+        ],
+        "dependencies": [],
+        "state": "candidate",
+        "admission": "candidate",
+        "reason": "planning_candidate_no_authority",
+        "owner_thread": null,
+        "attempt_ids": [],
+        "source": null,
+        "target_preference": null
+      }
+    ],
+    "criteria": [
+      {
+        "id": "A1",
+        "description": "Retain execution identity and prove convergence",
+        "status": "unproved",
+        "reason": "evidence_missing",
+        "check_refs": []
+      }
+    ],
+    "attempts": [],
+    "claim": {
+      "held": false,
+      "status": "released"
+    },
+    "changes": [
+      {
+        "id": "9daf4ec2-7eaa-42b7-b5b6-19b5a836ea16",
+        "idempotency_key": "import-issue-61",
+        "fingerprint": "b7d620ab7ac79fa69d55e63f16814664bcc9ce72c5ea3753281d9621efc1f7dd",
+        "actor": "local_operator",
+        "base_revision": 0,
+        "subject": "5491033cd1ee4fd6a1676a0d0e69e70eae60c01c:3c0f669327e55545e5d4729b3d30abec1182a2799da85c23fe711e61deb4a186",
+        "change": {
+          "kind": "import_candidates",
+          "nodes": [
+            {
+              "id": "issue-61",
+              "title": "feat(luna-factory): autonomously continue admitted work across native owner turns",
+              "criterion_ids": [
+                "A1"
+              ],
+              "dependencies": [],
+              "source": {
+                "provider": "github",
+                "repository_id": "e1a773e81eafdb76ff3e8b040038baad48fe3b7e9ec57601d28a910ff105a7f3",
+                "item_id": "1148934299:I_kwDORHtYm88AAAABV1y_2g",
+                "revision": "sha256:2365b6436c648180e138ae60ab72767685117abab90db7ceedf8dbc2301bc044"
+              }
+            }
+          ]
+        },
+        "status": "applied",
+        "applied_revision": 2
+      },
+      {
+        "id": "bbfb2c85-2f81-47b5-9445-0bc1b27e902c",
+        "idempotency_key": "8d02af80-d726-4e09-93e8-4a2d08aaa093",
+        "fingerprint": "8e96a8f637cdddc28e2736268803a3ca2794352f9b67ef5307f6e717f661630b",
+        "actor": "local_operator",
+        "base_revision": 2,
+        "subject": "5491033cd1ee4fd6a1676a0d0e69e70eae60c01c:3c0f669327e55545e5d4729b3d30abec1182a2799da85c23fe711e61deb4a186",
+        "change": {
+          "kind": "set_target",
+          "node_id": "issue-61",
+          "target_id": "native-local"
+        },
+        "status": "applied",
+        "applied_revision": 4
+      },
+      {
+        "id": "c88aea1e-0308-4f23-9c0d-36de29cc91ec",
+        "idempotency_key": "model-prerequisite",
+        "fingerprint": "dfbbd88b74a518de191e2f50e2949121200f5a01fed2b26b7c11c472ca88f92f",
+        "actor": "local_operator",
+        "base_revision": 4,
+        "subject": "5491033cd1ee4fd6a1676a0d0e69e70eae60c01c:3c0f669327e55545e5d4729b3d30abec1182a2799da85c23fe711e61deb4a186",
+        "change": {
+          "kind": "set_dependencies",
+          "node_id": "issue-61",
+          "dependencies": [
+            "objective"
+          ]
+        },
+        "status": "applied",
+        "applied_revision": 6
+      }
+    ]
+  },
+  "model_context": {
+    "run_id": "93c55e56-ee4b-4784-89ae-b63a888879b3",
+    "repository": "plugins",
+    "objective": "Plan the existing bounded-continuation issue",
+    "state": "UNVERIFIED",
+    "current_subject": "5491033cd1ee4fd6a1676a0d0e69e70eae60c01c:3c0f669327e55545e5d4729b3d30abec1182a2799da85c23fe711e61deb4a186",
+    "remaining_mandatory_gap": "Mandatory acceptance needs current owner verification",
+    "blocker": null,
+    "finish": "local_candidate",
+    "node_id": "issue-61",
+    "node_title": "feat(luna-factory): autonomously continue admitted work across native owner turns",
+    "node_state": "candidate",
+    "graph_revision": 6
+  },
+  "tool_calls": [
+    "create_factory_graph",
+    "propose_factory_change",
+    "apply_factory_change",
+    "open_factory",
+    "get_factory_run",
+    "get_factory_graph",
+    "get_factory_backends",
+    "propose_factory_change",
+    "apply_factory_change",
+    "get_factory_graph",
+    "propose_factory_change",
+    "apply_factory_change",
+    "refresh_factory",
+    "get_factory_graph",
+    "get_factory_backends"
+  ],
+  "native_dispatches": 0
+}

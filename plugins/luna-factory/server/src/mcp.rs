@@ -144,8 +144,8 @@ pub fn tool_definitions() -> Vec<Tool> {
             "Update factory defaults",
             "Change safe UI defaults within trusted limits. Does not change repository access or runtime permissions.",
             object(
-                json!({"capacity":{"type":"integer","minimum":1,"maximum":8},"finish":{"type":"string","enum":["local_candidate","push","pr"]},"profile":{"type":"string","maxLength":64}}),
-                &[],
+                json!({"set":{"type":"object","minProperties":1,"additionalProperties":false,"properties":{"capacity":{"type":"integer","minimum":1,"maximum":8},"finish":{"type":"string","enum":["local_candidate","push","pr"]},"profile":{"type":"string","maxLength":64}}}}),
+                &["set"],
             ),
             false,
         ),
@@ -154,6 +154,30 @@ pub fn tool_definitions() -> Vec<Tool> {
         definition("reconcile_factory_run","Reconcile native ownership","Observe existing owned native work and current checks without starting, resuming or stopping inference or retrying effects.",object(json!({"run_id":id,"expected_revision":{"type":"integer","minimum":0}}),&["run_id"]),true),
         definition("discover_factory_repositories", "Discover local repositories", "Read a bounded catalog under operator-approved local roots. Returns opaque candidate IDs, never absolute paths or file contents. No inference.", object(json!({}), &[]), true),
         definition("request_factory_repository", "Request repository access", "Request one discovered repository alias and explicit finish cap. This queues a security-sensitive request; only local operator approval grants access. Never accepts filesystem paths or remote approval.", object(json!({"candidate_id":{"type":"string","pattern":"^[a-f0-9]{64}$"},"alias":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"},"max_finish":{"type":"string","enum":["local_candidate","push","pr"]}}), &["candidate_id","alias","max_finish"]), false),
+    ]);
+    let create_schema = serde_json::to_value(&tools[0].input_schema).expect("start schema");
+    let node_id = json!({"type":"string","minLength":1,"maxLength":256});
+    let deps = json!({"type":"array","maxItems":128,"uniqueItems":true,"items":node_id});
+    let source = object(
+        json!({"provider":node_id,"repository_id":node_id,"item_id":node_id,"revision":node_id}),
+        &["provider", "repository_id", "item_id", "revision"],
+    );
+    let candidate = object(
+        json!({"id":node_id,"title":{"type":"string","minLength":1,"maxLength":4000},"criterion_ids":{"type":"array","minItems":1,"maxItems":32,"items":node_id},"dependencies":deps,"source":source}),
+        &["id", "title", "criterion_ids", "dependencies", "source"],
+    );
+    let change = json!({"oneOf":[
+        object(json!({"kind":{"const":"import_candidates"},"nodes":{"type":"array","minItems":1,"maxItems":32,"items":candidate}}), &["kind","nodes"]),
+        object(json!({"kind":{"const":"set_dependencies"},"node_id":node_id,"dependencies":deps}), &["kind","node_id","dependencies"]),
+        object(json!({"kind":{"const":"set_target"},"node_id":node_id,"target_id":node_id}), &["kind","node_id","target_id"])
+    ]});
+    let revision = json!({"type":"integer","minimum":0,"maximum":9_007_199_254_740_991_u64});
+    tools.extend([
+        definition("create_factory_graph", "Create planning graph", "Create a repository-bound planning graph in the existing Factory ledger. No execution claim, worker or inference is started. This planning-only record cannot be resumed as execution.", create_schema, false),
+        definition("get_factory_graph", "Inspect engineering graph", "Read authoritative repository-bound nodes, dependencies, source bindings, claims, proof and proposed changes. Selection/context is not authorization.", object(json!({"run_id":id}), &["run_id"]), true),
+        definition("get_factory_backends", "Inspect execution capabilities", "Read configuration-only target capabilities and unknown entitlement evidence. Starts no daemon or authentication. A planning preference does not qualify subscription-backed execution.", object(json!({}), &[]), true),
+        definition("propose_factory_change", "Propose graph change", "Record a source-bound, revision-fenced planning proposal under local operator authority. Imports remain candidates without execution authority. Inspect its returned ID/revision before applying; duplicate keys require identical payloads.", object(json!({"run_id":id,"expected_revision":revision,"idempotency_key":node_id,"change":change}), &["run_id","expected_revision","idempotency_key","change"]), false),
+        definition("apply_factory_change", "Apply graph change", "Apply one inspected proposal at its current revision. Rechecks source, authority and backend preference. Does not dispatch or reassign active/unknown execution. Identical recorded retries do not apply twice.", object(json!({"run_id":id,"change_id":node_id,"expected_revision":revision}), &["run_id","change_id","expected_revision"]), false),
     ]);
     for tool in &mut tools {
         let name = tool.name.as_ref();
@@ -177,10 +201,15 @@ pub fn tool_definitions() -> Vec<Tool> {
                 serde_json::from_value(json!({"ui":{"visibility":["app"]}}))
                     .expect("static settings metadata"),
             );
-            if name == "read_factory_settings" {
-                tool.output_schema = Some(serde_json::from_value(json!({"type":"object","properties":{"schema":{"type":"object"},"values":{"type":"object"},"layout":{"type":"array"}},"required":["schema","values"]})).expect("settings schema"));
-            }
-        } else if name == "reconcile_factory_run" {
+        } else if matches!(
+            name,
+            "reconcile_factory_run"
+                | "create_factory_graph"
+                | "get_factory_graph"
+                | "get_factory_backends"
+                | "propose_factory_change"
+                | "apply_factory_change"
+        ) {
             tool.meta = Some(
                 serde_json::from_value(json!({"ui":{"visibility":["model","app"]}}))
                     .expect("static recovery visibility"),
@@ -191,6 +220,16 @@ pub fn tool_definitions() -> Vec<Tool> {
                     .expect("static result metadata"),
             );
         }
+        if matches!(
+            name,
+            "create_factory_graph" | "propose_factory_change" | "apply_factory_change"
+        ) {
+            tool.annotations = Some(serde_json::from_value(json!({"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false})).expect("planning annotations"));
+        }
+        tool.output_schema = Some(
+            serde_json::from_value(crate::schemas::output_schema(name))
+                .expect("structured output schema"),
+        );
     }
     tools
 }

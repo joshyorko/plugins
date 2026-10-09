@@ -58,6 +58,11 @@ struct Resume {
     #[serde(default)]
     diagnosis: Option<crate::control::Diagnosis>,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingsPatch {
+    set: Value,
+}
 fn default_limit() -> u32 {
     20
 }
@@ -77,6 +82,18 @@ impl McpServer {
     pub async fn invoke(&self, name: &str, args: Value) -> anyhow::Result<Value> {
         match name {
             "start_factory" => self.factory.start(parse::<StartRequest>(args)?).await,
+            "create_factory_graph" => {
+                self.factory
+                    .create_graph(parse::<StartRequest>(args)?)
+                    .await
+            }
+            "get_factory_graph" => self.factory.graph(&parse::<RunId>(args)?.run_id).await,
+            "propose_factory_change" => self.factory.propose_graph_change(parse(args)?).await,
+            "apply_factory_change" => self.factory.apply_graph_change(parse(args)?).await,
+            "get_factory_backends" => {
+                ensure_empty(&args)?;
+                Ok(crate::backends::capabilities(&self.factory.config))
+            }
             "list_factory_runs" => {
                 Ok(json!({"runs":self.factory.list(parse::<List>(args)?.limit).await?}))
             }
@@ -136,7 +153,11 @@ impl McpServer {
                 self.factory.discover_repositories().await
             }
             "request_factory_repository" => self.factory.request_repository(parse(args)?).await,
-            "update_factory_settings" => self.factory.update_settings(args).await,
+            "update_factory_settings" => {
+                self.factory
+                    .update_settings(parse::<SettingsPatch>(args)?.set)
+                    .await
+            }
             _ => anyhow::bail!("unknown_tool"),
         }
     }

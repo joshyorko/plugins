@@ -242,22 +242,28 @@ describe("workbench state and MCP lifecycle", () => {
     await expect(controller.sendOwnerInput(message)).rejects.toThrow();
     expect(call).not.toHaveBeenCalled();
   });
-  it("does not roll back a newer generation or update time", async () => {
+  it("orders authoritative control revisions ahead of timestamps and generations", async () => {
     const { controller, call } = setup();
-    call.mockResolvedValueOnce({ structuredContent: fixtureRun({ generation: 3, updated_at: 200, state: "CONVERGED" }) });
-    await controller.mutate("resume_factory_run", { run_id: "run-123" });
-    call.mockResolvedValueOnce({ structuredContent: { ...fixtureWorkbench, runs: [fixtureRun({ generation: 2, updated_at: 300, state: "RUNNING" })] } });
+    const newer = fixtureRun({ generation: 3, updated_at: 200, state: "CONVERGED" });
+    newer.control!.revision = newer.presentation!.revision = 9;
+    call.mockResolvedValueOnce({ structuredContent: newer });
+    await controller.refresh();
+    const stale = fixtureRun({ generation: 100, updated_at: 300, state: "RUNNING" });
+    stale.control!.revision = stale.presentation!.revision = 8;
+    call.mockResolvedValueOnce({ structuredContent: { ...fixtureWorkbench, runs: [stale] } });
     await controller.refresh();
     expect(controller.selected?.state).toBe("CONVERGED");
-    call.mockResolvedValueOnce({ structuredContent: { ...fixtureWorkbench, runs: [fixtureRun({ generation: 3, updated_at: 100, state: "RUNNING" })] } });
+    const latest = fixtureRun({ generation: 1, updated_at: 100, state: "RUNNING" });
+    latest.control!.revision = latest.presentation!.revision = 10;
+    call.mockResolvedValueOnce({ structuredContent: { ...fixtureWorkbench, runs: [latest] } });
     await controller.refresh();
-    expect(controller.selected?.state).toBe("CONVERGED");
+    expect(controller.selected?.state).toBe("RUNNING");
   });
   it("saves only safe defaults and reads the server's validated values", async () => {
     const { controller, call } = setup();
     call.mockResolvedValue({ structuredContent: { schema: {}, values: { capacity: 3, profile: "luna", finish: "local_candidate" } } });
     expect(await controller.saveSettings({ capacity: 3 })).toBe(true);
-    expect(call).toHaveBeenCalledWith("update_factory_settings", { capacity: 3 });
+    expect(call).toHaveBeenCalledWith("update_factory_settings", { set: { capacity: 3 } });
     expect(controller.state.settings.capacity).toBe(3);
     expect(controller.state.pending).toBeNull();
   });

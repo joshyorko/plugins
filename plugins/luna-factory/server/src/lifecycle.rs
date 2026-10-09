@@ -36,7 +36,7 @@ pub fn public_run(run: &Run) -> Value {
     json!({"id":run.id,"repository":run.request.repository,"objective":run.request.objective,
         "acceptance":run.request.acceptance,"non_goals":run.request.non_goals,"finish":run.request.finish,
         "profile":run.request.profile,"capacity":run.request.capacity,"active_workers":run.active_threads.len(),"owned_workers":run.owned_threads.len(),
-        "state":state,"current_subject":run.current_subject,"owner_thread":run.thread_id,"turn_id":run.turn_id,
+        "planning_only":run.planning_only,"state":state,"current_subject":run.current_subject,"owner_thread":run.thread_id,"turn_id":run.turn_id,
         "delta":run.delta,"remaining_gap":run.remaining_gap,"skill_sha256":run.skill_sha256,
         "blocker":run.blocker,"deadline_at":run.deadline_at,"claim_held":run.claim_held,
         "pending_decision":run.pending_decision,
@@ -278,6 +278,17 @@ struct OwnerCandidate {
     necessary: bool,
     effects: Vec<String>,
 }
+/// Arc ownership tracks the service lifetime, independently of transient fork
+/// inheritance during Command spawning. CLOEXEC alone closes only after exec.
+struct ServiceLease(std::fs::File);
+impl Drop for ServiceLease {
+    fn drop(&mut self) {
+        // Release the shared open-file-description lock when its final service
+        // owner leaves. A pre-exec child must not extend that service lifetime.
+        // Abrupt process exit still releases ownership through normal OS close.
+        let _ = fs2::FileExt::unlock(&self.0);
+    }
+}
 #[derive(Clone)]
 pub struct Factory {
     pub config: Arc<Config>,
@@ -286,7 +297,7 @@ pub struct Factory {
     // Mutations serialize; status reads use only SQLite and never this lock/native client.
     mutation: Arc<Mutex<()>>,
     monitors: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
-    _lease: Arc<std::fs::File>,
+    _lease: Arc<ServiceLease>,
 }
 impl Factory {
     pub fn new(config: Config) -> Result<Self> {
@@ -299,6 +310,7 @@ impl Factory {
             .open(config.database.with_extension("lock"))?;
         fs2::FileExt::try_lock_exclusive(&lease)
             .context("another_luna_factory_service_owns_this_database")?;
+        let lease = ServiceLease(lease);
         store.mark_interrupted()?;
         Ok(Self {
             config: Arc::new(config),
@@ -308,6 +320,176 @@ impl Factory {
             monitors: Arc::new(Mutex::new(HashMap::new())),
             _lease: Arc::new(lease),
         })
+    }
+    /// Creates only ledger metadata; never connects to native Codex or acquires a claim.
+    pub async fn create_graph(&self, request: StartRequest) -> Result<Value> {
+        let _guard = self.mutation.lock().await;
+        let mut store = self.store.lock().await;
+        let config =
+            crate::repositories::effective_config(&self.config, &store.repository_registrations()?);
+        let admission = store.admit_planning(&config, &request)?;
+        let run = store.get(&admission.run.id)?;
+        Ok(crate::graph::envelope(&run, None))
+    }
+    async fn validate_graph_repository(&self, run: &Run) -> Result<()> {
+        let config = self.effective_config().await?;
+        Self::validate_graph_repository_config(run, &config)
+    }
+    fn validate_graph_repository_config(run: &Run, config: &Config) -> Result<()> {
+        crate::store::validate_request(config, &run.request)?;
+        let root = &config.repositories[&run.request.repository].root;
+        ensure!(
+            root.to_str() == Some(&run.canonical_root) && root.canonicalize()? == *root,
+            "repository_alias_was_remapped"
+        );
+        let top = crate::store::git(root, &["rev-parse", "--show-toplevel"])?;
+        ensure!(
+            Path::new(&top).canonicalize()? == *root,
+            "repository_root_mismatch"
+        );
+        let identity = crate::store::git(
+            root,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?;
+        ensure!(
+            Path::new(&identity).canonicalize()?.to_str() == Some(&run.repository_identity),
+            "repository_identity_changed"
+        );
+        if let Some(stamp) = &run.graph_repository_stamp {
+            ensure!(
+                crate::graph::repository_stamp(root, &run.repository_identity)? == *stamp,
+                "repository_identity_changed"
+            );
+        }
+        Ok(())
+    }
+    pub async fn graph(&self, id: &str) -> Result<Value> {
+        let mut run = self.store.lock().await.get(id)?;
+        self.validate_graph_repository(&run).await?;
+        self.refresh_source(&mut run, &mut *self.store.lock().await)?;
+        Ok(crate::graph::envelope(&run, None))
+    }
+    async fn validate_graph_change(
+        &self,
+        run: &Run,
+        change: &crate::graph::GraphChange,
+    ) -> Result<()> {
+        match change {
+            crate::graph::GraphChange::ImportCandidates { nodes } => {
+                let identity = crate::graph::repository_id(run);
+                ensure!(
+                    nodes
+                        .iter()
+                        .all(|node| node.source.repository_id == identity),
+                    "foreign_graph_source"
+                );
+            }
+            crate::graph::GraphChange::SetTarget { target_id, .. } => {
+                crate::backends::validate_preference(&self.effective_config().await?, target_id)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    pub async fn propose_graph_change(
+        &self,
+        request: crate::graph::ProposeChange,
+    ) -> Result<Value> {
+        let _guard = self.mutation.lock().await;
+        let mut run = self.store.lock().await.get(&request.run_id)?;
+        self.validate_graph_repository(&run).await?;
+        ensure!(
+            repository_subject(Path::new(&run.canonical_root))? == run.current_subject,
+            "stale_graph_subject"
+        );
+        crate::graph::guard(&run)?;
+        self.validate_graph_change(&run, &request.change).await?;
+        ensure!(
+            crate::control::bounded_id(&request.idempotency_key),
+            "invalid_graph_idempotency_key"
+        );
+        let fingerprint = crate::graph::fingerprint(&request)?;
+        let control = run.control.as_ref().context("control_missing")?;
+        if let Some(previous) = control
+            .graph_changes
+            .values()
+            .find(|p| p.idempotency_key == request.idempotency_key)
+        {
+            ensure!(
+                previous.fingerprint == fingerprint,
+                "graph_idempotency_conflict"
+            );
+            return Ok(crate::graph::envelope(&run, Some(previous)));
+        }
+        ensure!(
+            request.expected_revision == control.revision,
+            "stale_control_revision"
+        );
+        let proposal = crate::graph::Proposal {
+            id: uuid::Uuid::new_v4().to_string(),
+            idempotency_key: request.idempotency_key,
+            fingerprint,
+            actor: "local_operator".into(),
+            base_revision: request.expected_revision,
+            subject: run.current_subject.clone(),
+            change: request.change,
+            status: "proposed".into(),
+            applied_revision: None,
+        };
+        let event = crate::control::EventEnvelope {
+            id: format!("graph-propose:{}", proposal.id),
+            expected_revision: request.expected_revision,
+            event: crate::control::Event::GraphProposed {
+                proposal: proposal.clone(),
+            },
+        };
+        self.store.lock().await.apply_event(&mut run, &event)?;
+        // Reload claim observations: a planning graph may share a repository with a held run.
+        let run = self.store.lock().await.get(&run.id)?;
+        Ok(crate::graph::envelope(&run, Some(&proposal)))
+    }
+    pub async fn apply_graph_change(&self, request: crate::graph::ApplyChange) -> Result<Value> {
+        let _guard = self.mutation.lock().await;
+        let mut run = self.store.lock().await.get(&request.run_id)?;
+        self.validate_graph_repository(&run).await?;
+        ensure!(
+            repository_subject(Path::new(&run.canonical_root))? == run.current_subject,
+            "stale_graph_subject"
+        );
+        crate::graph::guard(&run)?;
+        let proposal = run
+            .control
+            .as_ref()
+            .context("control_missing")?
+            .graph_changes
+            .get(&request.change_id)
+            .context("graph_proposal_missing")?
+            .clone();
+        self.validate_graph_change(&run, &proposal.change).await?;
+        if proposal.status == "applied" {
+            ensure!(
+                proposal.applied_revision == request.expected_revision.checked_add(1),
+                "graph_apply_replay_conflict"
+            );
+            return Ok(crate::graph::envelope(&run, Some(&proposal)));
+        }
+        let event = crate::control::EventEnvelope {
+            id: format!("graph-apply:{}", proposal.id),
+            expected_revision: request.expected_revision,
+            event: crate::control::Event::GraphApplied {
+                change_id: proposal.id.clone(),
+            },
+        };
+        self.store.lock().await.apply_event(&mut run, &event)?;
+        let run = self.store.lock().await.get(&run.id)?;
+        Ok(crate::graph::envelope(
+            &run,
+            run.control
+                .as_ref()
+                .unwrap()
+                .graph_changes
+                .get(&request.change_id),
+        ))
     }
     pub async fn get(&self, id: &str) -> Result<Value> {
         let mut store = self.store.lock().await;
@@ -326,6 +508,48 @@ impl Factory {
         Ok(json!(runs.iter().map(public_run).collect::<Vec<_>>()))
     }
     fn refresh_source(&self, run: &mut Run, store: &mut Store) -> Result<()> {
+        if run.graph_repository_stamp.is_some()
+            || run.planning_only
+            || run
+                .control
+                .as_ref()
+                .is_some_and(|c| !c.graph_changes.is_empty())
+        {
+            let config = crate::repositories::effective_config(
+                &self.config,
+                &store.repository_registrations()?,
+            );
+            if let Err(error) = Self::validate_graph_repository_config(run, &config) {
+                // History remains visible after revocation or remapping. These are
+                // retained observations, not current proof of the unavailable source.
+                // Like current budget/claim projections, this depends on operator
+                // access now; the retained ledger revision names no new event.
+                // Do not persist a read projection: saving can reclaim a missing
+                // ownership row, and a read must preserve unknown/foreign claims.
+                let detail = error.to_string();
+                let reason = match detail.as_str() {
+                    "unknown_repository"
+                    | "unknown_profile"
+                    | "authority_exceeded"
+                    | "capacity_limit_exceeded"
+                    | "repair_limit_exceeded"
+                    | "time_limit_exceeded"
+                    | "repository_alias_was_remapped"
+                    | "repository_identity_changed"
+                    | "repository_root_mismatch" => detail.as_str(),
+                    _ => "graph_repository_unverified",
+                };
+                let control = run.control.as_mut().context("control_missing")?;
+                control.invalidate(reason);
+                for task in control.tasks.values_mut() {
+                    if task.state == crate::control::TaskState::Candidate {
+                        task.reason = Some(reason.into());
+                    }
+                }
+                run.state = control.run_control.legacy().into();
+                return Ok(());
+            }
+        }
         if run.control.as_ref().is_some_and(|control| {
             control.settlement == crate::control::Settlement::Live
                 || control.run_control == crate::control::RunControl::Starting
@@ -1327,9 +1551,24 @@ impl Factory {
             run.set_state(crate::control::RunControl::Blocked);
             run.blocker=Some("Native turn ended without a valid, current-subject acceptance report. Execution is not convergence.".into());
         }
+        let config = self.effective_config().await?;
+        let mut store = self.store.lock().await;
+        // No asynchronous work remains between final proof validation and the
+        // terminal snapshot/claim decision, including for ignored predicates.
+        Self::validate_current_authority_config(&run, &config)?;
+        ensure!(
+            repository_subject(Path::new(&run.canonical_root))? == run.current_subject,
+            "source_changed_before_settlement"
+        );
+        if crate::evidence::revalidate_files(
+            run.control.as_mut().context("control_missing")?,
+            Path::new(&run.canonical_root),
+        )? {
+            run.set_state(crate::control::RunControl::Blocked);
+            run.blocker = Some("evidence_changed_before_settlement".into());
+        }
         run.updated_at = now();
         run.dispatch_phase = "terminal_observed".into();
-        let mut store = self.store.lock().await;
         if ["CONVERGED", "QUIESCENT"].contains(&run.state.as_str())
             && !run.control.as_ref().unwrap().unknown_effect()
         {
@@ -1430,6 +1669,7 @@ impl Factory {
     ) -> Result<Value> {
         let _guard = self.mutation.lock().await;
         let mut run = self.store.lock().await.get(id)?;
+        ensure!(!run.planning_only, "planning_graph_execution_denied");
         if !run.claim_held {
             return self.get(id).await;
         }
@@ -1450,13 +1690,22 @@ impl Factory {
             run.delta =
                 "Owner and all known descendants were observed idle, with terminal command evidence; mutation claim released."
                     .into();
-            if run.control.as_ref().unwrap().unknown_effect() {
+            let config = self.effective_config().await?;
+            let mut store = self.store.lock().await;
+            if run.graph_repository_stamp.is_some()
+                && Self::validate_graph_repository_config(&run, &config).is_err()
+            {
+                run.set_state(crate::control::RunControl::Blocked);
+                run.blocker = Some("repository_identity_unverified".into());
+                run.delta = "Owned execution was observed stopped. Bound repository identity is unverified; repository claim retained.".into();
+                store.save(&mut run)?;
+            } else if run.control.as_ref().unwrap().unknown_effect() {
                 run.delta="Owned execution was observed stopped. Effect outcome remains unknown; repository claim retained.".into();
                 run.set_state(crate::control::RunControl::Blocked);
                 run.blocker = Some("effect_outcome_unknown".into());
-                self.store.lock().await.save(&mut run)?;
+                store.save(&mut run)?;
             } else {
-                self.store.lock().await.release_verified(&mut run)?;
+                store.release_verified(&mut run)?;
             }
         }
         self.get(id).await
@@ -1545,6 +1794,7 @@ impl Factory {
         Self::validate_current_authority_config(run, &self.effective_config().await?)
     }
     fn validate_current_authority_config(run: &Run, config: &Config) -> Result<()> {
+        ensure!(!run.planning_only, "planning_graph_execution_denied");
         crate::store::validate_request(config, &run.request)?;
         let root = &config.repositories[&run.request.repository].root;
         ensure!(
@@ -1559,6 +1809,9 @@ impl Factory {
             Path::new(&identity).canonicalize()?.to_str() == Some(&run.repository_identity),
             "repository_identity_changed"
         );
+        if run.graph_repository_stamp.is_some() {
+            Self::validate_graph_repository_config(run, config)?;
+        }
         ensure!(
             config.profiles[&run.request.profile]
                 .codex_profile
@@ -2103,24 +2356,43 @@ impl Factory {
         }
         self.get(id).await
     }
+    fn effective_settings(&self, saved: &Value) -> Value {
+        let mut values = json!({
+            "capacity": saved["capacity"].as_u64().filter(|n| *n > 0 && *n <= u64::from(self.config.limits.capacity)).unwrap_or(1),
+            "finish": saved["finish"].as_str().filter(|s| crate::config::finish_rank(s).is_ok()).unwrap_or("local_candidate")
+        });
+        if let Some(profile) = saved["profile"]
+            .as_str()
+            .filter(|name| self.config.profiles.contains_key(*name))
+            .map(str::to_owned)
+            .or_else(|| self.config.profiles.keys().next().cloned())
+        {
+            values["profile"] = json!(profile);
+        }
+        values
+    }
     pub async fn settings(&self) -> Result<Value> {
         let saved = self.store.lock().await.settings()?;
-        let first = self
-            .config
-            .profiles
+        let mut properties = json!({
+            "capacity":{"type":"integer","title":"Default worker capacity","minimum":1,"maximum":self.config.limits.capacity},
+            "finish":{"type":"string","title":"Default finish","enum":["local_candidate","push","pr"]}
+        });
+        if !self.config.profiles.is_empty() {
+            properties["profile"] = json!({"type":"string","title":"Runtime profile","enum":self.config.profiles.keys().collect::<Vec<_>>()});
+        }
+        let required = properties
+            .as_object()
+            .unwrap()
             .keys()
-            .next()
             .cloned()
-            .unwrap_or_default();
+            .collect::<Vec<_>>();
         Ok(
-            json!({"schema":{"type":"object","properties":{"capacity":{"type":"integer","title":"Default worker capacity","minimum":1,"maximum":self.config.limits.capacity},"finish":{"type":"string","title":"Default finish","enum":["local_candidate","push","pr"]},"profile":{"type":"string","title":"Runtime profile","enum":self.config.profiles.keys().collect::<Vec<_>>()}}},
-            "values":{"capacity":saved.get("capacity").cloned().unwrap_or(json!(1)),"finish":saved.get("finish").cloned().unwrap_or(json!("local_candidate")),"profile":saved.get("profile").cloned().unwrap_or(json!(first))}}),
+            json!({"schema":{"type":"object","properties":properties,"required":required,"additionalProperties":false},"values":self.effective_settings(&saved)}),
         )
     }
     pub async fn update_settings(&self, patch: Value) -> Result<Value> {
-        let mut values = self.settings().await?["values"].clone();
         let patch = patch.as_object().context("invalid_settings")?;
-        ensure!(patch.len() <= 3, "invalid_settings");
+        ensure!(!patch.is_empty() && patch.len() <= 3, "invalid_settings");
         for (key, value) in patch {
             match key.as_str() {
                 "capacity" => ensure!(
@@ -2140,9 +2412,14 @@ impl Factory {
                 ),
                 _ => bail!("unknown_setting"),
             }
+        }
+        // Partial updates retain unrelated fields under one read/merge/write lock.
+        let mut store = self.store.lock().await;
+        let mut values = self.effective_settings(&store.settings()?);
+        for (key, value) in patch {
             values[key] = value.clone();
         }
-        self.store.lock().await.save_settings(&values)?;
-        self.settings().await
+        store.save_settings(&values)?;
+        Ok(json!({"values":values}))
     }
 }

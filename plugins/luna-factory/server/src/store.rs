@@ -39,6 +39,10 @@ pub struct PendingDecision {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Run {
     pub id: String,
+    #[serde(default)]
+    pub planning_only: bool,
+    #[serde(default)]
+    pub graph_repository_stamp: Option<String>,
     pub request: StartRequest,
     pub canonical_root: String,
     pub repository_identity: String,
@@ -217,7 +221,33 @@ fn decode_versioned_run(payload: &str, version: u32) -> Result<Run> {
         "legacy_control_projection_mismatch"
     );
     control.validate()?;
+    validate_planning_run(&run)?;
     Ok(run)
+}
+fn validate_planning_run(run: &Run) -> Result<()> {
+    if run.planning_only {
+        let control = run.control.as_ref().context("control_missing")?;
+        ensure!(
+            !run.claim_held
+                && run.thread_id.is_none()
+                && run.turn_id.is_none()
+                && run.dispatch_id.is_none()
+                && run.owned_threads.is_empty()
+                && run.active_threads.is_empty()
+                && run.owned_commands.is_empty()
+                && control.attempts.is_empty()
+                && control.effects.is_empty()
+                && control.dispatch_generation == 0
+                && control
+                    .tasks
+                    .values()
+                    .all(|task| task.state == crate::control::TaskState::Candidate
+                        && task.effects.is_empty()
+                        && task.claim == "unknown"),
+            "planning_graph_execution_denied"
+        );
+    }
+    Ok(())
 }
 #[derive(Debug)]
 pub struct Admission {
@@ -566,8 +596,24 @@ impl Store {
         Ok(current)
     }
     pub fn admit(&mut self, config: &Config, request: &StartRequest) -> Result<Admission> {
+        self.admit_mode(config, request, false)
+    }
+    pub fn admit_planning(&mut self, config: &Config, request: &StartRequest) -> Result<Admission> {
+        self.admit_mode(config, request, true)
+    }
+    fn admit_mode(
+        &mut self,
+        config: &Config,
+        request: &StartRequest,
+        planning_only: bool,
+    ) -> Result<Admission> {
         validate_request(config, request)?;
-        let payload = serde_json::to_string(request)?;
+        // Preserve legacy executable fingerprints; planning uses a distinct domain.
+        let payload = if planning_only {
+            serde_json::to_string(&serde_json::json!({"planning_only":true,"request":request}))?
+        } else {
+            serde_json::to_string(request)?
+        };
         let fingerprint = format!("{:x}", Sha256::digest(payload.as_bytes()));
         let root = &config.repositories[&request.repository].root;
         let root_text = root.to_str().context("non_utf8_repository")?.to_owned();
@@ -596,25 +642,40 @@ impl Store {
             .optional()?
         {
             ensure!(old_fingerprint == fingerprint, "idempotency_conflict");
+            let run = decode_run(&old)?;
+            ensure!(run.planning_only == planning_only, "idempotency_conflict");
+            ensure!(
+                run.canonical_root == root_text && run.repository_identity == identity,
+                "repository_alias_was_remapped"
+            );
+            if let Some(stamp) = &run.graph_repository_stamp {
+                ensure!(
+                    crate::graph::repository_stamp(root, &identity)? == *stamp,
+                    "repository_identity_changed"
+                );
+            }
             return Ok(Admission {
-                run: decode_run(&old)?,
+                run,
                 created: false,
             });
         }
-        if tx
-            .query_row(
-                "SELECT run_id FROM claims WHERE identity=?1",
-                [&identity],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
-            .is_some()
+        if !planning_only
+            && tx
+                .query_row(
+                    "SELECT run_id FROM claims WHERE identity=?1",
+                    [&identity],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .is_some()
         {
             bail!("repository_claimed");
         }
         let timestamp = now();
         let mut run = Run {
             id: Uuid::new_v4().to_string(),
+            planning_only,
+            graph_repository_stamp: Some(crate::graph::repository_stamp(root, &identity)?),
             request: request.clone(),
             canonical_root: root_text,
             repository_identity: identity.clone(),
@@ -649,9 +710,13 @@ impl Store {
             requested_effort: Some(config.profiles[&request.profile].effort.clone()),
             configured_provider: None,
             route_observations: Vec::new(),
-            claim_held: true,
+            claim_held: !planning_only,
             control: None,
-            observed_claim: ObservedClaim::Owned,
+            observed_claim: if planning_only {
+                ObservedClaim::Released
+            } else {
+                ObservedClaim::Owned
+            },
         };
         run.control = Some(crate::control::Control::new(
             &run.current_subject,
@@ -659,6 +724,22 @@ impl Store {
             request.repair_attempts,
             run.deadline_at,
         )?);
+        if planning_only {
+            run.set_state(crate::control::RunControl::Quiescent);
+            run.dispatch_phase = "planning_only".into();
+            run.delta = "Planning graph created; candidates have no execution authority.".into();
+            let task = run
+                .control
+                .as_mut()
+                .unwrap()
+                .tasks
+                .get_mut("objective")
+                .unwrap();
+            task.state = crate::control::TaskState::Candidate;
+            task.effects.clear();
+            task.claim = "unknown".into();
+            task.reason = Some("planning_candidate_no_authority".into());
+        }
         tx.execute(
             "INSERT INTO runs(id,idem,fingerprint,root,state,payload) VALUES (?1,?2,?3,?4,?5,?6)",
             params![
@@ -670,10 +751,12 @@ impl Store {
                 serde_json::to_string(&run)?
             ],
         )?;
-        tx.execute(
-            "INSERT INTO claims(identity,run_id) VALUES (?1,?2)",
-            params![identity, run.id],
-        )?;
+        if !planning_only {
+            tx.execute(
+                "INSERT INTO claims(identity,run_id) VALUES (?1,?2)",
+                params![identity, run.id],
+            )?;
+        }
         let snapshot = serde_json::to_string(&run)?;
         let digest = format!("{:x}", Sha256::digest(snapshot.as_bytes()));
         tx.execute("INSERT INTO control_events(run_id,event_id,revision,fingerprint,envelope,snapshot_sha256) VALUES (?1,'admission',0,?2,'{\"kind\":\"admission\"}',?2)",params![run.id,digest])?;
@@ -768,7 +851,9 @@ impl Store {
                 && previous.repository_identity == run.repository_identity
                 && previous.base_head == run.base_head
                 && previous.requested_effort == run.requested_effort
-                && previous.deadline_at == run.deadline_at,
+                && previous.deadline_at == run.deadline_at
+                && previous.planning_only == run.planning_only
+                && previous.graph_repository_stamp == run.graph_repository_stamp,
             "immutable_run_contract"
         );
         ensure!(
@@ -810,6 +895,13 @@ impl Store {
             "legacy_control_projection_mismatch"
         );
         control.validate()?;
+        for (id, source) in &previous.control.as_ref().unwrap().graph_sources {
+            ensure!(
+                control.graph_sources.get(id) == Some(source),
+                "immutable_graph_source"
+            );
+        }
+        validate_planning_run(run)?;
         let payload = serde_json::to_string(run)?;
         let snapshot = format!("{:x}", Sha256::digest(payload.as_bytes()));
         let event_id =
@@ -952,6 +1044,7 @@ impl Store {
         Ok(stmt.query_map([run_id],|r|Ok(serde_json::json!({"subject":r.get::<_,String>(0)?,"kind":r.get::<_,String>(1)?,"summary":r.get::<_,String>(2)?,"created_at":r.get::<_,i64>(3)?})))?.collect::<rusqlite::Result<Vec<_>>>()?)
     }
     pub fn reclaim(&mut self, run: &mut Run) -> Result<()> {
+        ensure!(!run.planning_only, "planning_graph_execution_denied");
         let owner: Option<String> = self
             .connection
             .query_row(

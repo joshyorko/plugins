@@ -1,4 +1,4 @@
-import type { RunView, Workbench } from "../src/domain";
+import type { BackendCatalog, GraphEnvelope, RunView, Workbench } from "../src/domain";
 
 export function fixtureRun(overrides: Partial<RunView> = {}): RunView {
   const run: RunView = {
@@ -50,4 +50,14 @@ export const fixtureWorkbench: Workbench = {
   runs: [fixtureRun()],
   capabilities: { repositories: [{ alias: "plugins", max_finish: "pr" }], profiles: [{ alias: "luna", effort: "xhigh" }], limits: { capacity: 4, repair_attempts: 3, wall_seconds: 3600 } },
   settings: { capacity: 2, profile: "luna", finish: "local_candidate" },
+};
+
+export function fixtureGraph(revision = 7): GraphEnvelope {
+  const run = fixtureRun();
+  return { graph: { run_id: run.id, revision, repository: { alias: run.repository, identity: "opaque-repository", base_head: "abc", subject: run.current_subject }, planning_only: true, nodes: run.control!.tasks.map(task => ({ ...task, state: "CANDIDATE", admission: "candidate", owner_thread: null, attempt_ids: [], source: null, target_preference: null })), criteria: run.control!.criteria, attempts: [], claim: { held: false, status: "released" }, changes: [] }, proposal: null };
+}
+const operation = { advertised: false, enabled: false, qualified: false };
+export const fixtureBackends: BackendCatalog = {
+  schema_version: 1, discovery: "configuration_only", policy: "subscription_only",
+  targets: ["native-local", "codex-cloud"].map(id => ({ id, label: id === "native-local" ? "Native local" : "Codex Cloud", kind: id, namespace: id, operator_enabled: id === "native-local", planning_eligible: id === "native-local", execution_eligible: false, qualification: "unverified", authentication: "unknown", entitlement: "unknown", reason: "Execution qualification has not been established", operations: { discover: operation, start: operation, observe: operation, steer: operation, stop: operation, reconcile: operation }, limits: [] })),
 };

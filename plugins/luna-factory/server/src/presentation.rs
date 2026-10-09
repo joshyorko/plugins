@@ -21,7 +21,7 @@ pub fn public_control(run: &Run, control: &Control) -> Value {
         "reason":if criterion_current(control,c){Value::Null}else{json!(c.reason)},"check_refs":c.check_refs})).collect();
     let tasks: Vec<_>=control.tasks.values().map(|t|json!({"id":t.id,"title":public_title(if t.id=="objective"{run.request.objective.as_str()}else{t.title.as_str()}),
         "criterion_ids":t.criteria,"dependencies":t.dependencies,"state":t.state,
-        "admission":if t.necessity=="unverified_native_child"{"unverified"}else if t.state==crate::control::TaskState::Blocked{"rejected"}else{"admitted"},
+        "admission":if t.state==crate::control::TaskState::Candidate{"candidate"}else if t.necessity=="unverified_native_child"{"unverified"}else if t.state==crate::control::TaskState::Blocked{"rejected"}else{"admitted"},
         "reason":if t.necessity=="unverified_native_child"{json!("native_child_policy_unverified")}else{json!(t.reason)},
         "owner_thread":if t.id=="objective"{run.thread_id.as_ref()}else{t.native_thread.as_ref()},
         "attempt_ids":control.attempts.iter().rev().filter(|a|a.task_id==t.id).take(64).map(|a|&a.id).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>()})).collect();
@@ -33,6 +33,22 @@ pub fn public_control(run: &Run, control: &Control) -> Value {
         "criteria":criteria,"tasks":tasks,"attempts":attempts,"effects":effects,"child_policy":control.child_policy})
 }
 pub fn project(run: &Run, control: &Control, timestamp: u64) -> Value {
+    if run.planning_only {
+        let refresh = descriptor(
+            "refresh",
+            "Refresh planning graph",
+            "planning_only",
+            Some("refresh_factory"),
+            true,
+        );
+        return json!({"revision":control.revision,"primary_action":refresh,"actions":[refresh],
+            "criteria":{"proven":0,"failed":0,"unproved":control.criteria.len(),"mandatory":control.criteria.len()},
+            "result":{"kind":"unverified","label":"Planning only; execution has not been authorized"},
+            "owner":{"thread_id":null,"turn_id":null,"liveness":"unknown"},"workers":[],
+            "budget":{"time_remaining_seconds":run.deadline_at.saturating_sub(timestamp),"repair_attempts_remaining":run.request.repair_attempts,"repairs_used":0},
+            "claim":{"held":false,"status":match run.observed_claim {crate::store::ObservedClaim::Foreign=>"foreign",crate::store::ObservedClaim::Unknown=>"unknown",_=>"released"}},
+            "deliverable":{"kind":"local_candidate","status":"unproved","subject":control.current_subject,"reference":null}});
+    }
     let active = control.settlement == crate::control::Settlement::Live;
     let stopped = control.settlement == crate::control::Settlement::Stopped;
     let unknown = control.unknown_effect()
@@ -229,6 +245,10 @@ pub fn authorize_action(
     expected_revision: Option<u64>,
     timestamp: u64,
 ) -> Result<()> {
+    ensure!(
+        !run.planning_only || matches!(kind, "refresh" | "inspect"),
+        "planning_graph_execution_denied"
+    );
     let control = run
         .control
         .as_ref()

@@ -93,3 +93,19 @@ denied, 53 repository checks, 27 packaging tests and 11 canonical skill checks.
 A compiled HTTP smoke still discovers 12 tools and the unchanged 392189-byte UI
 resource. The opt-in live audit remains ignored. Desktop/phone rendering,
 authorized native inference and actual process cessation remain unproved.
+
+
+## LF-01 through LF-06 planning graph
+
+The planning slice extends the same Rust Store and control event journal with
+repository-bound candidate graphs, audited proposal/apply changes, configuration-only
+backend discovery, and per-instance workbench node context. It starts no worker.
+See [wire contract](control-wire.md#planning-graph-contract-lf-01-through-lf-06),
+[host validation](graph-host-evidence.md), [backend validation](graph-backend-evidence.md),
+[verification and rollback](graph-verification.md), and [remaining delivery graph](delivery-graph.json).
+
+Source and tests confirm that CAS account/read is currently not exposed, that its
+callback ownership is action-scoped, and that the official Cloud docs distinguish
+new published environments from legacy integration Cloud. These are qualification
+limits, not reasons to add an API-billed fallback. Issue #61 remains the next
+bounded execution continuation task after this planning slice.
