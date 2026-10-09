@@ -10,7 +10,7 @@ A valid report still needs semantic judgment from the owner; the Factory neither
 
 Each new attempt is recorded before contacting the same native owner. Direct startup and reconciliation reads cannot replay a continuation directive. After read-only correlation reattaches an observer to an active dispatch, a genuinely subsequent live completion can request a new attempt under all guards. Genuine decisions still pause; exact answer retries return the same run without duplicate inference. Unknown effects/liveness or acknowledgement retain the claim.
 
-See the [wire contract](control-wire.md#bounded-owner-continuation-lf-07) and [design](../../../docs/superpowers/specs/2026-10-08-luna-continuation-design.md).
+See the [wire contract](control-wire.md#bounded-owner-continuation-lf-07) and [design](https://github.com/joshyorko/plugins/blob/d97e8f263bed9b710301d1d9804611d3e2df39b7/docs/superpowers/specs/2026-10-08-luna-continuation-design.md).
 
 ## Exact source and tests
 
@@ -45,4 +45,4 @@ The implementation was independently reviewed for claims, generations, source/ev
 
 Live ChatGPT context/interaction qualification and a real authenticated execution canary remain unperformed. They require an available supported host and separate authorization that preserves the unknown owner. Fixture assertions, hosted CI and the host SDK cannot substitute for those receipts.
 
-Use isolated copied ledgers for any later evaluation. Existing rollback guidance still applies: new graph/diagnosis records require a matching ledger and binary/UI pair; an older binary alone is not a supported rollback. LF-08 CAS contract and fixture integration is the next READY implementation node; target entitlement, durable callback ownership, exact identities and cessation remain execution-qualification gates.
+Use new empty ledgers for runtime previews. Consistent copied ledgers are only for offline migration checks with no native connection: serving a copy can reconnect its recorded owners and attach deadline watchers. Existing rollback guidance still applies: new graph/diagnosis records require a matching ledger and binary/UI pair; an older binary alone is not a supported rollback. The [LF-08 boundary](cas-verification.md) is now implemented; target entitlement, durable callback ownership, exact identities and cessation remain execution-qualification gates. Feature work is frozen for [stack acceptance](integration-readiness.md).

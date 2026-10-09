@@ -27,6 +27,11 @@ METADATA = (
     "docs/package.md", "docs/local-service.md", "docs/repository-onboarding.md",
     "docs/control-adoption.md", "docs/control-plan.md", "docs/control-wire.md",
     "docs/dogfood-recovery.md",
+    "docs/integration-readiness.md", "docs/stack-ci-evidence.json",
+    "docs/rollback-verification.json", "docs/cas-verification.md",
+    "docs/cas-verification-results.txt", "docs/cas-runtime-evidence.json",
+    "docs/graph-backend-evidence.md", "docs/continuation-verification.md",
+    "docs/continuation-verification-results.txt",
     "assets/logo.svg", "assets/logo.png",
 )
 SKILL_FILES = (

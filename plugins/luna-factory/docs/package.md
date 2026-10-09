@@ -24,6 +24,39 @@ bin/check
 
 The generated marketplace, Claude manifest, Hermes manifest, and skill symlinks are views of the canonical package. Do not author a second skill in those views. The Hermes compatibility shim registers skills; it does not start the daemon or establish MCP Apps compatibility.
 
+## Downloadable release bundle
+
+The repository's `v*` release workflow retains whole-repository source archives.
+When the tag exactly matches the Luna plugin version (currently `v0.2.0`), it also
+builds and publishes `luna-factory-0.2.0-x86_64-unknown-linux-gnu.tar.gz` and its
+`-provenance.json` on Ubuntu 24.04. Other version tags publish source archives only.
+The Linux bundle contains the runtime, UI, skill, manifests and operator runbooks;
+it does not install or start a service. No macOS, Windows or musl binary is implied.
+
+Release gates run repository validation, locked Rust tests/Clippy/formatting,
+UI tests/typecheck/build, the compiled graph protocol fixture, and packaging tests.
+The archive helper requires a clean checkout at the exact release SHA and a local
+tag resolving to that commit. It stages twice outside the checkout, compares all
+file hashes and modes, archives both stages with sorted paths, fixed commit-time
+timestamps, zero uid/gid and normalized modes, then compares the archive bytes.
+It extracts the final archive, checks every internal checksum, and executes only
+the trusted extracted binary's `--version`.
+
+The external provenance records source commit/tree/tag, compiler and tooling
+versions, build OS/GLIBC, target, ELF loader/library/symbol requirements, and
+archive/binary/UI/skill/receipt hashes. It contains no local checkout or state paths.
+The release-level `SHA256SUMS` covers source archives, the Luna bundle and provenance;
+the bundle's internal `SHA256SUMS` covers each installed file. These establish
+artifact identity and deterministic packaging, not independently reproducible
+compilation, subscription entitlement, live execution, or actual ChatGPT acceptance.
+
+Before installing, verify the downloaded release checksum and extracted internal
+checksums. Compare the provenance's architecture, loader, required libraries and
+GLIBC symbols with the destination machine, then run `bin/luna-factoryd --version`.
+Do not assume all Linux distributions can execute the GNU/Linux build. Install
+into a new versioned directory and follow the included local-service runbook;
+retain the matching previous binary/UI/configuration and consistent ledger backup.
+
 ## Local transport contract
 
 The default endpoint is `http://127.0.0.1:8787/mcp`. Start the daemon yourself using the operator configuration. The MCP manifest describes a connection, not a service supervisor.

@@ -289,7 +289,7 @@
         "Detached callback/approval limitations and descendant/terminal settlement are represented explicitly.",
         "No workspace provisioning or daemon restart is hidden in a read."
       ],
-      "status": "ready_for_contract_and_fixture_implementation",
+      "status": "bounded_read_only_implemented_execution_blocked",
       "proposed_new_files": [
         "plugins/luna-factory/server/src/backends/cas.rs",
         "plugins/luna-factory/server/tests/cas_contract.rs"
@@ -306,6 +306,23 @@
         "CAS action-scoped native connections do not provide a durable callback response broker; choose explicit retained-owner contract first.",
         "Qualify method-specific native versions: 0.160.1 baseline, limited diagnostics/queue support at 0.161.0.",
         "Persist Factory attempt request key before CAS dispatch; no new key after lost acknowledgement."
+      ],
+      "implementation_commit": "35fdf6e714d5ae606579fdfd884b9fb8ecee35f0",
+      "pull_request": "https://github.com/joshyorko/plugins/pull/64",
+      "verification": "cas-verification.md",
+      "remaining_execution_gates": [
+        "subscription_entitlement",
+        "durable_callback_owner",
+        "canonical_skill_output_schema_and_correlation",
+        "immutable_remote_workspace_source_identity",
+        "scoped_receipt_provenance",
+        "remote_evidence_and_cessation"
+      ],
+      "implemented_files": [
+        "plugins/luna-factory/server/src/cas.rs",
+        "plugins/luna-factory/server/src/cas_boundary.rs",
+        "plugins/luna-factory/server/tests/cas_boundary.rs",
+        "plugins/luna-factory/scripts/verify_cas_boundary.py"
       ]
     },
     {
@@ -521,11 +538,11 @@
     "graph-backend-evidence.md",
     "control-wire.md",
     "graph-verification.md",
-    "continuation-verification.md"
+    "continuation-verification.md",
+    "cas-verification.md",
+    "integration-readiness.md"
   ],
-  "ready_next_nodes": [
-    "LF-08"
-  ],
+  "ready_next_nodes": [],
   "documentation_decisions": [
     {
       "repository": "actions",
@@ -540,5 +557,15 @@
   "implementation_commit": "5491033cd1ee4fd6a1676a0d0e69e70eae60c01c",
   "continuation_implementation_commit": "37e513795127289796fe4032c5578671d4d21229",
   "graph_followup_commit": "84856562e9a0aaac4dbedf82fe60c44d38333188",
-  "continuation_branch": "feat/luna-factory-bounded-continuation"
+  "continuation_branch": "feat/luna-factory-bounded-continuation",
+  "feature_development_frozen": true,
+  "ready_acceptance_gates": [
+    "stack_exact_head_ci_and_maintainer_review",
+    "isolated_actual_chatgpt_planning_context",
+    "isolated_cas_read_only_inspection",
+    "separately_authorized_local_native_canary"
+  ],
+  "lf09_required_for_first_useful_preview": false,
+  "cas_boundary_branch": "feat/luna-factory-cas-boundary",
+  "cas_boundary_implementation_commit": "35fdf6e714d5ae606579fdfd884b9fb8ecee35f0"
 }

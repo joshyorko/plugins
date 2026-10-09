@@ -101,7 +101,7 @@ fn unsupported(
 /// Advertised operations describe upstream contracts, not verified target availability.
 pub fn capabilities(config: &Config) -> Value {
     let enabled = native_enabled(config);
-    let targets = [
+    let mut targets = [
         Target {
             id: "native-local",
             label: "Native Codex",
@@ -129,7 +129,7 @@ pub fn capabilities(config: &Config) -> Value {
             "cas_target/cwd/thread/turn/request_id",
             [true; 5],
             &[
-                "CAS resolves operator-owned targets and controls existing native daemons; this service has no qualified CAS adapter.",
+                "CAS target inspection and bound receipt/thread observation are available only for configured loopback targets; execution is not qualified.",
                 "CAS dispatch receipts prove acknowledgement and replay protection, not task completion or cessation.",
                 "CAS does not expose account/read or a durable callback response broker; subscription entitlement remains unknown.",
             ],
@@ -167,11 +167,20 @@ pub fn capabilities(config: &Config) -> Value {
             ],
         ),
     ];
+    if !config.cas_targets.is_empty() {
+        let cas = &mut targets[1];
+        cas.operator_enabled = true;
+        cas.qualification = Qualification::Unverified;
+        cas.reason = "read_only_adapter_execution_blocked";
+        cas.operations.observe.enabled = true;
+        cas.operations.reconcile.enabled = true;
+    }
     serde_json::json!({
         "schema_version": 1,
         "discovery": "configuration_only",
         "policy": "subscription_only",
         "targets": targets,
+        "cas_target_aliases": config.cas_targets.keys().collect::<Vec<_>>(),
     })
 }
 

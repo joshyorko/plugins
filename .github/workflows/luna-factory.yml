@@ -36,9 +36,9 @@ jobs:
           npm ci
           npm run build
           npm test -- --run test/graph_e2e.test.ts
-      - name: Test local package staging
+      - name: Test package and release archive contracts
         working-directory: .
-        run: python3 -m unittest discover -s plugins/luna-factory/tests -p 'test_package_runtime.py' -v
+        run: python3 -m unittest discover -s plugins/luna-factory/tests -v
   ui:
     runs-on: ubuntu-latest
     steps:

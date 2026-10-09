@@ -94,6 +94,7 @@ impl McpServer {
                 ensure_empty(&args)?;
                 Ok(crate::backends::capabilities(&self.factory.config))
             }
+            "inspect_factory_cas" => self.factory.inspect_cas(parse(args)?).await,
             "list_factory_runs" => {
                 Ok(json!({"runs":self.factory.list(parse::<List>(args)?.limit).await?}))
             }

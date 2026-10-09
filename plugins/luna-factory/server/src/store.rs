@@ -816,6 +816,16 @@ impl Store {
         run: &mut Run,
         event: &crate::control::EventEnvelope,
     ) -> Result<bool> {
+        if let crate::control::Event::CasPlanned { request } = &event.event {
+            ensure!(
+                run.planning_only && !run.claim_held && run.thread_id.is_none(),
+                "cas_plan_requires_planning_run"
+            );
+            ensure!(
+                run.graph_repository_stamp.as_ref() == Some(&request.repository_stamp),
+                "cas_plan_repository_mismatch"
+            );
+        }
         let fingerprint = format!("{:x}", Sha256::digest(serde_json::to_vec(event)?));
         if let Some(previous) = self
             .connection
@@ -895,6 +905,16 @@ impl Store {
             "legacy_control_projection_mismatch"
         );
         control.validate()?;
+        ensure!(
+            control.cas_requests.is_empty() || run.planning_only,
+            "cas_plan_requires_planning_run"
+        );
+        for (id, request) in &previous.control.as_ref().unwrap().cas_requests {
+            ensure!(
+                control.cas_requests.get(id) == Some(request),
+                "immutable_cas_request"
+            );
+        }
         for (id, source) in &previous.control.as_ref().unwrap().graph_sources {
             ensure!(
                 control.graph_sources.get(id) == Some(source),

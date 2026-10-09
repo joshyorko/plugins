@@ -176,6 +176,7 @@ pub fn tool_definitions() -> Vec<Tool> {
         definition("create_factory_graph", "Create planning graph", "Create a repository-bound planning graph in the existing Factory ledger. No execution claim, worker or inference is started. This planning-only record cannot be resumed as execution.", create_schema, false),
         definition("get_factory_graph", "Inspect engineering graph", "Read authoritative repository-bound nodes, dependencies, source bindings, claims, proof and proposed changes. Selection/context is not authorization.", object(json!({"run_id":id}), &["run_id"]), true),
         definition("get_factory_backends", "Inspect execution capabilities", "Read configuration-only target capabilities and unknown entitlement evidence. Starts no daemon or authentication. A planning preference does not qualify subscription-backed execution.", object(json!({}), &[]), true),
+        definition("inspect_factory_cas", "Inspect configured CAS target", "Opt-in read-only CAS inspection. Use an operator-configured target alias. Optionally supply both run_id and an existing durable planning request_id to read its receipt and exact thread. Does not dispatch, retry, authenticate, release claims or certify execution. Missing receipts and subscription entitlement remain unverified.", object(json!({"target_alias":{"type":"string","minLength":1,"maxLength":64},"run_id":id,"request_id":{"type":"string","minLength":1,"maxLength":128}}), &["target_alias"]), true),
         definition("propose_factory_change", "Propose graph change", "Record a source-bound, revision-fenced planning proposal under local operator authority. Imports remain candidates without execution authority. Inspect its returned ID/revision before applying; duplicate keys require identical payloads.", object(json!({"run_id":id,"expected_revision":revision,"idempotency_key":node_id,"change":change}), &["run_id","expected_revision","idempotency_key","change"]), false),
         definition("apply_factory_change", "Apply graph change", "Apply one inspected proposal at its current revision. Rechecks source, authority and backend preference. Does not dispatch or reassign active/unknown execution. Identical recorded retries do not apply twice.", object(json!({"run_id":id,"change_id":node_id,"expected_revision":revision}), &["run_id","change_id","expected_revision"]), false),
     ]);
@@ -207,6 +208,7 @@ pub fn tool_definitions() -> Vec<Tool> {
                 | "create_factory_graph"
                 | "get_factory_graph"
                 | "get_factory_backends"
+                | "inspect_factory_cas"
                 | "propose_factory_change"
                 | "apply_factory_change"
         ) {

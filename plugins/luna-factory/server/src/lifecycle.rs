@@ -311,6 +311,67 @@ pub struct Factory {
     _lease: Arc<ServiceLease>,
 }
 impl Factory {
+    /// Opt-in read-only CAS observation. Receipt identity is never execution proof.
+    /// Validate the durable local binding before sending any request; never hold the
+    /// SQLite lock across network IO and never feed CAS observations into native settlement.
+    pub async fn inspect_cas(&self, args: crate::cas_boundary::InspectCas) -> Result<Value> {
+        ensure!(
+            args.run_id.is_some() == args.request_id.is_some(),
+            "cas_run_and_request_required_together"
+        );
+        let target = self
+            .config
+            .cas_targets
+            .get(&args.target_alias)
+            .context("cas_target_not_configured")?
+            .clone();
+        target.validate()?;
+        if let (Some(run_id), Some(request_id)) = (&args.run_id, &args.request_id) {
+            let run = self.store.lock().await.get(run_id)?;
+            ensure!(
+                run.planning_only && !run.claim_held && run.thread_id.is_none(),
+                "cas_plan_requires_planning_run"
+            );
+            let control = run.control.as_ref().context("control_missing")?;
+            let request = control
+                .cas_requests
+                .get(request_id)
+                .context("cas_request_not_recorded")?;
+            request.validate()?;
+            ensure!(
+                request.target_alias == args.target_alias && request.prepared.target == target,
+                "cas_binding_changed"
+            );
+            ensure!(
+                run.graph_repository_stamp.as_ref() == Some(&request.repository_stamp)
+                    && control.current_subject == request.subject,
+                "cas_plan_source_changed"
+            );
+            self.validate_graph_repository(&run).await?;
+            ensure!(
+                crate::store::repository_subject(Path::new(&run.canonical_root))?
+                    == request.subject,
+                "cas_plan_source_changed"
+            );
+        }
+        let client = crate::cas::CasClient::new(target)?;
+        let inspection = client.inspect().await?;
+        let receipt = if let Some(request_id) = args.request_id {
+            Some(client.read_receipt(&request_id).await?)
+        } else {
+            None
+        };
+        let thread = if let Some(thread_id) = receipt.as_ref().and_then(|r| r.thread_id.as_deref())
+        {
+            Some(client.read_thread(thread_id).await?)
+        } else {
+            None
+        };
+        Ok(json!({"schema_version":1,"target_alias":args.target_alias,
+            "target":inspection,"qualification":crate::cas::qualification(),
+            "receipt":receipt,"thread":thread}))
+    }
+
     pub fn new(config: Config) -> Result<Self> {
         let mut store = Store::open(&config)?;
         let lease = std::fs::OpenOptions::new()

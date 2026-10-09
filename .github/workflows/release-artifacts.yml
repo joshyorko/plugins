@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-and-publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,16 +27,84 @@ jobs:
       - name: Validate repo
         run: bin/check
 
+      - name: Select versioned Luna runtime bundle
+        id: luna
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          version = json.loads(Path("plugins/luna-factory/plugin.json").read_text())["version"]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("enabled=" + str(os.environ["RELEASE_TAG"] == "v" + version).lower() + "\n")
+          PY
+
+      - name: Set up Node for Luna
+        if: steps.luna.outputs.enabled == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Set up Rust for Luna
+        if: steps.luna.outputs.enabled == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Verify and build Luna runtime
+        if: steps.luna.outputs.enabled == 'true'
+        working-directory: plugins/luna-factory/server
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+          cargo build --locked --release
+
+      - name: Verify Luna workbench and compiled protocol
+        if: steps.luna.outputs.enabled == 'true'
+        working-directory: plugins/luna-factory/ui
+        env:
+          LUNA_GRAPH_E2E: '1'
+          LUNA_FACTORY_BINARY: ${{ github.workspace }}/plugins/luna-factory/server/target/release/luna-factoryd
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+          npm test
+          git diff --exit-code -- dist/index.html
+
+      - name: Verify Luna packaging and release contracts
+        if: steps.luna.outputs.enabled == 'true'
+        run: python3 -m unittest discover -s plugins/luna-factory/tests -v
+
+      - name: Stage and verify Luna release archive
+        if: steps.luna.outputs.enabled == 'true'
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 plugins/luna-factory/scripts/build_release_archive.py \
+            --binary plugins/luna-factory/server/target/release/luna-factoryd \
+            --ui plugins/luna-factory/ui/dist/index.html \
+            --source-sha "$RELEASE_SHA" --tag "$RELEASE_TAG" \
+            --output "$RUNNER_TEMP/luna-release"
+
       - name: Build release archives
         run: |
           tag="${GITHUB_REF_NAME}"
           mkdir -p dist
           git archive --format=tar.gz --prefix="plugins-${tag}/" -o "dist/plugins-${tag}.tar.gz" "${GITHUB_SHA}"
           git archive --format=zip --prefix="plugins-${tag}/" -o "dist/plugins-${tag}.zip" "${GITHUB_SHA}"
-          (
-            cd dist
-            sha256sum "plugins-${tag}.tar.gz" "plugins-${tag}.zip" > SHA256SUMS
-          )
+
+      - name: Include verified Luna bundle
+        if: steps.luna.outputs.enabled == 'true'
+        run: cp "$RUNNER_TEMP/luna-release/"* dist/
+
+      - name: Checksum every release asset
+        run: |
+          cd dist
+          sha256sum -- * > SHA256SUMS
 
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
@@ -44,4 +112,6 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*-provenance.json
             dist/SHA256SUMS
+          fail_on_unmatched_files: false

@@ -14,6 +14,8 @@ pub struct Config {
     pub native_transport: String,
     #[serde(default)]
     pub native_socket: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub cas_targets: BTreeMap<String, crate::cas::CasTarget>,
     pub database: PathBuf,
     pub codex_binary: PathBuf,
     pub skill_path: PathBuf,
@@ -87,6 +89,11 @@ impl Config {
     }
     pub fn validate(&self) -> Result<()> {
         ensure!(self.listen.ip().is_loopback(), "loopback_only");
+        ensure!(self.cas_targets.len() <= 8, "too_many_cas_targets");
+        for (alias, target) in &self.cas_targets {
+            ensure!(valid_alias(alias), "invalid_cas_alias");
+            target.validate()?;
+        }
         ensure!(
             ["stdio", "existing_daemon"].contains(&self.native_transport.as_str()),
             "unsupported_native_transport"

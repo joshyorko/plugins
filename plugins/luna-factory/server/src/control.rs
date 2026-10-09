@@ -219,6 +219,8 @@ pub struct Control {
     pub target_preferences: BTreeMap<String, String>,
     #[serde(default)]
     pub graph_changes: BTreeMap<String, crate::graph::Proposal>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub cas_requests: BTreeMap<String, crate::cas_boundary::CasRequest>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -230,6 +232,9 @@ pub struct EventEnvelope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Event {
+    CasPlanned {
+        request: crate::cas_boundary::CasRequest,
+    },
     GraphProposed {
         proposal: crate::graph::Proposal,
     },
@@ -334,6 +339,7 @@ impl Control {
             graph_sources: BTreeMap::new(),
             target_preferences: BTreeMap::new(),
             graph_changes: BTreeMap::new(),
+            cas_requests: BTreeMap::new(),
         };
         let task = Task {
             id: "objective".into(),
@@ -356,6 +362,14 @@ impl Control {
     }
     pub fn validate(&self) -> Result<()> {
         crate::graph::validate_metadata(self)?;
+        ensure!(self.cas_requests.len() <= 128, "too_many_cas_requests");
+        for (id, request) in &self.cas_requests {
+            request.validate()?;
+            ensure!(
+                id == &request.prepared.request_id && self.tasks.contains_key(&request.task_id),
+                "invalid_cas_request_binding"
+            );
+        }
         ensure!(
             self.schema_version == SCHEMA_VERSION,
             "unsupported_control_schema"
@@ -661,6 +675,18 @@ pub fn reduce(current: &Control, envelope: &EventEnvelope) -> Result<Control> {
     );
     let mut next = current.clone();
     match &envelope.event {
+        Event::CasPlanned { request } => {
+            request.validate()?;
+            ensure!(
+                next.cas_requests.len() < 128
+                    && !next.cas_requests.contains_key(&request.prepared.request_id)
+                    && next.tasks.contains_key(&request.task_id)
+                    && request.subject == next.current_subject,
+                "invalid_cas_plan"
+            );
+            next.cas_requests
+                .insert(request.prepared.request_id.clone(), request.clone());
+        }
         Event::GraphProposed { proposal } => {
             ensure!(
                 proposal.base_revision == current.revision

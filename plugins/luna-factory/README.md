@@ -6,6 +6,8 @@ Use `$luna-factory` directly in Codex when you want the skill alone. Starting a 
 
 This is a local/private application package. Build and protocol tests do not establish that the live Codex, ChatGPT, or private tunnel acceptance gates have passed. See [package and operator boundaries](docs/package.md) for the gate checklist.
 
+The stacked implementation's [integration-readiness report](docs/integration-readiness.md) separates code-merge gates from live acceptance. [Bounded CAS inspection](docs/cas-verification.md) is available for explicitly configured loopback targets; CAS execution remains disabled pending protocol, identity, entitlement and cessation qualification.
+
 ## Build from this checkout
 
 Requirements: Rust 1.88 or newer, Node.js/npm for the UI, Git, and a supported authenticated Codex CLI. Use the operator's existing Codex profile; do not copy credentials into this checkout.
