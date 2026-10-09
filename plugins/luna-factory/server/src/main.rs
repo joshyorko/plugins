@@ -114,16 +114,20 @@ async fn main() -> Result<()> {
                 .map(|v| format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(v)));
             let mut report = json!({"runtime":env!("CARGO_PKG_VERSION"),"codex_version":version,"skill_sha256":skill,"configuration_valid":true,"native_transport":config.native_transport,"inference_calls":0,"effective_route":"unverified","native_probe":"not_requested"});
             if probe_native {
-                let args = if config.native_transport == "existing_daemon" {
-                    let mut args = vec!["app-server".into(), "proxy".into()];
-                    if let Some(socket) = &config.native_socket {
-                        args.extend(["--sock".into(), socket.to_string_lossy().into_owned()]);
-                    }
-                    args
+                let connection = if config.native_transport == "existing_daemon" {
+                    NativeClient::connect_existing(
+                        &config.codex_binary,
+                        config.native_socket.as_deref(),
+                    )
+                    .await
                 } else {
-                    vec!["app-server".into(), "--stdio".into()]
+                    NativeClient::spawn(
+                        &config.codex_binary,
+                        &["app-server".into(), "--stdio".into()],
+                    )
+                    .await
                 };
-                match NativeClient::spawn(&config.codex_binary, &args).await {
+                match connection {
                     Ok(client) => {
                         report["native_probe"] = match client.list_models().await {
                             Ok(catalog) => {

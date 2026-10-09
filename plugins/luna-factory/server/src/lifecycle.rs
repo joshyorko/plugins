@@ -821,16 +821,19 @@ impl Factory {
         )
     }
     async fn connect(&self) -> Result<NativeClient> {
-        let mut args = vec!["app-server".into()];
         if self.config.native_transport == "existing_daemon" {
-            args.push("proxy".into());
-            if let Some(socket) = &self.config.native_socket {
-                args.extend(["--sock".into(), socket.to_string_lossy().into_owned()]);
-            }
+            NativeClient::connect_existing(
+                &self.config.codex_binary,
+                self.config.native_socket.as_deref(),
+            )
+            .await
         } else {
-            args.push("--stdio".into());
+            NativeClient::spawn(
+                &self.config.codex_binary,
+                &["app-server".into(), "--stdio".into()],
+            )
+            .await
         }
-        NativeClient::spawn(&self.config.codex_binary, &args).await
     }
     pub async fn start(&self, request: StartRequest) -> Result<Value> {
         let guard = self.mutation.lock().await;

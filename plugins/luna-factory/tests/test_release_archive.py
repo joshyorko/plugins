@@ -29,7 +29,7 @@ class ReleaseArchiveTests(unittest.TestCase):
         # A real local ELF exercises readelf/getconf and extracted --version;
         # no Codex process, operator state, or network is involved.
         subprocess.run(["cc", "-x", "c", "-o", str(fixture.binary), "-"],
-                       input='#include <stdio.h>\nint main(void){puts("luna-factoryd 0.2.0");}\n',
+                       input='#include <stdio.h>\nint main(void){puts("luna-factoryd 0.2.1");}\n',
                        text=True, check=True, capture_output=True)
         self.git("init", "-q")
         self.git("add", ".")
@@ -37,13 +37,13 @@ class ReleaseArchiveTests(unittest.TestCase):
                  "-c", "core.hooksPath=/dev/null", "commit", "-qm", "release fixture")
         self.sha = self.git("rev-parse", "HEAD")
         self.tree = self.git("rev-parse", "HEAD^{tree}")
-        self.git("tag", "v0.2.0")
+        self.git("tag", "v0.2.1")
         self.output = fixture.base / "release"
 
     def git(self, *args):
         return subprocess.check_output(["git", "-C", str(self.repo), *args], text=True).strip()
 
-    def release(self, output=None, sha=None, tag="v0.2.0"):
+    def release(self, output=None, sha=None, tag="v0.2.1"):
         return subprocess.run([sys.executable, str(self.script), "--binary", str(self.fixture.binary),
                                "--ui", str(self.fixture.ui), "--output", str(output or self.output),
                                "--source-sha", sha or self.sha, "--tag", tag],
@@ -67,7 +67,7 @@ class ReleaseArchiveTests(unittest.TestCase):
         record = json.loads(provenance.read_text())
         self.assertEqual(record["source"]["commit"], self.sha)
         self.assertEqual(record["source"]["tree"], self.tree)
-        self.assertEqual(record["source"]["tag"], "v0.2.0")
+        self.assertEqual(record["source"]["tag"], "v0.2.1")
         self.assertEqual(record["build"]["target"], "x86_64-unknown-linux-gnu")
         self.assertEqual(record["artifact"]["sha256"], hashlib.sha256(archive.read_bytes()).hexdigest())
         self.assertTrue(record["elf"]["glibc_symbol_versions"])
@@ -83,7 +83,7 @@ class ReleaseArchiveTests(unittest.TestCase):
             tar.extractall(extracted, filter="data")
         staged, = extracted.iterdir()
         subprocess.run(["sha256sum", "--check", "SHA256SUMS"], cwd=staged, check=True, capture_output=True)
-        self.assertEqual(subprocess.check_output([staged / "bin/luna-factoryd", "--version"], text=True).strip(), "luna-factoryd 0.2.0")
+        self.assertEqual(subprocess.check_output([staged / "bin/luna-factoryd", "--version"], text=True).strip(), "luna-factoryd 0.2.1")
         self.assertEqual((staged / "bin/luna-factoryd").stat().st_mode & 0o777, 0o755)
 
     def test_wrong_source_tag_and_dirty_checkout_are_rejected_without_artifacts(self):
@@ -100,7 +100,7 @@ class ReleaseArchiveTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_non_elf_and_existing_output_are_rejected(self):
-        self.fixture.binary.write_text("#!/bin/sh\necho luna-factoryd 0.2.0\n")
+        self.fixture.binary.write_text("#!/bin/sh\necho luna-factoryd 0.2.1\n")
         result = self.release()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("ELF", result.stderr)
@@ -125,7 +125,7 @@ class ReleaseArchiveTests(unittest.TestCase):
         workflow = (package_fixture.PLUGIN.parents[1] / ".github/workflows/release-artifacts.yml").read_text()
         step = workflow.split("      - name: Select versioned Luna runtime bundle\n", 1)[1].split("\n      - name:", 1)[0]
         script = textwrap.dedent(step.split("        run: |\n", 1)[1])
-        for index, (tag, expected) in enumerate([("v0.2.0", "true"), ("v9.9.9", "false"), ("v0.2.0-rc1", "false")]):
+        for index, (tag, expected) in enumerate([("v0.2.1", "true"), ("v9.9.9", "false"), ("v0.2.1-rc1", "false")]):
             with self.subTest(tag=tag):
                 output = self.fixture.base / f"gate-{index}"
                 subprocess.run(["bash", "-e", "-c", script], cwd=self.repo, check=True,

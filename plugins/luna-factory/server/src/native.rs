@@ -1,9 +1,11 @@
-//! Bounded, asynchronous native Codex app-server stdio transport.
+//! Bounded native Codex app-server transports: owned JSONL stdio or an existing Unix WebSocket.
 //!
 //! The launch arguments come only from trusted local configuration. This module
 //! never changes credentials, provider, approval policy, sandbox or service tier.
 //! Raw protocol values are internal evidence, not safe UI/log payloads.
 use anyhow::{Context, Result, anyhow, bail, ensure};
+#[cfg(unix)]
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -22,6 +24,11 @@ use tokio::{
     sync::{Mutex, broadcast, oneshot},
     task::JoinHandle,
     time::timeout,
+};
+#[cfg(unix)]
+use tokio_tungstenite::{
+    WebSocketStream, client_async_with_config,
+    tungstenite::{Message, protocol::WebSocketConfig},
 };
 
 #[derive(Clone, Debug, Deserialize)]
@@ -67,9 +74,40 @@ impl Default for NativeOptions {
     }
 }
 
+impl NativeOptions {
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            !self.request_timeout.is_zero() && self.request_timeout <= Duration::from_secs(120),
+            "invalid native request timeout"
+        );
+        ensure!(
+            (1024..=16 * 1024 * 1024).contains(&self.max_frame_bytes),
+            "invalid native frame bound"
+        );
+        ensure!(
+            (1..=1024).contains(&self.event_capacity),
+            "invalid native event capacity"
+        );
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+type DaemonSocket = WebSocketStream<tokio::net::UnixStream>;
+#[cfg(unix)]
+type SharedDaemonSocket = Arc<StdMutex<Option<DaemonSocket>>>;
+
+enum NativeWriter {
+    Stdio(ChildStdin),
+    #[cfg(unix)]
+    WebSocket(SharedDaemonSocket),
+}
+
 struct Inner {
-    stdin: Mutex<Option<ChildStdin>>,
+    stdin: Mutex<Option<NativeWriter>>,
     child: Mutex<Option<Child>>,
+    #[cfg(unix)]
+    daemon_socket: Option<SharedDaemonSocket>,
     pending: StdMutex<Pending>,
     tasks: StdMutex<Vec<JoinHandle<()>>>,
     events: broadcast::Sender<Value>,
@@ -80,6 +118,15 @@ struct Inner {
 impl Inner {
     fn fail_pending(&self, reason: &'static str) {
         self.closed.store(true, Ordering::Release);
+        #[cfg(unix)]
+        if let Some(socket) = &self.daemon_socket {
+            // Drop the physical connection and every buffered WebSocket frame.
+            // Logical closure alone lets a later read/pong flush an aborted RPC.
+            socket.lock().expect("daemon socket lock").take();
+            for task in self.tasks.lock().expect("task lock").iter() {
+                task.abort();
+            }
+        }
         for (_, sender) in self.pending.lock().expect("pending lock").drain() {
             let _ = sender.send(Err(anyhow!(reason)));
         }
@@ -120,19 +167,7 @@ impl NativeClient {
         args: &[String],
         options: NativeOptions,
     ) -> Result<Self> {
-        ensure!(
-            !options.request_timeout.is_zero()
-                && options.request_timeout <= Duration::from_secs(120),
-            "invalid native request timeout"
-        );
-        ensure!(
-            (1024..=16 * 1024 * 1024).contains(&options.max_frame_bytes),
-            "invalid native frame bound"
-        );
-        ensure!(
-            (1..=1024).contains(&options.event_capacity),
-            "invalid native event capacity"
-        );
+        options.validate()?;
         let mut child = Command::new(binary)
             .args(args)
             .stdin(Stdio::piped())
@@ -146,8 +181,10 @@ impl NativeClient {
         let mut stderr = child.stderr.take().context("native stderr unavailable")?;
         let (events, _) = broadcast::channel(options.event_capacity);
         let inner = Arc::new(Inner {
-            stdin: Mutex::new(Some(stdin)),
+            stdin: Mutex::new(Some(NativeWriter::Stdio(stdin))),
             child: Mutex::new(Some(child)),
+            #[cfg(unix)]
+            daemon_socket: None,
             pending: StdMutex::new(HashMap::new()),
             tasks: StdMutex::new(Vec::new()),
             events,
@@ -177,15 +214,91 @@ impl NativeClient {
             .expect("task lock")
             .extend([stdout_task, stderr_task]);
         let client = Self { inner };
-        let handshake = async {
-            client.request("initialize", json!({"clientInfo":{"name":"luna_factory", "title":"Luna Factory", "version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}})).await?;
-            client.write_message(json!({"method":"initialized"})).await
-        }.await;
+        client.initialize().await?;
+        Ok(client)
+    }
+
+    /// Connect only to an already-running native daemon. The optional discovery
+    /// command is read-only; this path never starts a daemon or owns its process.
+    pub async fn connect_existing(binary: &Path, socket: Option<&Path>) -> Result<Self> {
+        Self::connect_existing_with_options(binary, socket, NativeOptions::default()).await
+    }
+
+    pub async fn connect_existing_with_options(
+        binary: &Path,
+        socket: Option<&Path>,
+        options: NativeOptions,
+    ) -> Result<Self> {
+        options.validate()?;
+        #[cfg(not(unix))]
+        {
+            let _ = (binary, socket);
+            bail!("existing_daemon_unix_transport_unsupported");
+        }
+        #[cfg(unix)]
+        {
+            let socket = match socket {
+                Some(path) => path.to_owned(),
+                None => discover_daemon_socket(binary, options.request_timeout).await?,
+            };
+            ensure!(
+                socket.is_absolute() && socket.as_os_str().len() <= 4096,
+                "invalid_native_socket"
+            );
+            let ws_config = WebSocketConfig::default()
+                .read_buffer_size(8192)
+                .write_buffer_size(0)
+                .max_write_buffer_size(options.max_frame_bytes * 2 + 128)
+                .max_message_size(Some(options.max_frame_bytes))
+                .max_frame_size(Some(options.max_frame_bytes));
+            let connection = async {
+                let stream = tokio::net::UnixStream::connect(&socket)
+                    .await
+                    .map_err(|_| {
+                        anyhow!("native daemon socket unavailable; no daemon was started")
+                    })?;
+                // Fixed root URL is framing metadata, never a TCP destination.
+                let (websocket, _) =
+                    client_async_with_config("ws://localhost/", stream, Some(ws_config))
+                        .await
+                        .map_err(|_| anyhow!("native daemon WebSocket handshake failed"))?;
+                Ok::<_, anyhow::Error>(websocket)
+            };
+            let websocket = timeout(options.request_timeout, connection)
+                .await
+                .map_err(|_| anyhow!("native daemon connection timed out"))??;
+            let socket = Arc::new(StdMutex::new(Some(websocket)));
+            let (events, _) = broadcast::channel(options.event_capacity);
+            let inner = Arc::new(Inner {
+                stdin: Mutex::new(Some(NativeWriter::WebSocket(socket.clone()))),
+                child: Mutex::new(None),
+                daemon_socket: Some(socket.clone()),
+                pending: StdMutex::new(HashMap::new()),
+                tasks: StdMutex::new(Vec::new()),
+                events,
+                next_id: AtomicU64::new(1),
+                closed: AtomicBool::new(false),
+                options,
+            });
+            let weak = Arc::downgrade(&inner);
+            let task = tokio::spawn(read_websocket(socket, weak));
+            inner.tasks.lock().expect("task lock").push(task);
+            let client = Self { inner };
+            client.initialize().await?;
+            Ok(client)
+        }
+    }
+
+    async fn initialize(&self) -> Result<()> {
+        let handshake = timeout(self.inner.options.request_timeout, async {
+            self.request("initialize", json!({"clientInfo":{"name":"luna_factory", "title":"Luna Factory", "version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}})).await?;
+            self.write_message(json!({"method":"initialized"})).await
+        }).await.map_err(|_| anyhow!("native initialize timed out")).and_then(|result| result);
         if let Err(error) = handshake {
-            let _ = client.shutdown().await;
+            let _ = self.shutdown().await;
             return Err(error.context("native initialize failed; no inference was requested"));
         }
-        Ok(client)
+        Ok(())
     }
 
     /// Notifications AND server-originated approval requests. Consumers must
@@ -255,31 +368,83 @@ impl NativeClient {
     }
 
     async fn write_message_guarded(&self, message: Value, guard: &DispatchGuard<'_>) -> Result<()> {
-        let mut bytes = serde_json::to_vec(&message)?;
+        let text = serde_json::to_string(&message)?;
         ensure!(
-            bytes.len() < self.inner.options.max_frame_bytes,
+            text.len() < self.inner.options.max_frame_bytes,
             "native request exceeds frame bound"
         );
-        bytes.push(b'\n');
         let mut stdin = self.inner.stdin.lock().await;
         ensure!(
             !self.inner.closed.load(Ordering::Acquire),
             "native transport is closed"
         );
         let writer = stdin.as_mut().context("native transport is closed")?;
-        // No awaited preflight or lock acquisition may follow this check before
-        // starting the write. A partial write retains the existing unknown rule.
-        guard()?;
         let mut frame_guard = WriteGuard {
             inner: Arc::downgrade(&self.inner),
-            complete: false,
+            complete: true,
         };
-        // A partial frame is not recoverable. Any write failure invalidates the
-        // connection rather than risking a second mutation on a replay.
-        if writer.write_all(&bytes).await.is_err() || writer.flush().await.is_err() {
-            self.inner
-                .fail_pending("native write failed; outcome unknown");
-            bail!("native write failed; outcome unknown");
+        let result = match writer {
+            NativeWriter::Stdio(writer) => {
+                let mut bytes = text.into_bytes();
+                bytes.push(b'\n');
+                guard()?;
+                frame_guard.complete = false;
+                if writer.write_all(&bytes).await.is_err() || writer.flush().await.is_err() {
+                    Err(anyhow!("native write failed; outcome unknown"))
+                } else {
+                    Ok(())
+                }
+            }
+            #[cfg(unix)]
+            NativeWriter::WebSocket(socket) => {
+                let mut message = Some(Message::Text(text.into()));
+                // Poll the *actual* WebSocket, not SplitSink's deferred slot.
+                // The socket mutex is held only within a poll, never over await.
+                let queued = std::future::poll_fn(|cx| {
+                    let mut slot = socket.lock().expect("daemon socket lock");
+                    let Some(ws) = slot.as_mut() else {
+                        return std::task::Poll::Ready(Err(anyhow!("native transport is closed")));
+                    };
+                    match ws.poll_ready_unpin(cx) {
+                        std::task::Poll::Pending => std::task::Poll::Pending,
+                        std::task::Poll::Ready(Err(_)) => {
+                            frame_guard.complete = false;
+                            std::task::Poll::Ready(Err(anyhow!(
+                                "native WebSocket writer unavailable"
+                            )))
+                        }
+                        std::task::Poll::Ready(Ok(())) => {
+                            if self.inner.closed.load(Ordering::Acquire) {
+                                return std::task::Poll::Ready(Err(anyhow!(
+                                    "native transport is closed"
+                                )));
+                            }
+                            if let Err(error) = guard() {
+                                return std::task::Poll::Ready(Err(error));
+                            }
+                            frame_guard.complete = false;
+                            // Serialization, writer acquisition and readiness all
+                            // precede the guard. No await or queue follows it.
+                            std::task::Poll::Ready(
+                                ws.start_send_unpin(message.take().expect("one frame"))
+                                    .map_err(|_| anyhow!("native write failed; outcome unknown")),
+                            )
+                        }
+                    }
+                })
+                .await;
+                match queued {
+                    Err(error) => Err(error),
+                    Ok(()) => flush_websocket(socket).await,
+                }
+            }
+        };
+        if let Err(error) = result {
+            if !frame_guard.complete {
+                self.inner
+                    .fail_pending("native write failed; outcome unknown");
+            }
+            return Err(error);
         }
         frame_guard.complete = true;
         Ok(())
@@ -387,40 +552,148 @@ async fn read_stdout<R: AsyncRead + Unpin>(stdout: R, weak: Weak<Inner>, bound: 
                 break;
             }
         };
-        let Ok(message) = serde_json::from_slice::<Value>(&frame) else {
-            if let Some(inner) = weak.upgrade() {
-                inner.fail_pending("native stdout contains invalid JSON frame");
-            }
-            break;
-        };
-        let Some(inner) = weak.upgrade() else {
-            break;
-        };
-        if message.get("method").and_then(Value::as_str).is_some() {
-            // Includes approval requests; deliberately no automatic response.
-            let _ = inner.events.send(message);
-        } else if let Some(id) = message.get("id").and_then(Value::as_u64) {
-            let sender = inner.pending.lock().expect("pending lock").remove(&id);
-            if let Some(sender) = sender {
-                let response = if let Some(error) = message.get("error") {
-                    // Provider error strings and attached data can contain secrets.
-                    Err(anyhow!(
-                        "native RPC error code {}; details withheld",
-                        error.get("code").and_then(Value::as_i64).unwrap_or(-32603)
-                    ))
-                } else {
-                    message
-                        .get("result")
-                        .cloned()
-                        .context("native response omitted result")
-                };
-                let _ = sender.send(response);
-            }
-        } else {
-            inner.fail_pending("native stdout contains invalid RPC envelope");
+        if !route_frame(&weak, &frame) {
             break;
         }
     }
+}
+
+fn route_frame(weak: &Weak<Inner>, frame: &[u8]) -> bool {
+    let Ok(message) = serde_json::from_slice::<Value>(frame) else {
+        if let Some(inner) = weak.upgrade() {
+            inner.fail_pending("native stdout contains invalid JSON frame");
+        }
+        return false;
+    };
+    let Some(inner) = weak.upgrade() else {
+        return false;
+    };
+    if message.get("method").and_then(Value::as_str).is_some() {
+        // Includes approval requests; deliberately no automatic response.
+        let _ = inner.events.send(message);
+    } else if let Some(id) = message.get("id").and_then(Value::as_u64) {
+        let sender = inner.pending.lock().expect("pending lock").remove(&id);
+        if let Some(sender) = sender {
+            let response = if let Some(error) = message.get("error") {
+                // Provider error strings and attached data can contain secrets.
+                Err(anyhow!(
+                    "native RPC error code {}; details withheld",
+                    error.get("code").and_then(Value::as_i64).unwrap_or(-32603)
+                ))
+            } else {
+                message
+                    .get("result")
+                    .cloned()
+                    .context("native response omitted result")
+            };
+            let _ = sender.send(response);
+        }
+    } else {
+        inner.fail_pending("native stdout contains invalid RPC envelope");
+        return false;
+    }
+    true
+}
+
+#[cfg(unix)]
+async fn flush_websocket(socket: &SharedDaemonSocket) -> Result<()> {
+    std::future::poll_fn(|cx| {
+        let mut slot = socket.lock().expect("daemon socket lock");
+        let Some(ws) = slot.as_mut() else {
+            return std::task::Poll::Ready(Err(anyhow!("native transport is closed")));
+        };
+        ws.poll_flush_unpin(cx)
+            .map_err(|_| anyhow!("native WebSocket flush failed"))
+    })
+    .await
+}
+
+#[cfg(unix)]
+async fn read_websocket(socket: SharedDaemonSocket, weak: Weak<Inner>) {
+    loop {
+        let frame = std::future::poll_fn(|cx| {
+            let mut slot = socket.lock().expect("daemon socket lock");
+            slot.as_mut()
+                .map_or(std::task::Poll::Ready(None), |ws| ws.poll_next_unpin(cx))
+        })
+        .await;
+        match frame {
+            Some(Ok(Message::Text(text))) => {
+                if !route_frame(&weak, text.as_bytes()) {
+                    return;
+                }
+            }
+            Some(Ok(Message::Ping(_))) => {
+                // Protocol pong only. Never answer an RPC approval callback.
+                let wait = match weak.upgrade() {
+                    Some(inner) => inner.options.request_timeout,
+                    None => return,
+                };
+                if !matches!(timeout(wait, flush_websocket(&socket)).await, Ok(Ok(()))) {
+                    if let Some(inner) = weak.upgrade() {
+                        inner.fail_pending("native WebSocket control frame failed");
+                    }
+                    return;
+                }
+            }
+            Some(Ok(Message::Pong(_))) => {}
+            Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+            _ => {
+                if let Some(inner) = weak.upgrade() {
+                    inner.fail_pending("native WebSocket frame invalid or exceeds bound");
+                }
+                return;
+            }
+        }
+    }
+    if let Some(inner) = weak.upgrade() {
+        inner.fail_pending("native WebSocket closed or frame invalid; outcome unknown");
+    }
+}
+
+#[cfg(unix)]
+async fn discover_daemon_socket(binary: &Path, deadline: Duration) -> Result<std::path::PathBuf> {
+    let mut child = Command::new(binary)
+        .args(["app-server", "daemon", "version"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|_| anyhow!("native daemon discovery unavailable"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("native daemon discovery stdout unavailable")?;
+    let discovery = async {
+        let mut bytes = Vec::new();
+        stdout.take(65537).read_to_end(&mut bytes).await?;
+        ensure!(
+            bytes.len() <= 65536,
+            "native daemon discovery exceeds bound"
+        );
+        ensure!(
+            child.wait().await?.success(),
+            "native daemon discovery failed"
+        );
+        let value: Value = serde_json::from_slice(&bytes)
+            .map_err(|_| anyhow!("native daemon discovery invalid"))?;
+        ensure!(
+            value["status"] == "running",
+            "native daemon is not running; no daemon was started"
+        );
+        let path = value["socketPath"]
+            .as_str()
+            .context("native daemon socket identity missing")?;
+        ensure!(
+            !path.is_empty() && path.len() <= 4096 && !path.chars().any(char::is_control),
+            "invalid_native_socket"
+        );
+        Ok(std::path::PathBuf::from(path))
+    };
+    timeout(deadline, discovery)
+        .await
+        .map_err(|_| anyhow!("native daemon discovery timed out"))?
 }
 
 /// A catalog/configuration response is not evidence of executed model routing.
@@ -1037,6 +1310,67 @@ mod dispatch_guard_tests {
         );
         assert!(client.request("counts", json!({})).await.unwrap()["turn/start"].is_null());
         assert!(!client.is_closed());
+        client.shutdown().await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn websocket_writer_wait_rechecks_guard_before_sending_any_rpc_frame() {
+        use tokio_tungstenite::accept_async;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("native.sock");
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = accept_async(stream).await.unwrap();
+            let initialize: Value =
+                serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+            ws.send(Message::Text(
+                json!({"id":initialize["id"],"result":{}})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+            let initialized: Value =
+                serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+            assert_eq!(initialized["method"], "initialized");
+            let read: Value =
+                serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+            assert_eq!(
+                read["method"], "safe-read",
+                "expired RPC escaped the writer guard"
+            );
+            ws.send(Message::Text(
+                json!({"id":read["id"],"result":{}}).to_string().into(),
+            ))
+            .await
+            .unwrap();
+        });
+        let client = NativeClient::connect_existing(Path::new("/not-executed"), Some(&path))
+            .await
+            .unwrap();
+        let writer = client.inner.stdin.lock().await;
+        let clock = AtomicU64::new(99);
+        let guard = || {
+            ensure!(clock.load(Ordering::SeqCst) < 100, "time_budget_exhausted");
+            Ok(())
+        };
+        let request = client.request_guarded("turn/start", json!({"threadId":"owner"}), &guard);
+        tokio::pin!(request);
+        tokio::select! {
+            result = &mut request => panic!("writer mutex was bypassed: {result:?}"),
+            _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+        }
+        clock.store(100, Ordering::SeqCst);
+        drop(writer);
+        assert_eq!(
+            request.await.unwrap_err().to_string(),
+            "time_budget_exhausted"
+        );
+        assert!(!client.is_closed());
+        client.request("safe-read", json!({})).await.unwrap();
+        server.await.unwrap();
         client.shutdown().await.unwrap();
     }
 }

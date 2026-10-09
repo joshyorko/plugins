@@ -27,6 +27,7 @@ METADATA = (
     "docs/cas-verification-results.txt", "docs/cas-runtime-evidence.json",
     "docs/graph-backend-evidence.md", "docs/continuation-verification.md",
     "docs/continuation-verification-results.txt",
+    "docs/native-transport-verification.md",
     "assets/logo.svg", "assets/logo.png",
 )
 SKILL_FILES = (
@@ -62,7 +63,7 @@ class PackageRuntimeTests(unittest.TestCase):
                 os.utime(path, (100, 100))
         self.binary = self.base / "build" / "luna-factoryd"
         self.binary.parent.mkdir()
-        self.binary.write_text("#!/bin/sh\nprintf 'luna-factoryd 0.2.0\\n'\n")
+        self.binary.write_text("#!/bin/sh\nprintf 'luna-factoryd 0.2.1\\n'\n")
         self.binary.chmod(0o755)
         self.ui = self.base / "build" / "index.html"
         self.ui.write_text('<!doctype html><html><head><title>Luna Factory</title><style>body{color:black}</style></head><body><div id="app"></div><script type="module">document.title="Luna Factory";</script></body></html>')
@@ -99,8 +100,8 @@ class PackageRuntimeTests(unittest.TestCase):
         actual = {p.relative_to(self.output).as_posix() for p in self.output.rglob("*") if p.is_file()}
         self.assertEqual(actual, expected)
         receipt = json.loads((self.output / "runtime-receipt.json").read_text())
-        self.assertEqual(receipt["plugin"], {"name": "luna-factory", "version": "0.2.0"})
-        self.assertEqual(receipt["runtime_version"], "luna-factoryd 0.2.0")
+        self.assertEqual(receipt["plugin"], {"name": "luna-factory", "version": "0.2.1"})
+        self.assertEqual(receipt["runtime_version"], "luna-factoryd 0.2.1")
         self.assertEqual(set(receipt["files"]), expected - {"runtime-receipt.json", "SHA256SUMS"})
         self.assertIn("server/src/main.rs", receipt["build_inputs"]["runtime"])
         self.assertIn("ui/src/main.ts", receipt["build_inputs"]["ui"])
@@ -220,7 +221,7 @@ class PackageRuntimeTests(unittest.TestCase):
 
     def test_runtime_crate_version_mismatch_is_rejected(self):
         path = self.plugin / "server/Cargo.toml"
-        path.write_text(path.read_text().replace('version = "0.2.0"', 'version = "9.9.9"', 1))
+        path.write_text(path.read_text().replace('version = "0.2.1"', 'version = "9.9.9"', 1))
         self.assert_rejected("version")
 
     def test_compatibility_interface_drift_is_rejected(self):

@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "luna-factory",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Luna-first orchestration with a local Rust control plane, durable runs, and an MCP Apps workbench.",
   "author": {
     "name": "Josh Yorko",

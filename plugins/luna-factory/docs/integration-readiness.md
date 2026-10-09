@@ -66,3 +66,17 @@ Stop and clean up only processes/resources created for this canary and proven ce
 | Matching backup/restore rehearsal, actual target/host qualification, preserved-owner safe settlement, explicit deployment approval | Production replacement/live cutover. |
 
 The next READY work is acceptance and review, not another feature slice. Cloud/GitHub execution remains a separate unqualified investigation; no new API or Agents API fallback is assumed.
+# Corrective native transport qualification
+
+Dakota's actual 0.2.0 read-only doctor failed to initialize its existing-daemon
+connection. A separate published-protocol WebSocket initialize/model-list probe
+passed against the same daemon with zero inference or thread/configuration
+mutations. The raw Codex proxy copies bytes; it does not translate JSON lines.
+Version 0.2.1 corrects this framing defect with a bounded Unix WebSocket client.
+The stdio transport keeps its JSONL contract. Failed, partial or interrupted
+writes retain unknown-outcome recovery and cannot authorize a replay.
+
+Transport qualification is separate from actual Factory worker, callback,
+subscription entitlement, terminal cessation and ChatGPT workbench acceptance.
+The original unknown owner and held claim remain protected. CAS execution stays
+disabled; the existing Executor tunnel is not direct Cutover MCP Apps evidence.

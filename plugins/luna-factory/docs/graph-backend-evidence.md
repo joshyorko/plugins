@@ -1,5 +1,12 @@
 # Backend validation, 2026-10-08
 
+October 9 corrective release note: the inspected commits below remain historical
+evidence. Actual Dakota qualification later showed that the described proxy path
+forwards WebSocket bytes and cannot accept JSONL. Version 0.2.1 replaces that
+path with a bounded direct Unix WebSocket connection. Help-only proxy validation
+did not prove runtime compatibility. Execution, entitlement and actual host
+acceptance remain separate gates, as described in `integration-readiness.md`.
+
 ## Scope and exact sources
 
 Read-only architecture research used these checked-out heads. No production reads, daemon startup/restart, authentication, inference, GitHub comment, remote task dispatch or Work Items reservation was performed. The later LF05 implementation is limited to the two files listed below.

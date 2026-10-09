@@ -1,4 +1,6 @@
 //! Full runtime tests using a labeled subprocess fixture, never inference.
+#[allow(dead_code)]
+mod support;
 use luna_factoryd::{config::Config, lifecycle::Factory, store::StartRequest};
 use serde_json::{Value, json};
 use std::{path::PathBuf, time::Duration};
@@ -560,6 +562,7 @@ async fn missing_dispatch_correlation_keeps_claim_without_a_new_turn() {
     let mut config = (*base.config).clone();
     config.database = dir.path().join("recovery-state/runs.sqlite");
     config.native_transport = "existing_daemon".into();
+    let _daemon = support::DaemonFixture::start(&mut config);
     let mut store = luna_factoryd::store::Store::open(&config).unwrap();
     let mut run = store.admit(&config, &request).unwrap().run;
     run.thread_id = Some("owner".into());
@@ -584,6 +587,7 @@ async fn restart_recovers_a_completed_dispatch_without_starting_a_thread_or_turn
     let mut config = (*base.config).clone();
     config.database = dir.path().join("restart-state/runs.sqlite");
     config.native_transport = "existing_daemon".into();
+    let _daemon = support::DaemonFixture::start(&mut config);
     let mut store = luna_factoryd::store::Store::open(&config).unwrap();
     let mut run = store.admit(&config, &request).unwrap().run;
     run.thread_id = Some("owner".into());
@@ -629,6 +633,7 @@ async fn ambiguous_recovery_blocks_one_run_without_preventing_service_startup() 
     let mut config = (*base.config).clone();
     config.database = dir.path().join("ambiguous-state/runs.sqlite");
     config.native_transport = "existing_daemon".into();
+    let _daemon = support::DaemonFixture::start(&mut config);
     let mut store = luna_factoryd::store::Store::open(&config).unwrap();
     let mut run = store.admit(&config, &request).unwrap().run;
     run.thread_id = Some("owner".into());
@@ -766,6 +771,7 @@ async fn restart_preserves_pending_and_unknown_terminal_stops_without_replay() {
         let mut config = (*base.config).clone();
         config.database = dir.path().join("restart-stop/runs.sqlite");
         config.native_transport = "existing_daemon".into();
+        let _daemon = support::DaemonFixture::start(&mut config);
         let mut store = luna_factoryd::store::Store::open(&config).unwrap();
         let mut run = store.admit(&config, &request).unwrap().run;
         run.thread_id = Some("owner".into());
