@@ -1,4 +1,5 @@
 //! Live-monitor continuation through a disposable protocol fixture, never real Codex.
+mod support;
 use luna_factoryd::{
     config::Config,
     lifecycle::Factory,
@@ -8,8 +9,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{path::PathBuf, time::Duration};
 
-fn setup() -> (tempfile::TempDir, Factory, StartRequest) {
-    let dir = tempfile::tempdir().unwrap();
+fn setup() -> (support::FixtureDir, Factory, StartRequest) {
+    let dir = support::FixtureDir::new();
     let repo = dir.path().join("repo");
     std::fs::create_dir(&repo).unwrap();
     for args in [
@@ -401,10 +402,11 @@ async fn stale_source_unknown_child_and_unknown_effect_never_authorize_next_turn
 fn recovery_of_completed_report_never_runs_its_continuation_directive() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let (dir, config, original) = runtime.block_on(async {
-        let (dir, base, request) = setup();
+        let (mut dir, base, request) = setup();
         let mut config = (*base.config).clone();
         drop(base);
         config.native_transport = "existing_daemon".into();
+        dir.serve(&mut config);
         let factory = Factory::new(config.clone()).unwrap();
         let original = factory.start(request).await.unwrap();
         let mut result = report(&original);
@@ -529,10 +531,11 @@ async fn blocked_absent_malformed_and_unverified_failure_directives_do_not_conti
 fn lost_continuation_ack_reconcile_and_restart_never_redispatch() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let (dir, config, original) = runtime.block_on(async {
-        let (dir, base, request) = setup();
+        let (mut dir, base, request) = setup();
         let mut config = (*base.config).clone();
         drop(base);
         config.native_transport = "existing_daemon".into();
+        dir.serve(&mut config);
         let factory = Factory::new(config.clone()).unwrap();
         let original = factory.start(request).await.unwrap();
         let id = original["id"].as_str().unwrap();

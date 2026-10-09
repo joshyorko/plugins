@@ -11,6 +11,8 @@ anyhow = "1"
 base64 = "=0.23.1"
 axum = "0.8"
 fs2 = "0.4"
+futures-util = { version = "0.3", features = ["sink"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 libc = "0.2"
 clap = { version = "4", features = ["derive"] }
 rmcp = { version = "=3.5.0", features = ["server", "transport-streamable-http-server", "transport-io"] }

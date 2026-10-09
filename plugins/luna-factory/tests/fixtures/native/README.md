@@ -47,11 +47,17 @@ LUNA_FACTORY_LIVE_AUDIT=1 LUNA_FACTORY_CODEX_BIN=/path/to/codex \
 
 ## Version-specific findings
 
-- `codex app-server proxy --help` describes a stdio proxy to the **running** native
-  app-server control socket and supports `--sock SOCKET_PATH`. The client can use
-  exactly these trusted arguments to reconnect to an operator-owned daemon. No
-  daemon was started, bootstrapped, stopped or reconfigured during this audit.
-  Killing this proxy is not proof that daemon-owned work stopped.
+- `codex app-server proxy --help` describes a **raw byte** proxy to the running
+  app-server control socket, not a JSONL-to-WebSocket converter. A JSONL
+  `initialize` packet sent to it fails the daemon's HTTP upgrade. The Factory
+  `existing_daemon` transport connects directly to the approved Unix socket and
+  performs the WebSocket handshake. When no socket is configured, it discovers
+  only a running daemon through bounded `app-server daemon version` output.
+  It never starts or stops the daemon. See
+  [transport verification](../../../docs/native-transport-verification.md).
+- `server/tests/support` places the existing synthetic JSONL scenarios behind a
+  real, test-owned Unix WebSocket listener for daemon lifecycle/recovery tests.
+  This proves framing and Factory behavior; it is not real native worker proof.
 - `codex app-server --profile NAME` is rejected by argument parsing. Top-level
   `codex --profile NAME app-server --stdio` parses, then rejects actual startup
   with `--profile only applies to runtime commands and codex mcp`. A help-only

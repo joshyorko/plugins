@@ -1,4 +1,5 @@
 //! Actual Factory regression tests over a labeled subprocess fixture. No live inference.
+mod support;
 use luna_factoryd::{
     config::Config,
     lifecycle::Factory,
@@ -34,8 +35,8 @@ fn init_repo(path: &Path) {
     }
 }
 
-fn setup() -> (tempfile::TempDir, Config, StartRequest) {
-    let dir = tempfile::tempdir().unwrap();
+fn setup() -> (support::FixtureDir, Config, StartRequest) {
+    let mut dir = support::FixtureDir::new();
     let repo = dir.path().join("repo");
     init_repo(&repo);
     let binary = dir.path().join("review-native");
@@ -56,7 +57,7 @@ fn setup() -> (tempfile::TempDir, Config, StartRequest) {
         "Synthetic review fixture; no live skill loading proof",
     )
     .unwrap();
-    let config = serde_json::from_value(json!({
+    let mut config = serde_json::from_value(json!({
         "listen":"127.0.0.1:8787", "native_transport":"existing_daemon",
         "database":dir.path().join("state/runs.sqlite"), "codex_binary":binary, "skill_path":skill,
         "repositories":{"fixture":{"root":repo,"max_finish":"pr"}},
@@ -69,6 +70,7 @@ fn setup() -> (tempfile::TempDir, Config, StartRequest) {
         "non_goals":[], "finish":"pr", "profile":"default", "capacity":2,
         "repair_attempts":3, "wall_seconds":300, "idempotency_key":"review-1"
     })).unwrap();
+    dir.serve(&mut config);
     (dir, config, request)
 }
 
@@ -85,6 +87,7 @@ async fn restart_cannot_turn_unavailable_stdio_ownership_into_cessation_or_redis
     use luna_factoryd::control::{Event, EventEnvelope, RunControl};
     let (dir, mut config, request) = setup();
     config.native_transport = "stdio".into();
+    config.native_socket = None;
     let mut store = Store::open(&config).unwrap();
     let mut run = store.admit(&config, &request).unwrap().run;
     run.generation = 1;
