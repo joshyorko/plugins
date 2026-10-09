@@ -100,6 +100,10 @@ impl Drop for Inner {
     }
 }
 
+/// Revalidated under the native writer lock, after all asynchronous preflight.
+/// A rejection writes no request bytes and leaves reconciliation available.
+pub type DispatchGuard<'a> = dyn Fn() -> Result<()> + Send + Sync + 'a;
+
 #[derive(Clone)]
 pub struct NativeClient {
     inner: Arc<Inner>,
@@ -195,6 +199,15 @@ impl NativeClient {
     }
 
     pub async fn request(&self, method: &str, params: Value) -> Result<Value> {
+        self.request_guarded(method, params, &|| Ok(())).await
+    }
+
+    async fn request_guarded(
+        &self,
+        method: &str,
+        params: Value,
+        guard: &DispatchGuard<'_>,
+    ) -> Result<Value> {
         ensure!(
             !method.is_empty() && method.len() <= 128,
             "invalid native method"
@@ -223,7 +236,7 @@ impl NativeClient {
             id,
         };
         let operation = async {
-            self.write_message(json!({"id":id, "method":method, "params":params}))
+            self.write_message_guarded(json!({"id":id, "method":method, "params":params}), guard)
                 .await?;
             receiver
                 .await
@@ -238,6 +251,10 @@ impl NativeClient {
     }
 
     async fn write_message(&self, message: Value) -> Result<()> {
+        self.write_message_guarded(message, &|| Ok(())).await
+    }
+
+    async fn write_message_guarded(&self, message: Value, guard: &DispatchGuard<'_>) -> Result<()> {
         let mut bytes = serde_json::to_vec(&message)?;
         ensure!(
             bytes.len() < self.inner.options.max_frame_bytes,
@@ -250,6 +267,9 @@ impl NativeClient {
             "native transport is closed"
         );
         let writer = stdin.as_mut().context("native transport is closed")?;
+        // No awaited preflight or lock acquisition may follow this check before
+        // starting the write. A partial write retains the existing unknown rule.
+        guard()?;
         let mut frame_guard = WriteGuard {
             inner: Arc::downgrade(&self.inner),
             complete: false,
@@ -614,6 +634,17 @@ impl NativeClient {
         effort: &str,
         max_threads: usize,
     ) -> Result<Value> {
+        self.start_thread_guarded(cwd, effort, max_threads, &|| Ok(()))
+            .await
+    }
+
+    pub async fn start_thread_guarded(
+        &self,
+        cwd: &Path,
+        effort: &str,
+        max_threads: usize,
+        guard: &DispatchGuard<'_>,
+    ) -> Result<Value> {
         ensure!(
             cwd.is_absolute() && cwd.is_dir(),
             "trusted repository cwd must be an existing absolute directory"
@@ -623,10 +654,10 @@ impl NativeClient {
             "invalid native worker capacity"
         );
         validate_luna_route(&self.list_models().await?, effort)?;
-        let response = self.request("thread/start", json!({
+        let response = self.request_guarded("thread/start", json!({
             "cwd":cwd, "model":LUNA_MODEL,
             "config":{"model_reasoning_effort":effort, "agents.max_concurrent_threads_per_session":max_threads, "agents.default_subagent_model":LUNA_MODEL}
-        })).await?;
+        }), guard).await?;
         ensure!(
             response.get("model").and_then(Value::as_str) == Some(LUNA_MODEL),
             "native thread configured a different model; do not start inference"
@@ -666,6 +697,29 @@ impl NativeClient {
         output_schema: Option<Value>,
         dispatch_id: Option<&str>,
     ) -> Result<Value> {
+        self.start_skill_turn_with_id_guarded(
+            thread_id,
+            skill_path,
+            objective,
+            effort,
+            output_schema,
+            dispatch_id,
+            &|| Ok(()),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)] // Additive policy boundary for the native protocol helper.
+    pub async fn start_skill_turn_with_id_guarded(
+        &self,
+        thread_id: &str,
+        skill_path: &Path,
+        objective: &str,
+        effort: &str,
+        output_schema: Option<Value>,
+        dispatch_id: Option<&str>,
+        guard: &DispatchGuard<'_>,
+    ) -> Result<Value> {
         validate_id(thread_id)?;
         if let Some(dispatch_id) = dispatch_id {
             validate_id(dispatch_id)?;
@@ -689,7 +743,7 @@ impl NativeClient {
         if let Some(dispatch_id) = dispatch_id {
             params["clientUserMessageId"] = json!(dispatch_id);
         }
-        self.request("turn/start", params).await
+        self.request_guarded("turn/start", params, guard).await
     }
 
     pub async fn resume_thread(&self, thread_id: &str) -> Result<Value> {
@@ -942,5 +996,47 @@ impl NativeClient {
                     .is_some_and(|id| ids.contains(id))
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod dispatch_guard_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn waiting_for_native_writer_does_not_freeze_dispatch_authority() {
+        let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/fixtures/native/fake_app_server.py");
+        let client = NativeClient::spawn(
+            Path::new("/usr/bin/python3"),
+            &["-u".into(), script.to_string_lossy().into_owned()],
+        )
+        .await
+        .unwrap();
+        let writer = client.inner.stdin.lock().await;
+        let clock = AtomicU64::new(99);
+        let deadline = 100;
+        let guard = || {
+            ensure!(
+                clock.load(Ordering::SeqCst) < deadline,
+                "time_budget_exhausted"
+            );
+            Ok(())
+        };
+        let request = client.request_guarded("turn/start", json!({"threadId":"owner"}), &guard);
+        tokio::pin!(request);
+        tokio::select! {
+            result = &mut request => panic!("writer lock was bypassed: {result:?}"),
+            _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+        }
+        clock.store(deadline, Ordering::SeqCst);
+        drop(writer);
+        assert_eq!(
+            request.await.unwrap_err().to_string(),
+            "time_budget_exhausted"
+        );
+        assert!(client.request("counts", json!({})).await.unwrap()["turn/start"].is_null());
+        assert!(!client.is_closed());
+        client.shutdown().await.unwrap();
     }
 }

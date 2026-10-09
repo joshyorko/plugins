@@ -519,7 +519,8 @@ impl Factory {
         Ok(json!(runs.iter().map(public_run).collect::<Vec<_>>()))
     }
     fn refresh_source(&self, run: &mut Run, store: &mut Store) -> Result<()> {
-        if run.planning_only
+        if run.graph_repository_stamp.is_some()
+            || run.planning_only
             || run
                 .control
                 .as_ref()
@@ -831,6 +832,7 @@ impl Factory {
             <sha2::Sha256 as sha2::Digest>::digest(skill)
         ));
         self.store.lock().await.save(run)?;
+        let dispatch_guard = self.dispatch_guard(run).await?;
         crate::native::validate_luna_route(&client.list_models().await?, effort)?;
         run.dispatch_phase = "thread_start_pending".into();
         let thread_effect = uuid::Uuid::new_v4().to_string();
@@ -843,10 +845,11 @@ impl Factory {
         )
         .await?;
         let started = client
-            .start_thread(
+            .start_thread_guarded(
                 Path::new(&run.canonical_root),
                 effort,
                 run.request.capacity as usize,
+                &dispatch_guard,
             )
             .await?;
         let route = configured_route(&started, effort);
@@ -892,7 +895,7 @@ impl Factory {
             ),
         )?;
         let result = client
-            .start_skill_turn_with_id(
+            .start_skill_turn_with_id_guarded(
                 run.thread_id.as_deref().unwrap(),
                 &self.config.skill_path,
                 &self.owner_prompt(run)?,
@@ -901,6 +904,7 @@ impl Factory {
                     &run.control.as_ref().context("control_missing")?.assumptions,
                 )),
                 run.dispatch_id.as_deref(),
+                &dispatch_guard,
             )
             .await;
         let turn = match result {
@@ -1430,6 +1434,9 @@ impl Factory {
                 && now() < run.deadline_at,
             "continuation_source_or_deadline_changed"
         );
+        // Retain the stopped evidence snapshot: Dispatch invalidates current
+        // proof, but its prerequisites must still be rechecked at the wire.
+        let dispatch_guard = self.dispatch_guard(run).await?;
         let old_attempt = run.dispatch_id.clone().unwrap_or_default();
         let thread = run.thread_id.clone().context("owner_identity_unknown")?;
         run.observed_model = None;
@@ -1467,7 +1474,7 @@ impl Factory {
         // replayed automatically, including when no native call was made.
         ensure!(now() < run.deadline_at, "time_budget_exhausted");
         let result = client
-            .start_skill_turn_with_id(
+            .start_skill_turn_with_id_guarded(
                 &thread,
                 &self.config.skill_path,
                 &prompt,
@@ -1476,6 +1483,7 @@ impl Factory {
                     &run.control.as_ref().unwrap().assumptions,
                 )),
                 run.dispatch_id.as_deref(),
+                &dispatch_guard,
             )
             .await;
         let turn = match result {
@@ -1800,12 +1808,30 @@ impl Factory {
             run.set_state(crate::control::RunControl::Blocked);
             run.blocker=Some("Native turn ended without a valid, current-subject acceptance report. Execution is not convergence.".into());
         }
+        let config = self.effective_config().await?;
+        let mut store = self.store.lock().await;
+        // No asynchronous work remains between final proof validation and the
+        // terminal snapshot/claim decision, including for ignored predicates.
+        Self::validate_current_authority_config(&run, &config)?;
+        ensure!(
+            repository_subject(Path::new(&run.canonical_root))? == run.current_subject,
+            "source_changed_before_settlement"
+        );
+        if crate::evidence::revalidate_files(
+            run.control.as_mut().context("control_missing")?,
+            Path::new(&run.canonical_root),
+        )? {
+            run.set_state(crate::control::RunControl::Blocked);
+            run.blocker = Some("evidence_changed_before_settlement".into());
+            continuation = None;
+        }
         run.updated_at = now();
         run.dispatch_phase = "terminal_observed".into();
         if let Some(directive) = continuation {
             // The observed terminal state is durable and remains claimed before
             // preparing the next intent. Restart/reconciliation cannot replay it.
-            self.store.lock().await.save(&mut run)?;
+            store.save(&mut run)?;
+            drop(store);
             if let Err(error) = self
                 .continue_live_owner_locked(&mut run, &client, &directive)
                 .await
@@ -1817,7 +1843,6 @@ impl Factory {
             }
             return Ok(());
         }
-        let mut store = self.store.lock().await;
         if ["CONVERGED", "QUIESCENT"].contains(&run.state.as_str())
             && !run.control.as_ref().unwrap().unknown_effect()
         {
@@ -1939,13 +1964,22 @@ impl Factory {
             run.delta =
                 "Owner and all known descendants were observed idle, with terminal command evidence; mutation claim released."
                     .into();
-            if run.control.as_ref().unwrap().unknown_effect() {
+            let config = self.effective_config().await?;
+            let mut store = self.store.lock().await;
+            if run.graph_repository_stamp.is_some()
+                && Self::validate_graph_repository_config(&run, &config).is_err()
+            {
+                run.set_state(crate::control::RunControl::Blocked);
+                run.blocker = Some("repository_identity_unverified".into());
+                run.delta = "Owned execution was observed stopped. Bound repository identity is unverified; repository claim retained.".into();
+                store.save(&mut run)?;
+            } else if run.control.as_ref().unwrap().unknown_effect() {
                 run.delta="Owned execution was observed stopped. Effect outcome remains unknown; repository claim retained.".into();
                 run.set_state(crate::control::RunControl::Blocked);
                 run.blocker = Some("effect_outcome_unknown".into());
-                self.store.lock().await.save(&mut run)?;
+                store.save(&mut run)?;
             } else {
-                self.store.lock().await.release_verified(&mut run)?;
+                store.release_verified(&mut run)?;
             }
         }
         self.get(id).await
@@ -2031,9 +2065,11 @@ impl Factory {
         Ok(client)
     }
     async fn validate_current_authority(&self, run: &Run) -> Result<()> {
+        Self::validate_current_authority_config(run, &self.effective_config().await?)
+    }
+    fn validate_current_authority_config(run: &Run, config: &Config) -> Result<()> {
         ensure!(!run.planning_only, "planning_graph_execution_denied");
-        let config = self.effective_config().await?;
-        crate::store::validate_request(&config, &run.request)?;
+        crate::store::validate_request(config, &run.request)?;
         let root = &config.repositories[&run.request.repository].root;
         ensure!(
             root.to_str() == Some(&run.canonical_root),
@@ -2047,8 +2083,11 @@ impl Factory {
             Path::new(&identity).canonicalize()?.to_str() == Some(&run.repository_identity),
             "repository_identity_changed"
         );
+        if run.graph_repository_stamp.is_some() {
+            Self::validate_graph_repository_config(run, config)?;
+        }
         ensure!(
-            self.config.profiles[&run.request.profile]
+            config.profiles[&run.request.profile]
                 .codex_profile
                 .is_none(),
             "native_profile_override_unsupported"
@@ -2057,13 +2096,13 @@ impl Factory {
             run.requested_effort
                 .as_deref()
                 .or(run.configured_effort.as_deref())
-                .is_none_or(|effort| effort == self.config.profiles[&run.request.profile].effort),
+                .is_none_or(|effort| effort == config.profiles[&run.request.profile].effort),
             "runtime_profile_changed"
         );
         if let Some(expected) = &run.skill_sha256 {
             let actual = format!(
                 "{:x}",
-                <sha2::Sha256 as sha2::Digest>::digest(std::fs::read(&self.config.skill_path)?)
+                <sha2::Sha256 as sha2::Digest>::digest(std::fs::read(&config.skill_path)?)
             );
             ensure!(
                 &actual == expected,
@@ -2071,6 +2110,39 @@ impl Factory {
             );
         }
         Ok(())
+    }
+    /// The mutation lock keeps effective operator registrations stable while
+    /// native preflight awaits. Recheck mutable source, skill and evidence only
+    /// after the transport owns its writer, immediately before the first byte.
+    async fn dispatch_guard(
+        &self,
+        run: &Run,
+    ) -> Result<impl Fn() -> Result<()> + Send + Sync + 'static> {
+        let config = self.effective_config().await?;
+        let run = run.clone();
+        Ok(move || {
+            Self::validate_current_authority_config(&run, &config)?;
+            ensure!(now() < run.deadline_at, "time_budget_exhausted");
+            let root = Path::new(&run.canonical_root);
+            ensure!(
+                repository_subject(root)? == run.current_subject,
+                "dispatch_source_changed"
+            );
+            let mut control = run.control.clone().context("control_missing")?;
+            ensure!(
+                !crate::evidence::revalidate_files(&mut control, root)?,
+                "dispatch_evidence_changed"
+            );
+            if let Some(diagnosis) = &control.diagnosis
+                && diagnosis.basis == "observed_failure"
+            {
+                crate::evidence::revalidate_failures(&control, &diagnosis.check_refs, root)?;
+            }
+            // Filesystem validation can take time too; expiry never authorizes
+            // a new packet even when every identity and predicate still matches.
+            ensure!(now() < run.deadline_at, "time_budget_exhausted");
+            Ok(())
+        })
     }
     pub async fn steer(&self, id: &str, expected_turn: &str, message: &str) -> Result<Value> {
         self.steer_at_revision(id, expected_turn, message, None)

@@ -4,12 +4,14 @@ import json
 import os
 import sys
 import time
+import pathlib
 
 counts = {"responses": 0}
 initialized = False
 history = []
 reorder = []
 terminal_reads = {}
+preflight_barrier = None
 
 def emit(value):
     print(json.dumps(value), flush=True)
@@ -53,6 +55,17 @@ for line in sys.stdin:
             for pending in reversed(reorder):
                 emit({"id": pending["id"], "result": pending["params"]})
         continue
+    if method == "test/preflightBarrier":
+        preflight_barrier = message["params"]
+    elif preflight_barrier and method == preflight_barrier["method"]:
+        pathlib.Path(preflight_barrier["entered"]).touch()
+        for _ in range(400):
+            if pathlib.Path(preflight_barrier["release"]).exists():
+                break
+            time.sleep(0.005)
+        else:
+            raise AssertionError("fixture preflight barrier timed out")
+        preflight_barrier = None
     result = counts if method == "counts" else message.get("params")
     if method == "history":
         result = history[:-1]

@@ -568,3 +568,78 @@ fn lost_continuation_ack_reconcile_and_restart_never_redispatch() {
         assert_eq!(final_run["repairs_used"], 0);
     });
 }
+
+#[tokio::test]
+async fn replaced_repository_identity_cannot_accept_completion_or_release_claim() {
+    let (dir, factory, request) = setup();
+    let run = factory.start(request).await.unwrap();
+    let id = run["id"].as_str().unwrap();
+    let mut final_report = report(&run);
+    final_report["state"] = json!("CONVERGED");
+    final_report["remaining_gap"] = json!("");
+    final_report["checks"] = json!([proof(&run, "identity-proof", true)]);
+    final_report["acceptance"] = acceptance(&["identity-proof"]);
+    // The fixture replaces .git after steer validation, just before its live
+    // completion notification. HEAD and all source contents stay identical.
+    std::fs::write(dir.path().join("mode"), "identity_drift").unwrap();
+    finish(&dir, &factory, &run, final_report).await;
+    let result = wait_for(&factory, id, |value| {
+        value["state"] == "BLOCKED" || value["state"] == "CONVERGED"
+    })
+    .await;
+    assert!(factory.graph(id).await.is_err());
+    assert_ne!(result["state"], "CONVERGED");
+    assert_eq!(result["claim_held"], true);
+    let stored = Store::open(&factory.config).unwrap().get(id).unwrap();
+    assert_ne!(stored.state, "CONVERGED");
+    assert!(stored.claim_held);
+    let cancelled = factory.cancel(id).await.unwrap();
+    assert_eq!(cancelled["claim_held"], true);
+    assert_eq!(cancelled["blocker"], "repository_identity_unverified");
+}
+
+#[tokio::test]
+async fn final_native_preflight_cannot_bypass_source_skill_or_ignored_file_fences() {
+    for mode in [
+        "late_source_drift",
+        "late_skill_drift",
+        "late_ignored_predicate_drift",
+    ] {
+        let (dir, factory, request) = setup();
+        if mode == "late_ignored_predicate_drift" {
+            std::fs::write(dir.path().join("repo/.git/info/exclude"), "proof.txt\n").unwrap();
+        }
+        let original = factory.start(request).await.unwrap();
+        let id = original["id"].as_str().unwrap();
+        let mut first = report(&original);
+        first["candidates"] = json!([candidate("task-a", &[]), candidate("task-b", &[])]);
+        first["selected_task"] = json!("task-a");
+        first["continuation"] = next("task-a");
+        finish(&dir, &factory, &original, first).await;
+        let a = wait_for(&factory, id, |run| {
+            run["generation"] == 2 && run["state"] == "RUNNING"
+        })
+        .await;
+        let mut second = report(&a);
+        second["checks"] = json!([proof(&a, "a-check", true)]);
+        second["acceptance"] = acceptance(&["a-check"]);
+        second["selected_task"] = json!("task-b");
+        second["continuation"] = next("task-b");
+        std::fs::write(dir.path().join("mode"), mode).unwrap();
+        finish(&dir, &factory, &a, second).await;
+        let stopped = wait_for(&factory, id, |run| run["state"] == "BLOCKED").await;
+        assert_eq!(calls(&dir, "turn/start").len(), 2, "{mode}");
+        assert_eq!(stopped["claim_held"], true, "{mode}");
+        // Intent preceded preflight; refusing its first byte never gives
+        // recovery permission to synthesize/retry an inference call.
+        let _ = factory.reconcile(id, None).await;
+        assert_eq!(calls(&dir, "turn/start").len(), 2, "{mode}");
+        assert!(
+            Store::open(&factory.config)
+                .unwrap()
+                .get(id)
+                .unwrap()
+                .claim_held
+        );
+    }
+}

@@ -4,6 +4,7 @@ import json
 import pathlib
 import re
 import sys
+import shutil
 
 home = pathlib.Path(__file__).parent
 history_path=home / "native_history.json"
@@ -74,10 +75,13 @@ for line in sys.stdin:
     elif method == "turn/steer" and mode == "lost_steer_ack":
         emit({"id":message["id"],"error":{"code":-32000,"message":"synthetic uncertain steering acknowledgement"}})
         continue
-    elif method == "turn/steer" and mode in ("finish", "finish_external", "finish_owner_unknown"):
+    elif method == "turn/steer" and mode in ("finish", "finish_external", "finish_owner_unknown", "finish_identity_drift", "finish_identity_late"):
         active = {"owner": False,"child": False}
         history[-1]["status"]="completed";history_path.write_text(json.dumps(history))
         report = report_for(history[-1])
+        if mode == "finish_identity_drift":
+            (home / "repo/.git").rename(home / "preserved-git")
+            shutil.copytree(home / "preserved-git", home / "repo/.git")
         if mode=="finish_external":
             emit({"method":"item/completed","params":{"threadId":"owner","turnId":f"turn-{turn_number}","item":{"id":"push-item","type":"commandExecution","command":"git push origin synthetic-branch","status":"completed","exitCode":0}}})
         emit({"method":"item/completed","params":{"threadId":"owner","turnId":f"turn-{turn_number}","item":{"id":"final","type":"agentMessage","phase":"final_answer","text":json.dumps(report)}}})
@@ -100,7 +104,7 @@ for line in sys.stdin:
             route["toModel"]="https://synthetic.invalid/sk-synthetic-secret"
         emit({"method":"model/rerouted","params":route})
         emit({"method":"model/rerouted","params":route})
-    elif method == "thread/items/list" and mode in ("finish", "finish_external", "finish_owner_unknown") and params["threadId"] == "owner":
+    elif method == "thread/items/list" and mode in ("finish", "finish_external", "finish_owner_unknown", "finish_identity_drift", "finish_identity_late") and params["threadId"] == "owner":
         result = {"data":[{"id":"final","type":"agentMessage","phase":"final_answer","text":json.dumps(report_for(history[-1]))}]}
     elif method == "thread/backgroundTerminals/list":
         tid=params["threadId"];terminal_reads[tid]=terminal_reads.get(tid,0)+1
@@ -146,5 +150,8 @@ for line in sys.stdin:
                 if mode=="lost_ack_completed" and turn["status"]=="completed":
                     result["data"].append({"turnId":turn["id"],"item":{"id":"final-"+turn["id"],"type":"agentMessage","phase":"final_answer","text":json.dumps(report_for(turn))}})
             if params.get("turnId"):
+                if mode == "finish_identity_late":
+                    (home / "repo/.git").rename(home / "preserved-git")
+                    shutil.copytree(home / "preserved-git", home / "repo/.git")
                 result["data"]=[entry for entry in result["data"] if entry["turnId"]==params["turnId"]]
     emit({"id": message["id"], "result": result})
