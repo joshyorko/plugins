@@ -597,6 +597,7 @@ impl Factory {
             <sha2::Sha256 as sha2::Digest>::digest(skill)
         ));
         self.store.lock().await.save(run)?;
+        let dispatch_guard = self.dispatch_guard(run).await?;
         crate::native::validate_luna_route(&client.list_models().await?, effort)?;
         run.dispatch_phase = "thread_start_pending".into();
         let thread_effect = uuid::Uuid::new_v4().to_string();
@@ -609,10 +610,11 @@ impl Factory {
         )
         .await?;
         let started = client
-            .start_thread(
+            .start_thread_guarded(
                 Path::new(&run.canonical_root),
                 effort,
                 run.request.capacity as usize,
+                &dispatch_guard,
             )
             .await?;
         let route = configured_route(&started, effort);
@@ -658,7 +660,7 @@ impl Factory {
             ),
         )?;
         let result = client
-            .start_skill_turn_with_id(
+            .start_skill_turn_with_id_guarded(
                 run.thread_id.as_deref().unwrap(),
                 &self.config.skill_path,
                 &self.owner_prompt(run)?,
@@ -667,6 +669,7 @@ impl Factory {
                     &run.control.as_ref().context("control_missing")?.assumptions,
                 )),
                 run.dispatch_id.as_deref(),
+                &dispatch_guard,
             )
             .await;
         let turn = match result {
@@ -1539,8 +1542,10 @@ impl Factory {
         Ok(client)
     }
     async fn validate_current_authority(&self, run: &Run) -> Result<()> {
-        let config = self.effective_config().await?;
-        crate::store::validate_request(&config, &run.request)?;
+        Self::validate_current_authority_config(run, &self.effective_config().await?)
+    }
+    fn validate_current_authority_config(run: &Run, config: &Config) -> Result<()> {
+        crate::store::validate_request(config, &run.request)?;
         let root = &config.repositories[&run.request.repository].root;
         ensure!(
             root.to_str() == Some(&run.canonical_root),
@@ -1555,7 +1560,7 @@ impl Factory {
             "repository_identity_changed"
         );
         ensure!(
-            self.config.profiles[&run.request.profile]
+            config.profiles[&run.request.profile]
                 .codex_profile
                 .is_none(),
             "native_profile_override_unsupported"
@@ -1564,13 +1569,13 @@ impl Factory {
             run.requested_effort
                 .as_deref()
                 .or(run.configured_effort.as_deref())
-                .is_none_or(|effort| effort == self.config.profiles[&run.request.profile].effort),
+                .is_none_or(|effort| effort == config.profiles[&run.request.profile].effort),
             "runtime_profile_changed"
         );
         if let Some(expected) = &run.skill_sha256 {
             let actual = format!(
                 "{:x}",
-                <sha2::Sha256 as sha2::Digest>::digest(std::fs::read(&self.config.skill_path)?)
+                <sha2::Sha256 as sha2::Digest>::digest(std::fs::read(&config.skill_path)?)
             );
             ensure!(
                 &actual == expected,
@@ -1578,6 +1583,34 @@ impl Factory {
             );
         }
         Ok(())
+    }
+    /// The mutation lock keeps effective operator registrations stable while
+    /// native preflight awaits. Recheck mutable source, skill and evidence only
+    /// after the transport owns its writer, immediately before the first byte.
+    async fn dispatch_guard(
+        &self,
+        run: &Run,
+    ) -> Result<impl Fn() -> Result<()> + Send + Sync + 'static> {
+        let config = self.effective_config().await?;
+        let run = run.clone();
+        Ok(move || {
+            Self::validate_current_authority_config(&run, &config)?;
+            ensure!(now() < run.deadline_at, "time_budget_exhausted");
+            let root = Path::new(&run.canonical_root);
+            ensure!(
+                repository_subject(root)? == run.current_subject,
+                "dispatch_source_changed"
+            );
+            let mut control = run.control.clone().context("control_missing")?;
+            ensure!(
+                !crate::evidence::revalidate_files(&mut control, root)?,
+                "dispatch_evidence_changed"
+            );
+            // Filesystem validation can take time too; expiry never authorizes
+            // a new packet even when every identity and predicate still matches.
+            ensure!(now() < run.deadline_at, "time_budget_exhausted");
+            Ok(())
+        })
     }
     pub async fn steer(&self, id: &str, expected_turn: &str, message: &str) -> Result<Value> {
         self.steer_at_revision(id, expected_turn, message, None)
@@ -1917,6 +1950,7 @@ impl Factory {
             crate::control::Event::EffectSettled { id: resume_effect },
         )
         .await?;
+        let dispatch_guard = self.dispatch_guard(&run).await?;
         run.observed_model = None;
         run.observed_effort = None;
         if !answering_decision {
@@ -1959,7 +1993,7 @@ impl Factory {
             prompt.push_str(message);
         }
         let result = client
-            .start_skill_turn_with_id(
+            .start_skill_turn_with_id_guarded(
                 &thread,
                 &self.config.skill_path,
                 &prompt,
@@ -1968,6 +2002,7 @@ impl Factory {
                     &run.control.as_ref().context("control_missing")?.assumptions,
                 )),
                 run.dispatch_id.as_deref(),
+                &dispatch_guard,
             )
             .await;
         let turn = match result {
