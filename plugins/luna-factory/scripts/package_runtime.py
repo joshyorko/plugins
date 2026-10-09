@@ -32,6 +32,7 @@ METADATA = (
     "docs/cas-verification-results.txt", "docs/cas-runtime-evidence.json",
     "docs/graph-backend-evidence.md", "docs/continuation-verification.md",
     "docs/continuation-verification-results.txt",
+    "docs/native-transport-verification.md",
     "assets/logo.svg", "assets/logo.png",
 )
 SKILL_FILES = (

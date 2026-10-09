@@ -33,7 +33,7 @@ activate a service, register an app, or copy operator configuration/credentials.
 python3 plugins/luna-factory/scripts/package_runtime.py \
   --binary plugins/luna-factory/server/target/release/luna-factoryd \
   --ui plugins/luna-factory/ui/dist/index.html \
-  --output /absolute/path/to/new/luna-factory-0.2.0
+  --output /absolute/path/to/new/luna-factory-0.2.1
 ```
 
 ## Configure an operator instance
@@ -138,10 +138,14 @@ The [canonical skill](skills/luna-factory/SKILL.md), [routing policy](skills/lun
 
 ## Reconnect and cancellation limits
 
+The [native transport correction evidence](docs/native-transport-verification.md)
+records the 0.2.0 framing defect, 0.2.1 fix and remaining live qualification gates.
+
 For an already running operator-owned Codex daemon, set `native_transport` to
 `existing_daemon`. Optionally set `native_socket` to its existing absolute control
-socket path. The runtime uses `codex app-server proxy`; it does not create,
-restart or configure that daemon. This lets the native execution lifetime remain
+socket path. On Unix the runtime connects directly with WebSocket framing; when
+the socket is omitted it uses read-only `codex app-server daemon version`
+discovery. It does not create, restart or configure that daemon. This lets the native execution lifetime remain
 independent of Luna Factory's HTTP service. The default `stdio` transport owns its
 app-server process and fails closed after a restart when its old process lifetime
 cannot be established.

@@ -26,9 +26,17 @@ The generated marketplace, Claude manifest, Hermes manifest, and skill symlinks 
 
 ## Downloadable release bundle
 
+Version 0.2.1 is a corrective patch for the existing native daemon transport.
+Version 0.2.0 remains an immutable historical release; its existing-daemon path
+sent JSON lines to a raw WebSocket proxy. The patch uses the supported Unix
+WebSocket connection while preserving the owned stdio transport and all Factory
+authority, deadline and recovery gates. It introduces no remote execution adapter
+or database migration. Install a new versioned directory and retain the matching
+previous package/configuration and consistent ledger backup.
+
 The repository's `v*` release workflow retains whole-repository source archives.
-When the tag exactly matches the Luna plugin version (currently `v0.2.0`), it also
-builds and publishes `luna-factory-0.2.0-x86_64-unknown-linux-gnu.tar.gz` and its
+When the tag exactly matches the Luna plugin version (currently `v0.2.1`), it also
+builds and publishes `luna-factory-0.2.1-x86_64-unknown-linux-gnu.tar.gz` and its
 `-provenance.json` on Ubuntu 24.04. Other version tags publish source archives only.
 The Linux bundle contains the runtime, UI, skill, manifests and operator runbooks;
 it does not install or start a service. No macOS, Windows or musl binary is implied.

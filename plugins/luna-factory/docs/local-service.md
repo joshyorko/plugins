@@ -29,7 +29,7 @@ and target repositories. For example, after creating a private staging parent:
 python3 plugins/luna-factory/scripts/package_runtime.py \
   --binary plugins/luna-factory/server/target/release/luna-factoryd \
   --ui plugins/luna-factory/ui/dist/index.html \
-  --output /absolute/path/to/staging/luna-factory-0.2.0
+  --output /absolute/path/to/staging/luna-factory-0.2.1
 ```
 
 The helper creates only the requested output directory and its contents. It
@@ -45,7 +45,7 @@ registration identifiers to any selected package file.
 The output layout is:
 
 ```text
-luna-factory-0.2.0/
+luna-factory-0.2.1/
   plugin.json, mcp.json, plugin.yaml, __init__.py
   .codex-plugin/plugin.json, .claude-plugin/plugin.json, .mcp.json
   skills/luna-factory/                 one canonical skill and its references
@@ -63,7 +63,7 @@ luna-factory-0.2.0/
 Verify the actual staged files before installation:
 
 ```bash
-cd /absolute/path/to/staging/luna-factory-0.2.0
+cd /absolute/path/to/staging/luna-factory-0.2.1
 sha256sum --check SHA256SUMS
 ./bin/luna-factoryd --version
 ```
@@ -88,7 +88,7 @@ connect a ChatGPT account, or grant runtime execution authority.
 
 Create the private operator JSON using the configuration in the
 [plugin runbook](../README.md#configure-an-operator-instance). Set `skill_path` to
-`/absolute/path/to/installed/luna-factory-0.2.0/skills/luna-factory/SKILL.md`.
+`/absolute/path/to/installed/luna-factory-0.2.1/skills/luna-factory/SKILL.md`.
 Keep `listen` at `127.0.0.1:8787`, matching both shipped MCP maps. Keep the SQLite
 file in a dedicated private state directory outside repositories and outside the
 versioned package. Keep that same state path across upgrades. Use the existing
@@ -98,11 +98,11 @@ package or a target repository.
 Validate and run the installed binary explicitly:
 
 ```bash
-/absolute/path/to/installed/luna-factory-0.2.0/bin/luna-factoryd doctor \
+/absolute/path/to/installed/luna-factory-0.2.1/bin/luna-factoryd doctor \
   --config /absolute/path/to/private/operator.json
-/absolute/path/to/installed/luna-factory-0.2.0/bin/luna-factoryd serve \
+/absolute/path/to/installed/luna-factory-0.2.1/bin/luna-factoryd serve \
   --config /absolute/path/to/private/operator.json \
-  --ui /absolute/path/to/installed/luna-factory-0.2.0/ui/dist/index.html
+  --ui /absolute/path/to/installed/luna-factory-0.2.1/ui/dist/index.html
 ```
 
 `doctor` without `--probe-native` checks configuration and local identity. It does
@@ -133,7 +133,7 @@ StartLimitBurst=3
 [Service]
 Type=simple
 WorkingDirectory=/absolute/path/to/private/state
-ExecStart=/absolute/path/to/installed/luna-factory-0.2.0/bin/luna-factoryd serve --config /absolute/path/to/private/operator.json --ui /absolute/path/to/installed/luna-factory-0.2.0/ui/dist/index.html
+ExecStart=/absolute/path/to/installed/luna-factory-0.2.1/bin/luna-factoryd serve --config /absolute/path/to/private/operator.json --ui /absolute/path/to/installed/luna-factory-0.2.1/ui/dist/index.html
 UMask=0077
 Restart=on-failure
 RestartSec=5
@@ -151,11 +151,23 @@ The restart rate is bounded. Service-manager termination is not application-leve
 proof that native descendants stopped; retained claims still require normal
 reconciliation. Do not use a service restart as a cancellation workaround.
 
-This unit does not start or daemonize native Codex. If using the supported
-`existing_daemon` transport, the operator must already have that independently
-managed Codex daemon running and select it in private configuration. The default
+This unit does not start or daemonize native Codex. On Unix, `existing_daemon`
+connects with WebSocket framing directly to the already-running daemon's Unix
+socket. Select an absolute `native_socket` in private configuration, or allow the
+read-only `codex app-server daemon version` command to discover it. No daemon is
+started or restarted; closing the Factory connection does not stop that daemon.
+The raw `app-server proxy` forwards bytes and does not convert JSON lines into
+WebSocket frames. Version 0.2.0 incorrectly used JSON lines on that path; 0.2.1
+corrects it. Non-Unix existing-daemon transport remains unsupported. The default
 `stdio` transport still owns its app-server process and retains its documented
 recovery limits. Neither path copies credentials or changes authentication.
+
+Run `doctor --config /absolute/private/operator.json --probe-native` before any
+execution admission. A passed initialization/model-list probe proves transport
+and catalog observation only. It makes zero inference calls and does not prove
+subscription entitlement, callback handling, worker routing or cessation. Keep
+native execution disabled until those independent gates pass. Preserve unknown
+owners and claims during upgrades, even when a new read-only probe succeeds.
 
 ## Activate client connections
 
