@@ -1,0 +1,421 @@
+LF-07 verification on 2026-10-08
+Implementation source: 37e513795127289796fe4032c5578671d4d21229
+Rust/Cargo 1.99.0; Node 24.19.0; npm 11.9.0; Python 3.12.14
+All commands below returned exit0. cargo fmt --all -- --check also passed with no output.
+Subprocess/host fixtures only. No real Codex/ChatGPT acceptance.
+
+COMMAND: cargo test --locked
+TRANSCRIPT SHA256: 2ad7d9a3579528f3bfb719463cd16af5d9f30e3c3734f9cb4757abf12c3c5f2a
+   Compiling luna-factoryd v0.2.0 (/workspace/plugins/plugins/luna-factory/server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.63s
+     Running unittests src/lib.rs (target/debug/deps/luna_factoryd-f3687158bdd50955)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/luna_factoryd-b51d6682a8c278c9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/admission.rs (target/debug/deps/admission-c5faebe55ae8c69d)
+
+running 8 tests
+test database_inside_repository_and_symlink_alias_are_rejected ... ok
+test deleting_a_tracked_directory_still_has_an_exact_subject ... ok
+test duplicate_start_returns_same_run_and_conflicting_payload_is_rejected ... ok
+test exact_subject_changes_when_index_changes_under_same_worktree ... ok
+test repository_helpers_cannot_execute_or_hide_candidate_changes ... ok
+test second_mutation_owner_and_privilege_expansion_are_rejected ... ok
+test restart_preserves_identity_budget_and_claim_without_replaying ... ok
+test exact_subject_preserves_whitespace_in_untracked_filenames ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/backends.rs (target/debug/deps/backends-2f957c5108d6a8f0)
+
+running 5 tests
+test discovery_has_no_environment_credential_or_process_dependencies ... ok
+test catalog_distinguishes_upstream_advertising_from_qualification ... ok
+test only_recognized_native_transport_can_be_a_planning_preference ... ok
+test discovery_ignores_operator_paths_and_never_executes_present_binary ... ok
+test absent_binary_does_not_prevent_planning_or_prove_execution ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/continuation.rs (target/debug/deps/continuation-e715f10aea5a2a60)
+
+running 9 tests
+test independent_ready_task_continues_while_unrelated_dependency_stays_blocked ... ok
+test lost_continuation_ack_reconcile_and_restart_never_redispatch ... ok
+test failed_file_predicate_repairs_same_task_once_with_original_budget_and_deadline ... ok
+test manual_fresh_ready_task_needs_no_repair_budget_and_is_presented_as_resumable ... ok
+test real_decision_stops_automatic_work_and_answer_replays_without_another_turn ... ok
+test recovery_of_completed_report_never_runs_its_continuation_directive ... ok
+test two_tasks_continue_without_external_resume_and_keep_original_lineage ... ok
+test stale_source_unknown_child_and_unknown_effect_never_authorize_next_turn ... ok
+test blocked_absent_malformed_and_unverified_failure_directives_do_not_continue ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.56s
+
+     Running tests/continuation_policy.rs (target/debug/deps/continuation_policy-954dc273fcfeb4a3)
+
+running 4 tests
+test directive_rejects_model_authorization_and_untyped_repair_diagnosis ... ok
+test next_is_explicit_necessary_unattempted_ready_and_does_not_consume_repairs ... ok
+test repair_needs_current_retained_failed_observation_and_original_budget ... ok
+test strict_owner_schema_closes_every_nullable_nested_object ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/control.rs (target/debug/deps/control-69e1f9031e0d2bae)
+
+running 11 tests
+test admission_rejects_cycles_missing_dependencies_stale_assumptions_unknown_effects_and_claims ... ok
+test actual_822_v1_snapshot_imports_transactionally_without_invented_cessation ... ok
+test corrupt_actual_v1_snapshot_fails_before_import_and_keeps_schema_and_claim ... ok
+test legacy_import_preserves_claim_decision_dispatch_identity_deadline_and_budget_without_proof ... ok
+test revisions_dispatch_generations_and_return_do_not_certify_completion ... ok
+test source_or_assumption_movement_invalidates_current_proof ... ok
+test public_projection_bounds_do_not_narrow_authoritative_history ... ok
+test unknown_effect_no_progress_and_original_budget_gate_repairs ... ok
+test matching_donor_conformance_cases_use_the_production_core ... ok
+test read_detects_changed_snapshot_and_foreign_claim_projection ... ok
+test sqlite_rejects_stale_writers_and_duplicate_event_payload_conflicts ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/decision_recovery.rs (target/debug/deps/decision_recovery-6d29c2edba234236)
+
+running 7 tests
+test restart_cannot_turn_unavailable_stdio_ownership_into_cessation_or_redispatch ... ok
+test terminal_decision_survives_factory_startup ... ok
+test terminal_decision_survives_reconcile_and_remains_answerable_with_zero_repairs ... ok
+test late_duplicate_answer_must_not_answer_next_decision ... ok
+test replayed_child_failure_does_not_consume_two_repairs ... ok
+test transport_close_preserves_accepted_terminal_decision ... ok
+test failure_before_resume_ack_is_not_overwritten_by_resume_snapshot ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+
+     Running tests/evidence.rs (target/debug/deps/evidence-95de475e7a2bb427)
+
+running 7 tests
+test dependency_failure_demotes_completed_dependent_on_reconciliation ... ok
+test dependent_criterion_requires_its_prerequisites_own_scoped_proof ... ok
+test new_dispatch_requires_explicit_reattestation_and_denies_old_active_or_unknown_attempts ... ok
+test prose_is_not_proof_and_structured_file_fact_requires_semantic_acceptance ... ok
+test symlink_and_nonregular_files_are_rejected ... ok
+test shared_criterion_dependency_uses_only_the_prerequisites_own_refs ... ok
+test foreign_bindings_unknown_environment_and_path_escape_never_certify ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/factory_integration.rs (target/debug/deps/factory_integration-2f0057b7d16e26a3)
+
+running 43 tests
+test ambiguous_recovery_blocks_one_run_without_preventing_service_startup ... ok
+test all_criteria_proven_does_not_finish_an_outstanding_necessary_selected_task ... ok
+test confirmed_preflight_failure_does_not_leave_an_unrecoverable_claim ... ok
+test current_source_movement_demotes_old_success_without_native_work ... ok
+test cancellation_terminates_only_fresh_owned_terminal_and_requires_exit_evidence ... ok
+test changed_command_process_identity_after_stop_cannot_release_claim ... ok
+test ended_owner_unknown_is_reconciled_without_redispatch_or_budget_reset ... ok
+test failed_read_only_terminal_preflight_can_retry_before_any_stop_dispatch ... ok
+test ambiguous_descendant_keeps_repository_claim ... ok
+test failed_resume_is_recoverable_blocked_not_stranded_starting ... ok
+test ignored_file_predicate_changes_invalidate_current_completion ... ok
+test decision_answer_preserves_an_exhausted_repair_budget ... ok
+test lost_ack_completed_turn_is_recovered_without_replaying_inference ... ok
+test missing_dispatch_correlation_keeps_claim_without_a_new_turn ... ok
+test failed_selected_task_repairs_its_observed_output_without_replacement ... ok
+test observed_push_remains_unknown_even_when_owner_requests_an_answer ... ok
+test inherited_provider_is_reported_as_configuration_and_cannot_silently_drift ... ok
+test optional_rejected_discovery_does_not_reopen_a_verified_objective ... ok
+test owner_acceptance_is_fetched_from_fenced_native_history_and_bound_to_subject ... ok
+test idle_threads_with_background_terminal_do_not_release_claim ... ok
+test owner_candidate_selection_gates_the_real_next_native_packet ... ok
+test operator_decisions_with_zero_repair_budget_continue_once_on_the_same_owner ... ok
+test previously_admitted_necessary_sibling_cannot_be_done_by_another_tasks_receipt ... ok
+test operator_answer_resumes_same_owner_without_expanding_authority ... ok
+test prose_only_completion_is_verify_not_convergence_and_keeps_claim ... ok
+test read_only_check_task_never_permits_native_owner_turn ... ok
+test restart_recovers_a_completed_dispatch_without_starting_a_thread_or_turn ... ok
+test rejected_owner_candidates_never_authorize_a_managed_dispatch ... ok
+test reroute_notifications_preserve_exact_turn_evidence_and_stop_owned_work ... ok
+test runtime_start_status_steer_cancel_resume_preserve_native_owner ... ok
+test second_service_cannot_reconcile_another_live_owner ... ok
+test sequential_necessary_tasks_finish_only_after_explicit_current_reattestation ... ok
+test stale_ui_mutations_and_read_only_reconcile_use_same_current_projection ... ok
+test restart_preserves_pending_and_unknown_terminal_stops_without_replay ... ok
+test unanswered_decision_does_not_dispatch_or_consume_a_repair ... ok
+test terminal_disappearance_and_ack_are_not_exit_proof ... ok
+test two_no_progress_returns_require_explicit_labelled_diagnosis_without_budget_reset ... ok
+test unproved_delivery_cannot_offer_retry_or_release_its_claim ... ok
+test uncertain_steer_intent_blocks_replay_of_the_same_native_correction ... ok
+test unsupported_terminal_observation_keeps_idle_run_claimed ... ok
+test uncertain_terminal_stop_is_not_replayed_on_cancel_retry ... ok
+test unrelated_stale_or_invalid_reroutes_cannot_contaminate_current_evidence ... ok
+test stale_exit_history_and_reused_process_ids_cannot_release_a_live_terminal ... ok
+
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.95s
+
+     Running tests/graph.rs (target/debug/deps/graph-5ccf6c86b4c5f442)
+
+running 11 tests
+test final_factory_drop_releases_lease_even_during_an_inherited_pre_exec_window ... ok
+test alias_remap_and_git_directory_replacement_cannot_rebind_graph ... ok
+test planning_does_not_touch_an_existing_unknown_claim ... ok
+test candidates_reject_foreign_sources_missing_dependencies_cycles_and_stale_revisions ... ok
+test planning_mode_and_source_binding_are_immutable_at_store_boundary ... ok
+test retained_graph_evidence_is_unproved_when_current_repository_binding_fails ... ok
+test dependency_and_target_changes_are_metadata_only_and_journaled_once ... ok
+test planning_roundtrip_replay_conflicts_and_no_execution ... ok
+test revoked_planning_alias_keeps_history_and_unrelated_held_run_visible ... ok
+test source_movement_and_intervening_proposals_fence_apply ... ok
+test unknown_execution_is_read_only_and_existing_attempts_survive_planning_edits ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+     Running tests/http_integration.rs (target/debug/deps/http_integration-d3b635b4d5756d72)
+
+running 1 test
+test mcp_2026_discovery_tools_resource_and_zero_inference_reads_work ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests/http_security.rs (target/debug/deps/http_security-2a5c758575ca7684)
+
+running 1 test
+test loopback_host_and_origin_are_required_without_cors_wildcards ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/lifecycle.rs (target/debug/deps/lifecycle-e0841f48d1908199)
+
+running 7 tests
+test bounded_owner_summaries_withhold_synthetic_credentials ... ok
+test convergence_requires_current_subject_and_every_mandatory_criterion ... ok
+test all_owner_report_states_validate_bounded_unique_criterion_ids ... ok
+test external_result_does_not_include_host_paths_or_raw_logs ... ok
+test interrupt_ack_and_missing_children_do_not_prove_cancellation ... ok
+test provider_schema_rejection_is_diagnosed_without_stopped_execution_claim ... ok
+test native_output_schema_obeys_strict_structured_output_objects ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/mcp_contract.rs (target/debug/deps/mcp_contract-0092b7f23a50b608)
+
+running 9 tests
+test native_settings_patch_is_strict_partial_and_returns_effective_values ... ok
+test concurrent_partial_settings_updates_retain_both_fields_and_revalidate_defaults ... ok
+test reconciliation_is_callable_in_the_model_filtered_catalog ... ok
+test server_identity_contains_a_portable_png_icon ... ok
+test settings_without_profiles_does_not_invent_an_allowed_profile ... ok
+test every_structured_tool_declares_an_object_output_contract ... ok
+test rust_sdk_preserves_standard_and_openai_metadata ... ok
+test status_and_ui_reads_are_truthfully_read_only ... ok
+test graph_catalog_requires_revision_and_is_callable_by_both_audiences ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running tests/native_audit.rs (target/debug/deps/native_audit-58897e17ffda8e25)
+
+running 1 test
+test audit_projection_keeps_only_exact_luna_capability_and_sanitized_blocker ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/native_live.rs (target/debug/deps/native_live-5446915020521f81)
+
+running 1 test
+test installed_binary_initializes_and_advertises_exact_luna ... ignored, requires explicit read-only native runtime audit; no inference
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/native_protocol.rs (target/debug/deps/native_protocol-298fcbe447261d57)
+
+running 5 tests
+test configured_route_never_becomes_observed_execution_telemetry ... ok
+test canonical_skill_is_native_input_not_copied_instructions ... ok
+test descendant_graph_is_transitive_and_only_explicit_parentage_counts ... ok
+test only_exact_catalog_model_and_supported_effort_are_accepted ... ok
+test uncertain_or_unloaded_thread_is_never_stopped_proof ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/native_transport.rs (target/debug/deps/native_transport-0d32295faf7b86ca)
+
+running 16 tests
+test approval_requests_are_visible_and_never_auto_approved ... ok
+test dispatch_correlation_uses_client_id_not_item_id_or_latest_turn ... ok
+test dropping_last_client_stops_only_owned_process ... ok
+test eof_resolves_pending_requests_and_shutdown_is_idempotent ... ok
+test initializes_correlates_concurrent_requests_and_streams_events ... ok
+test loaded_ephemeral_descendants_are_included_and_active_turns_are_explicit ... ok
+test malformed_native_history_is_never_silently_accepted_as_empty_evidence ... ok
+test native_helpers_preserve_security_fields_and_use_current_protocol ... ok
+test native_history_envelopes_are_unwrapped_and_turn_fenced ... ok
+test native_history_from_another_turn_cannot_be_acceptance_evidence ... ok
+test oversized_frame_closes_transport_without_unbounded_buffering ... ok
+test responses_may_arrive_out_of_order ... ok
+test rpc_errors_do_not_leak_untrusted_error_messages ... ok
+test terminal_identity_is_validated_and_refreshed_before_targeted_stop ... ok
+test timeout_does_not_retry_a_mutating_request ... ok
+test cancelling_partial_write_invalidates_transport ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.17s
+
+     Running tests/output_schemas.rs (target/debug/deps/output_schemas-1a8cff1f4eccfd07)
+
+running 4 tests
+test settings_contract_supports_empty_profile_configuration_and_rejects_wrong_types ... ok
+test every_tool_has_a_concrete_valid_schema ... ok
+test read_settings_onboarding_and_graph_responses_match_their_contracts ... ok
+test public_run_contract_covers_legacy_nulls_and_lifecycle_projections ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.37s
+
+     Running tests/repository_onboarding.rs (target/debug/deps/repository_onboarding-b8e1af47481d3fd5)
+
+running 10 tests
+test discovery_exposes_opaque_identity_without_paths_contents_or_native_calls ... ok
+test discovery_and_status_do_not_launch_the_configured_native_executable ... ok
+test discovery_depth_and_entry_limits_bound_the_read_only_scan ... ok
+test dynamic_alias_enforces_finish_and_shares_existing_repository_claims ... ok
+test replacing_an_approved_candidate_revokes_admission_and_resume ... ok
+test requests_do_not_grant_access_and_local_approval_survives_restart ... ok
+{
+  "alias": "test",
+  "id": "af53781f-12ba-4f08-9c50-250a765d3da8",
+  "max_finish": "local_candidate",
+  "name": "sample",
+  "root_alias": "tests",
+  "status": "approved"
+}
+test unknown_candidates_paths_authority_and_alias_collisions_are_rejected ... ok
+test revoked_roots_remove_dynamic_aliases_and_existing_aliases_keep_precedence ... ok
+test onboarding_tools_are_app_only_with_truthful_write_annotations ... ok
+test symlink_escape_and_replaced_candidates_cannot_be_approved ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/review_regressions.rs (target/debug/deps/review_regressions-d414673c91f29354)
+
+running 4 tests
+test restart_rejects_revoked_repository_profile_and_reduced_authority_before_native_calls ... ok
+test closed_daemon_proxy_reconnects_and_cancels_the_same_owned_execution ... ok
+test resume_keeps_one_event_listener_and_counts_each_child_failure_once ... ok
+test event_lag_does_not_remove_the_persisted_deadline_watchdog ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.25s
+
+   Doc-tests luna_factoryd
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+
+COMMAND: cargo clippy --all-targets --locked -- -D warnings
+TRANSCRIPT SHA256: cba6d7e51bda2d676ea6110a363941cdb18dd362b42c35ec72e20792fc4b6d32
+    Checking luna-factoryd v0.2.0 (/workspace/plugins/plugins/luna-factory/server)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.79s
+
+
+COMMAND: cargo build --locked
+TRANSCRIPT SHA256: 4b318a359bfabb551b6b0e4143637d5063cfec7627b8035487ed2f7094e6f367
+   Compiling luna-factoryd v0.2.0 (/workspace/plugins/plugins/luna-factory/server)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.88s
+
+
+COMMAND: npm run typecheck
+TRANSCRIPT SHA256: 0b5c4d06f0dca713acb828c40259e000c360e46718759d04226d7f8b23bef3e4
+
+> luna-factory-workbench@0.2.0 typecheck
+> tsc --noEmit
+
+
+
+COMMAND: npm run build
+TRANSCRIPT SHA256: 5f2c55ddbe5aba453a56d9d35957c195d8864c0dcbcd1d53d6468e015e398ca4
+
+> luna-factory-workbench@0.2.0 build
+> tsc --noEmit && vite build
+
+vite v6.4.3 building for production...
+transforming...
+✓ 164 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html  433.36 kB │ gzip: 107.06 kB
+✓ built in 1.04s
+
+
+COMMAND: LUNA_GRAPH_E2E=1 npm test
+TRANSCRIPT SHA256: 5077648436e89fb704e962a696bac8f8290c801bb2114644d0ae593e202f3d6a
+
+> luna-factory-workbench@0.2.0 test
+> vitest run
+
+
+ RUN  v4.1.11 /workspace/plugins/plugins/luna-factory/ui
+
+
+ Test Files  10 passed (10)
+      Tests  123 passed (123)
+   Start at  21:25:51
+   Duration  3.00s (transform 375ms, setup 0ms, import 1.14s, tests 3.97s, environment 953ms)
+
+
+
+COMMAND: python3 -m unittest discover -s plugins/luna-factory/tests -v
+TRANSCRIPT SHA256: 6973aaf32aaa1de0d38751b2e26d7fa641586c80e385b80cac081c7c2fc4c533
+test_alternate_skill_is_rejected (test_package_runtime.PackageRuntimeTests.test_alternate_skill_is_rejected) ... ok
+test_binary_version_failure_is_rejected (test_package_runtime.PackageRuntimeTests.test_binary_version_failure_is_rejected) ... ok
+test_branding_is_present_in_staging_and_checksum_inventory (test_package_runtime.PackageRuntimeTests.test_branding_is_present_in_staging_and_checksum_inventory) ... ok
+test_compatibility_interface_drift_is_rejected (test_package_runtime.PackageRuntimeTests.test_compatibility_interface_drift_is_rejected) ... ok
+test_empty_and_oversize_ui_are_rejected (test_package_runtime.PackageRuntimeTests.test_empty_and_oversize_ui_are_rejected) ... ok
+test_existing_destination_is_not_replaced (test_package_runtime.PackageRuntimeTests.test_existing_destination_is_not_replaced) ... ok
+test_external_ui_assets_are_rejected (test_package_runtime.PackageRuntimeTests.test_external_ui_assets_are_rejected) ... ok
+test_mcp_endpoint_drift_or_credentials_are_rejected (test_package_runtime.PackageRuntimeTests.test_mcp_endpoint_drift_or_credentials_are_rejected) ... ok
+test_missing_binary_is_rejected (test_package_runtime.PackageRuntimeTests.test_missing_binary_is_rejected) ... ok
+test_missing_non_square_small_and_escaping_branding_are_rejected (test_package_runtime.PackageRuntimeTests.test_missing_non_square_small_and_escaping_branding_are_rejected) ... ok
+test_missing_ui_is_rejected (test_package_runtime.PackageRuntimeTests.test_missing_ui_is_rejected) ... ok
+test_non_executable_binary_is_rejected (test_package_runtime.PackageRuntimeTests.test_non_executable_binary_is_rejected) ... ok
+test_non_regular_ui_is_rejected (test_package_runtime.PackageRuntimeTests.test_non_regular_ui_is_rejected) ... ok
+test_output_inside_source_checkout_is_rejected (test_package_runtime.PackageRuntimeTests.test_output_inside_source_checkout_is_rejected) ... ok
+test_output_parent_must_exist (test_package_runtime.PackageRuntimeTests.test_output_parent_must_exist) ... ok
+test_runtime_crate_version_mismatch_is_rejected (test_package_runtime.PackageRuntimeTests.test_runtime_crate_version_mismatch_is_rejected) ... ok
+test_source_overlap_is_rejected (test_package_runtime.PackageRuntimeTests.test_source_overlap_is_rejected) ... ok
+test_stages_one_complete_plugin_with_deterministic_receipt_and_checksums (test_package_runtime.PackageRuntimeTests.test_stages_one_complete_plugin_with_deterministic_receipt_and_checksums) ... ok
+test_stale_binary_is_rejected (test_package_runtime.PackageRuntimeTests.test_stale_binary_is_rejected) ... ok
+test_stale_ui_is_rejected (test_package_runtime.PackageRuntimeTests.test_stale_ui_is_rejected) ... ok
+test_symlink_input_and_skill_escape_are_rejected (test_package_runtime.PackageRuntimeTests.test_symlink_input_and_skill_escape_are_rejected) ... ok
+test_symlink_output_parent_is_rejected (test_package_runtime.PackageRuntimeTests.test_symlink_output_parent_is_rejected) ... ok
+test_traversing_output_is_rejected (test_package_runtime.PackageRuntimeTests.test_traversing_output_is_rejected) ... ok
+test_unexpected_sensitive_build_input_is_rejected (test_package_runtime.PackageRuntimeTests.test_unexpected_sensitive_build_input_is_rejected) ... ok
+test_unexpected_sensitive_skill_file_is_rejected (test_package_runtime.PackageRuntimeTests.test_unexpected_sensitive_skill_file_is_rejected) ... ok
+test_unselected_local_files_and_caches_are_not_copied (test_package_runtime.PackageRuntimeTests.test_unselected_local_files_and_caches_are_not_copied) ... ok
+test_version_mismatches_are_rejected (test_package_runtime.PackageRuntimeTests.test_version_mismatches_are_rejected) ... ok
+test_wrong_binary_version_is_rejected (test_package_runtime.PackageRuntimeTests.test_wrong_binary_version_is_rejected) ... ok
+test_wrong_plugin_identity_is_rejected (test_package_runtime.PackageRuntimeTests.test_wrong_plugin_identity_is_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 29 tests in 2.165s
+
+OK
+
+
+COMMAND: bin/check
+TRANSCRIPT SHA256: 5d56da8007a03d68afea4daa4e66f1c2154c83ff9468758094316a391a060158
+.....................................................
+----------------------------------------------------------------------
+Ran 53 tests in 6.328s
+
+OK
+repo structure validated
+

@@ -584,3 +584,29 @@ pub fn revalidate_files(control: &mut Control, root: &Path) -> Result<bool> {
     }
     Ok(changed)
 }
+
+/// Re-read failed file predicates immediately before authorizing a bounded repair.
+/// Native nonzero exit remains a retained failure fact, never completion proof.
+pub fn revalidate_failures(control: &Control, refs: &[String], root: &Path) -> Result<()> {
+    for id in refs {
+        ensure!(
+            crate::continuation::observed_failure_current(control, id),
+            "continuation_failure_unproved"
+        );
+        let check = control
+            .checks
+            .iter()
+            .find(|check| &check.id == id)
+            .context("check_missing")?;
+        if check.kind == "file_sha256" {
+            ensure!(
+                Some(file_digest(
+                    root,
+                    check.path.as_deref().context("missing_check_path")?
+                )?) == check.observed_sha256,
+                "continuation_failure_changed"
+            );
+        }
+    }
+    Ok(())
+}

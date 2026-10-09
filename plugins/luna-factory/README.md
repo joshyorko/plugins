@@ -191,3 +191,17 @@ The UI binds its answer form to that decision and clears an old draft when a new
 decision appears. Native security approvals remain in Codex. Connection loss
 does not erase a completed decision, and replayed child-failure events spend the
 repair budget only once per native thread/turn.
+
+### Bounded continuation
+
+An admitted owner can request the next necessary task or a diagnosed same-task
+repair when it returns a valid, current report and all owned execution has stopped.
+The Factory starts the next turn on the same owner under the original deadline,
+acceptance and authority. New admitted tasks do not spend repair allowance; repairs
+do. Genuine operator decisions still pause and use the existing idempotent answer.
+
+Continuation is explicit in the owner report and fails closed on unknown effects,
+stale source/proof, unsupported task effects or exhausted limits. Planning graphs
+cannot execute. Direct startup/reconciliation reads never replay or start work;
+a newly observed completion after reconnecting an already active dispatch may
+continue under the same guards. See [LF-07 contract and evidence](docs/continuation-verification.md).
