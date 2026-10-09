@@ -1669,3 +1669,54 @@ async fn read_only_check_task_never_permits_native_owner_turn() {
     assert_eq!(calls(&dir).len(), count);
     factory.cancel(id).await.unwrap();
 }
+
+#[tokio::test]
+async fn identical_repository_replacement_before_or_during_report_read_retains_claim() {
+    for mode in ["finish_identity_drift", "finish_identity_late"] {
+        let (dir, factory, request) = setup();
+        let started = factory.start(request).await.unwrap();
+        let id = started["id"].as_str().unwrap();
+        let stamp = luna_factoryd::store::Store::open(&factory.config)
+            .unwrap()
+            .get(id)
+            .unwrap()
+            .graph_repository_stamp;
+        completed_report(&dir, &factory);
+        std::fs::write(dir.path().join("mode"), mode).unwrap();
+        factory
+            .steer(id, "turn-1", "Return the scoped fixture proof")
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let current = factory.get(id).await.unwrap();
+                if current["state"] == "BLOCKED" || current["state"] == "CONVERGED" {
+                    assert_ne!(current["state"], "CONVERGED", "{mode}");
+                    assert_eq!(current["claim_held"], true, "{mode}");
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(factory.graph(id).await.is_err(), "{mode}");
+        let _ = factory.reconcile(id, None).await;
+        let cancelled = factory.cancel(id).await.unwrap();
+        assert_eq!(cancelled["claim_held"], true, "{mode}");
+        let stored = luna_factoryd::store::Store::open(&factory.config)
+            .unwrap()
+            .get(id)
+            .unwrap();
+        assert_eq!(stored.graph_repository_stamp, stamp, "{mode}");
+        assert!(stored.claim_held, "{mode}");
+        assert_eq!(
+            calls(&dir)
+                .iter()
+                .filter(|call| call["method"] == "turn/start")
+                .count(),
+            1,
+            "{mode}"
+        );
+    }
+}
