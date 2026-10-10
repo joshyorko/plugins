@@ -28,7 +28,11 @@ const cases = [
   { file: "swarm-lanes-synthetic-dark.png", width: 1280, height: 900, params: { surface: "global", mode: "fullscreen", theme: "dark", scenario: "swarm", graph: "1", node: "child:child-1" }, agent: "child-1", lanes: true },
   { file: "home-light.png", width: 1280, height: 860, params: { surface: "global", mode: "fullscreen", scenario: "home" } },
   { file: "inline-campaign-light.png", width: 720, height: 420, params: { surface: "inline", scenario: "campaign" } },
+  { file: "campaign-github-ready-light.png", width: 1440, height: 1000, params: { surface: "global", mode: "fullscreen", scenario: "campaign", graph: "1", node: "issue-103" }, inspect: true },
+  { file: "campaign-github-unavailable-narrow.png", width: 420, height: 900, params: { surface: "thread", scenario: "campaign", graph: "1", node: "issue-103", github: "unavailable" }, inspect: true },
 ];
+/** Read-only tools a capture may call. GitHub reads are display-only and never mutate. */
+const readOnlyTools = ["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory", "read_factory_delivery", "inspect_factory_issue_graph"];
 const server = await createServer({ root: ui, configFile: join(ui, "vite.config.ts"), server: { host: "127.0.0.1", port: 0, strictPort: true } });
 let browser;
 try {
@@ -71,10 +75,17 @@ try {
         await frame.locator('[data-connection="disconnected"]').waitFor();
         assert(await frame.locator('[data-action="chat-follow-up"]:enabled').count() === 0, "Disconnected host left message controls enabled");
       }
+      if (item.params.scenario === "campaign" && item.params.graph) {
+        // Wait for the GitHub-reported section so the capture shows settled telemetry.
+        await frame.locator(".graph-inspector .github-report").waitFor();
+        if (item.inspect) await frame.locator(".graph-inspector .github-report").evaluate(element => element.scrollIntoView({ block: "center" }));
+      }
       if (item.params.proposal) await frame.locator('[aria-label="Review graph change"]').scrollIntoViewIfNeeded();
       if (item.params.font) assert(await frame.locator(".graph-inspector .route-list dd").first().evaluate(element => parseFloat(getComputedStyle(element).fontSize)) >= 18, "Host font size was ignored");
       const host = await page.evaluate(() => ({ calls: window.lunaDogfoodHost.calls, messages: window.lunaDogfoodHost.messages.length }));
-      assert(host.calls.every(name => ["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory"].includes(name)), "Visual capture attempted mutation or execution");
+      assert(host.calls.every(name => readOnlyTools.includes(name)), "Visual capture attempted mutation or execution");
+      if (item.params.scenario === "campaign" && item.params.graph) assert(host.calls.includes("read_factory_delivery"), "GitHub delivery was not read for a GitHub-sourced plan");
+      if (item.params.scenario !== "campaign" && item.params.scenario !== "home") assert(!host.calls.includes("read_factory_delivery"), "GitHub delivery was read while the integration was unconfigured");
       assert.equal(host.messages, 0, "Message sent without a user click");
       const layout = await frame.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth, overflowingControls: Array.from(document.querySelectorAll("button,input,select,textarea")).filter(element => { const bounds = element.getBoundingClientRect(); return bounds.width > 0 && (bounds.left < -1 || bounds.right > innerWidth + 1); }).length }));
       assert(layout.scrollWidth <= layout.width + 1, `Horizontal overflow in ${item.file}: ${JSON.stringify(layout)}`);

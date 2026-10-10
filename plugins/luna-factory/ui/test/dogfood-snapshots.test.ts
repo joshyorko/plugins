@@ -11,7 +11,7 @@ describe("dogfood MCP Apps browser simulator evidence", () => {
     const manifest = manifestSchema.parse(JSON.parse(readFileSync(new URL("manifest.json", directory), "utf8")));
     expect(manifest.expected_ui_version).toBe(UI_VERSION);
     expect(manifest.evidence_kind).toContain("not authenticated ChatGPT Desktop acceptance");
-    expect(manifest.captures).toHaveLength(18);
+    expect(manifest.captures).toHaveLength(20);
     expect(readFileSync(new URL("global-large-host-font.png", directory)).equals(readFileSync(new URL("global-planning-split-light.png", directory)))).toBe(false);
     const source = new URL("../src/", import.meta.url);
     const hash = createHash("sha256");
@@ -24,7 +24,9 @@ describe("dogfood MCP Apps browser simulator evidence", () => {
       expect(capture.layout.overflowingControls).toBe(0);
       expect(capture.layout.scrollWidth).toBeLessThanOrEqual(capture.layout.width + 1);
       expect(capture.automatic_messages).toBe(0);
-      expect(capture.read_only_tool_calls.every(name => ["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory"].includes(name))).toBe(true);
+      expect(capture.read_only_tool_calls.every(name => ["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory", "read_factory_delivery", "inspect_factory_issue_graph"].includes(name))).toBe(true);
+      // The default-off GitHub reader is only called where the synthetic host configured it.
+      if (!["campaign", "home"].includes(capture.params.scenario ?? "")) expect(capture.read_only_tool_calls).not.toContain("read_factory_delivery");
     }
   });
 });

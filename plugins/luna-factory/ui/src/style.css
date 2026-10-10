@@ -253,6 +253,19 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .node-meta { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 23px; }
 .node-after { display: none; }
 .dock { position: absolute; top: -9px; right: -9px; display: inline-flex; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .16)); }
+/* GitHub-reported delivery: display only, never proof. Shapes pair with hues: filled = passed,
+   square = failed, ring = pending, dashed ring = neutral. The coral "needs" hue is never used here. */
+.pr-chip { position: absolute; right: 10px; bottom: -10px; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: 10.5px; font-weight: 500; line-height: 15px; color: var(--ink); background: var(--surface); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pr-chip.ready { border-color: color-mix(in srgb, var(--done) 60%, var(--line-strong)); }
+.pr-chip.stale { border-style: dashed; color: var(--muted); }
+.pr-chip.stale .check-dot { opacity: .55; }
+.check-dots { display: inline-flex; align-items: center; gap: 2px; }
+.check-dots small { font-size: 9.5px; color: var(--muted); margin-left: 1px; }
+.check-dot { flex: none; display: inline-block; width: 7px; height: 7px; border-radius: 50%; box-sizing: border-box; }
+.check-dot.c-success { background: var(--done); }
+.check-dot.c-failure { background: var(--held); border-radius: 1px; }
+.check-dot.c-pending { border: 1.5px solid var(--active); }
+.check-dot.c-neutral { border: 1.5px dashed var(--faint); }
 .canvas-empty { padding: 36px 18px; text-align: center; color: var(--muted); }
 .canvas-empty h3 { color: var(--ink); margin-bottom: 4px; }
 
@@ -260,6 +273,17 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .inspector { position: sticky; top: 64px; display: grid; gap: 6px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); min-width: 0; max-height: calc(100vh - 80px); overflow: auto; }
 .inspector h3 { font-size: var(--font-text-md-size, 17px); line-height: 1.3; margin: 2px 0 2px; overflow-wrap: anywhere; }
 .inspector h4 { font-size: 12px; font-weight: 640; color: var(--muted); margin: 10px 0 2px; }
+.github-report { display: grid; gap: 4px; }
+.github-report p { margin: 0; }
+.github-report .stale-line { color: var(--held); }
+.pr-report { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.ready-line { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--done); }
+.diff-stat .add { color: var(--done); font-variant-numeric: tabular-nums; }
+.diff-stat .del { color: var(--held); font-variant-numeric: tabular-nums; }
+.check-list { list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 3px; }
+.check-list li { display: flex; align-items: baseline; gap: 6px; font-size: 12px; min-width: 0; }
+.check-list li > span { min-width: 0; overflow-wrap: anywhere; }
+.check-list small { display: block; color: var(--muted); font-size: 11px; }
 .inspector-state { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 13px; }
 .inspector-agent { display: flex; gap: 10px; align-items: flex-start; padding: 10px; margin-bottom: 6px; border-radius: var(--radius-sm); background: var(--luna-glow); }
 .inspector-agent h3 { margin: 0; }
@@ -418,6 +442,7 @@ h1, h2, h3, h4, p { margin-top: 0; }
   .node-after { display: block; font-size: 11px; color: var(--faint); padding-left: 23px; overflow-wrap: anywhere; }
   .dock { top: 8px; right: 8px; }
   .map-node:has(.dock) .node-top { padding-right: 24px; }
+  .pr-chip { position: static; justify-self: start; margin: 3px 0 0 23px; }
   .lanes-axis { margin-left: 0; }
   .lane { grid-template-columns: minmax(0, 1fr); }
   .lane-events li { grid-template-columns: 48px minmax(0, 1fr); }

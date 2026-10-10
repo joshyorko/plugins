@@ -58,6 +58,8 @@ export const capabilitiesSchema = z.object({
   limits: z.object({ capacity: z.number().int().min(1).max(8), repair_attempts: z.number().int().min(0).max(10), wall_seconds: z.number().int().min(30).max(86400) }),
   repository_onboarding: z.object({ enabled: z.boolean(), approval: z.literal("local_operator") }).optional(),
   execution: z.object({ eligible: z.boolean(), reason: z.string().max(2000) }).optional(),
+  /** Optional read-only GitHub App. Configuration only; reachability is reported per read. */
+  github: z.object({ configured: z.boolean(), reason: z.string().max(128) }).optional(),
 });
 export type Capabilities = z.infer<typeof capabilitiesSchema>;
 const repositoryName = z.string().min(1).max(256).refine(value => !/^[A-Za-z]:/.test(value) && !/[\x00-\x1f\x7f]/.test(value) && value.split(/[\\/]/).every(part => part !== "" && part !== "." && part !== ".."), "Expected a relative repository name");
@@ -91,6 +93,37 @@ export const graphEnvelopeSchema = z.object({
 export type GraphEnvelope = z.infer<typeof graphEnvelopeSchema>;
 export type FactoryGraph = GraphEnvelope["graph"];
 export type GraphChange = z.infer<typeof graphChangeSchema>;
+const count = z.number().int().nonnegative().max(10_000_000);
+const shortCode = z.string().max(32).nullable();
+const githubText = (max: number) => z.string().max(max);
+const deliveryPullSchema = z.object({
+  number: z.number().int().positive().max(1_000_000_000), url: githubText(512).refine(value => value.startsWith("https://"), "Expected an HTTPS URL"),
+  state: shortCode, draft: z.boolean(), head_sha: z.string().regex(/^[a-fA-F0-9]{40}$/).nullable(), review_decision: shortCode,
+  diff: z.object({ files_changed: count.nullable(), additions: count.nullable(), deletions: count.nullable() }),
+  checks: z.object({
+    rollup: shortCode, total: count, truncated: z.boolean(),
+    runs: z.array(z.object({ name: githubText(200), status: shortCode, conclusion: shortCode, started_at: timestamp.nullable(), completed_at: timestamp.nullable(), summary: githubText(280).nullable() })).max(25),
+    statuses: z.array(z.object({ context: githubText(200), state: shortCode, created_at: timestamp.nullable() })).max(25),
+  }),
+  ready_for_review: z.boolean(), merge_authority: z.literal(false), observed_at: timestamp, reported_by: z.literal("github"),
+});
+const deliveryNodeSchema = z.object({
+  node_id: nodeId, item_id: nodeId, reported_by: z.literal("github"),
+  status: z.enum(["observed", "unavailable", "deferred"]), freshness: z.enum(["fresh", "cached", "stale"]).nullable(),
+  reason: z.string().max(128).nullable(), observed_at: timestamp.nullable(),
+  issue: z.object({ number: z.number().int().positive(), url: githubText(512), state: shortCode }).nullable(),
+  pull_requests: z.array(deliveryPullSchema).max(5), pull_requests_total: count, pull_requests_truncated: z.boolean(),
+});
+/** `read_factory_delivery`: GitHub-reported display data. Never proof, attention or an action. */
+export const deliverySchema = z.object({
+  schema_version: z.literal(1), run_id: runId, graph_revision: revision, reported_by: z.literal("github"),
+  proof: z.literal("none"), merge_capability: z.literal("none"), available: z.boolean(),
+  reason: z.string().max(128).nullable(), retry_at: timestamp.nullable(), min_interval_seconds: z.literal(60),
+  observed_at: timestamp, nodes: z.array(deliveryNodeSchema).max(128),
+});
+export type Delivery = z.infer<typeof deliverySchema>;
+export type DeliveryNode = Delivery["nodes"][number];
+export type DeliveryPull = DeliveryNode["pull_requests"][number];
 export const UI_VERSION = "0.2.1";
 export type FollowUpKind = "summary" | "blocker" | "choose";
 export type FollowUpTask = Pick<FactoryGraph["nodes"][number], "id" | "title">;

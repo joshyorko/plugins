@@ -236,7 +236,7 @@ if (fixturePreview) {
   }).catch(() => controller.setDisconnected("Could not connect to the MCP Apps host. Reopen Luna Factory from the host to reconnect."));
   // Read-only status polling. It never starts a model, and pauses while hidden or editing.
   const refreshTimer = window.setInterval(() => {
-    if (!document.hidden && controller.state.connected && controller.state.initialized && !controller.state.pending && !controller.state.refreshing && !editor) void controller.refresh().then(() => { if (controller.state.graphStale) readSelectedPlan(); });
+    if (!document.hidden && controller.state.connected && controller.state.initialized && !controller.state.pending && !controller.state.refreshing && !editor) void controller.refresh().then(() => { if (controller.state.graphStale) readSelectedPlan(); else void controller.loadDelivery(); });
   }, 30_000);
   window.addEventListener("pagehide", () => window.clearInterval(refreshTimer), { once: true });
 }
