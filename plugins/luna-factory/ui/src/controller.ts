@@ -313,7 +313,7 @@ export class WorkbenchController {
    */
   async loadTimelines(): Promise<void> {
     const run = this.selected;
-    if (!this.state.connected || this.state.viewMode !== "lanes" || !run || this.timelineLoading || !this.state.capabilities?.agent_timeline?.enabled) return;
+    if (!this.state.connected || !this.lanesVisible() || !run || this.timelineLoading || !this.state.capabilities?.agent_timeline?.enabled) return;
     if (this.state.timelineRunId !== run.id) { this.state.timelines = {}; this.state.timelineRunId = run.id; }
     const now = Date.now();
     const key = (thread: string) => `${run.id}\u0000${thread}`;
@@ -323,6 +323,8 @@ export class WorkbenchController {
     this.timelineLoading = true;
     try {
       for (const agent of due) {
+        // Stop as soon as Lanes closes or the page is hidden; unread agents stay due.
+        if (!this.lanesVisible()) return;
         this.timelineReadAt.set(key(agent.thread), now);
         let view: AgentTimelineView = { status: "error" };
         try {
@@ -334,6 +336,9 @@ export class WorkbenchController {
         this.changed();
       }
     } finally { if (version === this.timelineVersion) this.timelineLoading = false; }
+  }
+  private lanesVisible(): boolean {
+    return this.state.viewMode === "lanes" && !(typeof document !== "undefined" && document.hidden);
   }
   /** Selecting an agent also selects its persisted task, so one context reaches ChatGPT. */
   selectAgent(thread: string | null, explicit = true): void {

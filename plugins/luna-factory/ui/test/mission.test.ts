@@ -8,7 +8,7 @@ import { nowSentence, runTier, SinceTracker, statusLabel } from "../src/narrativ
 import { renderWorkbench } from "../src/view";
 import { fixtureBackends, fixtureCampaignPlan, fixturePlanningRun, fixtureRun, fixtureSwarmRun, fixtureTimelineCapability, fixtureTimelines, fixtureWorkbench } from "./fixtures";
 import { classifyRun, needsOperatorDecision, type Capabilities } from "../src/domain";
-import { TIMELINE_INTERVAL_MS } from "../src/controller";
+import { MAX_TIMELINE_AGENTS, TIMELINE_INTERVAL_MS } from "../src/controller";
 
 const node = (id: string, dependencies: string[] = [], state = "candidate") => ({ id, title: id, dependencies, state, owner_thread: null });
 
@@ -259,6 +259,48 @@ describe("observed agent timelines", () => {
     expect(await reasons({ source: "codex-action-server", enabled: false, detail: "Codex observation is not configured on this server." })).toEqual(Array(3).fill("Codex observation is not configured on this server."));
     expect(await reasons(fixtureTimelineCapability, () => ({ isError: true, content: [{ type: "text", text: "agent_thread_not_in_run" }] }))).toEqual(Array(3).fill("Codex observation could not be read for this agent."));
     expect(await reasons(fixtureTimelineCapability, () => ({ structuredContent: { ...fixtureTimelines(run.id)["owner-a"], binding_verified: true } }))).toEqual(Array(3).fill("Codex observation could not be read for this agent."));
+  });
+  it("reads at most the first agents and says so for the rest", async () => {
+    const run = fixtureSwarmRun();
+    run.presentation!.workers = Array.from({ length: 10 }, (_, index) => ({ thread_id: `worker-${index + 1}`, liveness: "unknown" as const }));
+    const template = fixtureTimelines(run.id)["child-1"]!;
+    const call = vi.fn<Bridge["call"]>().mockImplementation(async (tool, args) => {
+      if (tool !== "read_factory_agent_timeline") return { structuredContent: run };
+      const thread = String(args.thread_id);
+      return { structuredContent: { ...template, thread_id: thread, events: template.events.map(event => ({ ...event, thread_id: thread })) } };
+    });
+    const controller = new WorkbenchController({ call, context: vi.fn<Bridge["context"]>().mockResolvedValue() }, () => undefined);
+    controller.setConnected(true);
+    controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [run], selected_run: run, capabilities: { ...fixtureWorkbench.capabilities, agent_timeline: fixtureTimelineCapability } } });
+    controller.setViewMode("lanes");
+    await vi.waitFor(() => expect(Object.keys(controller.state.timelines)).toHaveLength(MAX_TIMELINE_AGENTS));
+    await controller.loadTimelines();
+    expect(call.mock.calls.filter(([tool]) => tool === "read_factory_agent_timeline")).toHaveLength(MAX_TIMELINE_AGENTS);
+    const root = document.createElement("div");
+    root.innerHTML = renderLanes(run, roster(run, null), controller.state);
+    expect(root.querySelectorAll(".lane-track.observed")).toHaveLength(MAX_TIMELINE_AGENTS);
+    expect(Array.from(root.querySelectorAll(".lane-track.unavailable"), track => track.textContent)).toEqual(Array(3).fill("Not observed: only the first 8 agents are read."));
+    expect(root.textContent).not.toContain("Reading what Codex observed");
+  });
+  it("stops reading as soon as Lanes closes or the page is hidden", async () => {
+    let release: () => void = () => undefined;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const { controller, timelineCalls } = await observedController(fixtureTimelineCapability, async thread => { await pending; return { structuredContent: fixtureTimelines("swarm-fixture")[thread] }; });
+    controller.setViewMode("lanes");
+    await vi.waitFor(() => expect(timelineCalls()).toHaveLength(1));
+    controller.setViewMode("map");
+    release();
+    await vi.waitFor(() => expect(Object.keys(controller.state.timelines)).toHaveLength(1));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(timelineCalls()).toHaveLength(1);
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    try {
+      controller.setViewMode("lanes");
+      await controller.loadTimelines();
+      expect(timelineCalls()).toHaveLength(1);
+    } finally { hidden.mockRestore(); }
+    await controller.loadTimelines();
+    await vi.waitFor(() => expect(timelineCalls()).toHaveLength(3));
   });
   it("never changes attention, proof, the Map or the ChatGPT context", async () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(1_791_142_800_000);
