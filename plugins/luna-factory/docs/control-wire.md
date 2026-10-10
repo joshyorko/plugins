@@ -100,7 +100,8 @@ This is historical swarm evidence. The [October 9 maintainer decision](https://g
 
 ## Planning graph contract, LF-01 through LF-06
 
-This slice adds five model-and-app tools. Total catalog: 20; model-visible: 13.
+This slice added five model-and-app tools (catalog then: 20 total, 13 model-visible).
+The current catalog is 26 total, 18 model-visible; see [Campaign entity](#campaign-entity-77).
 All structured results now declare typed output schemas, including nested graph,
 control, presentation, settings and backend data. Existing native action methods
 retain their execution and evidence gates.
@@ -209,7 +210,7 @@ LUNA_GRAPH_E2E=1 npm test -- --run test/graph_e2e.test.ts
 ```
 
 Toolkit PR #11 and any deployed host must refresh their exact source/catalog/schema
-pins to 20 total and 13 model-visible tools, preserve the settings wrapper and
+pins to the current catalog (26 total, 18 model-visible after #77), preserve the settings wrapper and
 required graph revision fields, and qualify model context/remount/removal against
 the actual host. No tunnel, Executor, registration or production package is changed
 by this slice. Live replacement remains blocked while original cessation is unknown.
@@ -250,3 +251,93 @@ tool, scheduler or execution backend is added. Manual continuation of a fresh
 admitted task also no longer consumes repair allowance; existing decision-answer
 idempotency remains unchanged. Legacy unstamped runs retain manual recovery but
 cannot enter new automatic continuation. Planning-only records never dispatch.
+
+## Campaign entity (#77)
+
+This slice adds four model-and-app tools. Total catalog: 26; model-visible: 18.
+App-only tools are unchanged. Nothing here dispatches native work, acquires a
+claim or qualifies execution.
+
+| Tool | Input | Result |
+| --- | --- | --- |
+| `create_factory_campaign` | `repository`, `parent:{provider,item_id,revision,display?:{number?,url?}}`, `title`, `objective`, `acceptance` (1 to 32), `non_goals`, `finish`, `profile`, `idempotency_key` | `{campaign, graph}`. The graph is created by the same planning admission as `create_factory_graph` and is planning-only. |
+| `list_factory_campaigns` | optional `limit` (1 to 100, default 20) | `{campaigns}`, newest first. Read-only. |
+| `get_factory_campaign` | `campaign_id` | `{campaign}`. Read-only. |
+| `promote_factory_campaign` | `campaign_id`, `expected_revision`, `idempotency_key` | Always an `execution_not_qualified` tool error in this version. |
+
+### Record
+
+Campaigns persist in a new SQLite `campaigns` table, added with the store's
+existing `CREATE TABLE IF NOT EXISTS` style. The schema version stays 2, and an
+older binary ignores the table. The table keeps the idempotency key unique, the
+planning run unique (a foreign key to `runs`), and the triple (repository
+identity, parent provider, parent item) unique.
+
+- `repository` is the approved alias. `repository_identity` is the graph's
+  opaque local identity (the same value as `graph.repository.identity`), never a
+  filesystem path. A different clone or a replaced root is a different identity.
+- `parent` is validated and bounded like graph sources: `provider`, `item_id` and
+  `revision` are bounded IDs. `display.number` is a positive safe integer and
+  `display.url` is an `https://` URL of at most 2048 bytes. These are supplied
+  source assertions: they grant no authority and never satisfy a criterion.
+- `planning_run_id` is the planning graph. `run_ids` (at most 64) lists execution
+  runs and is empty today.
+- `finish` is capped by the repository's `max_finish`.
+- `status` is `planned | promoted | finished | stopped`. Only `planned` is
+  reachable. Because no promotion transition exists, this version refuses to read
+  a record with another status or with `run_ids` (`campaign_record_corrupt`), and
+  it also rejects a record whose indexed columns disagree with its payload.
+
+### Determinism
+
+The fingerprint is the SHA-256 of the typed request. An empty `display` is the
+same as an absent one. The same key with the same fingerprint replays the
+recorded campaign: it reruns the planning admission's replay checks (alias remap,
+repository identity) and never admits a second graph. The same key with a
+different fingerprint fails with `campaign_idempotency_conflict`. Any other key for
+an existing (repository identity, provider, item) fails with
+`campaign_parent_exists`. That check runs before any write, so a rejected request
+leaves no orphan planning graph and no journal event.
+
+The planning graph uses the derived key `campaign-plan-<sha256(key)>` and a fixed
+inert budget: capacity 1, no repairs and a 30 second window. That budget is always
+within operator limits and is stable for replay. Planning records never dispatch,
+so execution runs will carry their own budgets.
+
+### Projection
+
+A campaign result contains the record fields above, without the key or the
+fingerprint, plus:
+
+- `planning`: `{run_id, revision, planning_only: true, tasks:{total, candidate, ready, running, verify, done, blocked}}`,
+  read from the recorded ledger. A campaign read never writes and never refreshes the source.
+- `runs`: `{id, state, updated_at}` for each linked run.
+- `promotion`: `{allowed: false, reason}`.
+
+The output schema pins `planning.planning_only` to `true` and `promotion.allowed`
+to `false`, so the projection cannot claim execution. The title goes through
+`safe_summary` redaction. A display URL that carries a credential-like marker is
+omitted. The UI labels the parent number "reported by GitHub".
+
+### Promotion
+
+`expected_revision` is the planning graph's control revision (`planning.revision`).
+The command rejects with `execution_not_qualified` while
+`capabilities.execution.eligible` is false, and one shared function feeds both
+values. That is always the case in this version. The check runs before any campaign,
+graph or journal state is read, so promotion writes no event, changes no revision
+and records no key. It never upgrades the planning graph. If eligibility were
+enabled without a promotion transition, the command would still fail closed with
+`campaign_promotion_unavailable`. Duplicate-promotion replay and the stale-revision
+fencing of a successful promotion are deferred to #71. Today every attempt is the
+same write-free rejection.
+
+Revision fencing, claims, evidence and the run and replay contracts are unchanged.
+A campaign's graph is an ordinary planning graph: `propose_factory_change` and
+`apply_factory_change` fence it as before, and every native action rejects it.
+
+Deployed host handoff: the toolkit and deployed host pins must move to 26 total and
+18 model-visible tools. The OCI canaries (`container/acceptance_canary.py`,
+`container/planning_graph_canary.py`) still pin the released 0.2.1 catalog of 22
+tools and its UI hash. A release that ships this slice must update them. This
+slice does not change them or any deployed service.

@@ -1,7 +1,7 @@
 # Mission control: product design and contract reconciliation
 
 Product Design parent: #67. First slice: #68 (UI only). Reconciled against `main` at `dd304ef`,
-the squash of #66.
+the squash of #66. The campaign entity (#77) is reconciled against `bec70a5`, the squash of #68.
 
 ## Product direction
 
@@ -38,7 +38,7 @@ the squash of #66.
 ## Screen hierarchy
 
 ```
-Home: Needs you · In progress · Planned · not started · History
+Home: Needs you · Parent campaigns (campaign → plan → runs) · In progress · Planned · not started · History
   └ Campaign: header (status, proof phase, freshness) · story · next action / decision
       ├ Map | Lanes  (same selection)
       ├ Crew strip    (orbit: Luna plus one satellite per reported worker)
@@ -104,12 +104,14 @@ disabled under `prefers-reduced-motion`.
 
 ## Contract matrix
 
-Legend: **✅ implemented in #68** · **🟡 implementable with current data** · **🔴 needs a new
-contract** (issue).
+Legend: **✅ implemented in #68** (or the issue named) · **🟡 implementable with current data** ·
+**🔴 needs a new contract** (issue).
 
 | UI component | Displays | Authoritative source | Today | Refresh | Stale / missing behaviour | Needed contract | Tests |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Home groups | Needs you, In progress, Planned, History | `refresh_factory` / `open_factory` → `runs[]`, `needsOperatorDecision`, `presentation.result` | ✅ | 30s app-only poll while visible | Last valid list kept, with the error shown | Campaign grouping #77 | `mission.test.ts` home grouping, `dogfood.test.ts` |
+| Home groups | Needs you, In progress, Planned, History | `refresh_factory` / `open_factory` → `runs[]`, `needsOperatorDecision`, `presentation.result` | ✅ | 30s app-only poll while visible | Last valid list kept, with the error shown | none (runs linked to a campaign move under it, below) | `mission.test.ts` home grouping, `dogfood.test.ts` |
+| Campaign grouping | Campaign row (parent label, title, planned task count, status), then its plan, then any linked runs | `list_factory_campaigns` → `campaigns[]`: `parent`, `planning.tasks`, `planning_run_id`, `run_ids`, `status` | ✅ #77 | Read after each refresh and on connect | Last valid grouping kept and marked stale. A server without the tool keeps the ungrouped tiers. A real decision on a linked run still appears in Needs you | Multiple campaigns per repo #82 | `mission.test.ts` campaign grouping, `home-light.png`, `home-campaign-mobile-dark.png`, `live-home-campaign-light.png` |
+| Open a campaign | Its planning run's Campaign Map, with the parent label in the header | campaign `planning_run_id` → `get_factory_run` / `get_factory_graph` | ✅ #77 | Same as the map | Same as the map | none | `mission.test.ts`, campaign captures |
 | Row freshness | "Updated …" | `run.updated_at` | ✅ | Poll | Dated when not today. "not reported" if absent | `activity_at` / `created_at` #69 | `mission.test.ts` |
 | Proof phase | Proven / mandatory | `presentation.criteria` (validated against control) | ✅ | Poll | "Proof unverified" without projection | none | `view.test.ts`, `mission.test.ts` |
 | Since you opened | New receipts and update | `receipts[].created_at`, `updated_at`, session baseline | ✅ (session scope) | Poll | Nothing shown when unchanged | Persisted baseline #74, graph-change activity #69 | `mission.test.ts` since-tracker |
@@ -128,10 +130,12 @@ contract** (issue).
 | Plan editor and proposal review | Explicit propose, then confirmed apply | `propose/apply_factory_change` with fencing | ✅ (unchanged from #66) | After mutation, the run is reread | Locked when stale, disconnected or pending | Clear target #73 | `dogfood.test.ts`, `graph_e2e.test.ts` |
 | PR chip / checks / diff | PR state, check dots, +/- | none | 🔴 | | Omitted | #78 | |
 | Ready for review vs integration | Two distinct states | none | 🔴 | | Omitted | #78, #81 | |
-| Parent-issue campaign / "luna yolo" | Campaign from `owner/repo#N` | none | 🔴 | | Home hint: "Ask ChatGPT to plan work" | #76, #77 | |
+| Parent intake | Campaign for one parent item, with a planning graph | `create_factory_campaign` (model and app): caller-supplied `parent` assertion, labelled "reported by GitHub", never proof | ✅ #77 for a supplied parent | After creation, the next home read | Duplicate parent rejected (`campaign_parent_exists`). Same key with a new payload rejected | Authenticated GitHub fetch from `owner/repo#N` #76 | `server/tests/campaign.rs`, `live-plan-capture.mjs` (#67 from the recorded snapshot) |
+| "luna yolo" from `owner/repo#N` | Fetch, plan and run in one ask | none | 🔴 | | Home hint: "Ask ChatGPT to plan work" | #76, #71 | |
 | Parallel workers | Multiple workers on independent issues | Children observed only | 🔴 | | Liveness only | #71, #79, #61 | |
 | Sol / Astra treatment | Verified escalation | `route` is reroute-only today | 🔴 | | Neutral. Reroute shown as stop evidence | #80 | `mission.test.ts` reroute |
 | Execution | Start, steer, stop | `capabilities.execution.eligible` (false) | ✅ gated | | Start disabled | #71 | `dogfood.test.ts` |
+| Campaign promotion | Plan into execution | `promote_factory_campaign` fails with `execution_not_qualified` while `capabilities.execution.eligible` is false. `promotion.allowed` is always `false` | ✅ #77 fails closed | | No UI control. No event, revision or record is written | Qualified execution and a promotion transition #71 | `server/tests/campaign.rs` promotion |
 | Multiple campaigns per repo | | One claim per repository | 🔴 | | | #82 | |
 | Brand mark asset | Logo and composer icon | `assets/logo.*` (older purple tile) | 🟡 | | | #72 | |
 
@@ -150,6 +154,16 @@ contract** (issue).
  │                                                                     └─ #82 multiple campaigns per repo
  └─ #72 brand asset unification
 ```
+
+### #77 ordering note
+
+#77 does not wait for #69. It needs only the parent's display number and URL, so it
+carries them on the campaign `parent.display` and leaves graph-node `source`
+unchanged. #69 still owns display data for graph nodes. Promotion is in the
+contract, but it fails closed until #71 qualifies execution and defines the
+transition. #79 (parallel dispatch) and #82 (multiple campaigns per repository)
+build on this entity. Today it allows one campaign per repository identity and
+parent item, and it has no linked execution runs.
 
 ## Acceptance evidence for #68
 
