@@ -317,6 +317,7 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
                 f"RELEASE_ARCHIVE_SHA256={RELEASE_ARCHIVE_SHA256}",
                 "--build-arg",
                 f"RELEASE_UI_SHA256={RELEASE_UI_SHA256}",
+                "--build-arg",
                 f"GIT_PACKAGE_VERSION={GIT_PACKAGE_VERSION}",
                 ".",
             ],
