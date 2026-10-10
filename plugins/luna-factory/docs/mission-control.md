@@ -97,7 +97,7 @@ disabled under `prefers-reduced-motion`.
 | Dependency satisfied | A prerequisite's state becomes `done` | Its edge turns solid green, and the dependent gains "prerequisites met" | Available (state diff) |
 | Worker launched | A new `presentation.workers[]` entry | A satellite joins the orbit, and its token docks on the bound task | Liveness only. Binding needs #79 |
 | Investigating a failed test | `check_result` failure with a thread | Lane segment changes to the held hue, and the inspector shows the failing step | Needs #75 and #78 |
-| PR review-ready | GitHub PR plus required checks | A PR chip on the node shows check dots, plus a "Ready for review" line | Needs #78 |
+| PR review-ready | `read_factory_delivery`: open, non-draft PR with GitHub rollup `success` | A PR chip on the node shows check dots, plus a "Ready for review" line in the inspector | Available when the GitHub App is configured (#78). Static, no motion |
 | Ready for authorized integration | Authority granted and checks green | A separate "Ready to integrate" line, never auto-merged | Needs #81 |
 | Verified Sol/Astra escalation | Policy-permitted observed route | One restrained solar glow (Sol) or star glint (Astra) on the agent token, plus a route line in the inspector. Unknown routes stay neutral. | Needs #80 |
 | Blocked becomes actionable | Decision appears | The decision bar becomes the coral "Needs you" panel, and the inline card adds its attention line | Available |
@@ -114,6 +114,8 @@ disabled under `prefers-reduced-motion`.
 | Per-agent timeline | A hatched lane reading "Per-agent timeline not reported by this server" until #75. |
 | Unknown reason code | "The server reported this action without further detail." Never the raw code. |
 | Execution unqualified | Start stays disabled. The footer states that execution stays unavailable until independently qualified. |
+| GitHub App unconfigured | Nothing from GitHub is shown and no delivery read is made. `capabilities.github` reports `{configured:false, reason}`. |
+| GitHub telemetry stale or unavailable | Stale: the last observation is kept, the chip is dashed, and the inspector shows "Stale · observed N min ago" with the reason. Unavailable: the inspector shows the reason as a sentence, plus "Luna will not ask GitHub again for about N min" when rate-limited. It never becomes attention or an error banner. |
 
 ## Contract matrix
 
@@ -139,14 +141,28 @@ contract** (issue).
 | View tools | Model reads or moves the view | App-registered `luna_read_view`, `luna_focus_task`, `luna_focus_agent`, `luna_show_view`, `luna_open_run` | ✅ View-only. Read-only annotations, no server mutation, no raw thread IDs. Model focus never reattaches a removed context. | On call | Structured error when the target isn't in view | none | `view-tools.test.ts` (MCP Apps list and call) |
 | Decision panel | Question plus primary action | `pending_decision`, `primary_action`, `actions[]` | ✅ | Poll | Legacy runs show refresh only | Typed blockers #70 | `view.test.ts` |
 | Plan editor and proposal review | Explicit propose, then confirmed apply | `propose/apply_factory_change` with fencing | ✅ (unchanged from #66) | After mutation, the run is reread | Locked when stale, disconnected or pending | Clear target #73 | `dogfood.test.ts`, `graph_e2e.test.ts` |
-| PR chip / checks / diff | PR state, check dots, +/- | none | 🔴 | | Omitted | #78 | |
-| Ready for review vs integration | Two distinct states | none | 🔴 | | Omitted | #78, #81 | |
-| Parent-issue campaign / "luna yolo" | Campaign from `owner/repo#N` | none | 🔴 | | Home hint: "Ask ChatGPT to plan work" | #76, #77 | |
+| PR chip / checks / diff | PR state, check dots, +/-, review decision | `read_factory_delivery` (GitHub App, `reported_by: "github"`, `proof: "none"`) | ✅ #78 (opt-in) | On each plan read, plus at most once a minute with the 30s poll. The server caches each node for at least 60s | Omitted unless the server returned data. Stale: dashed chip, age from the server's read time. Unavailable: reason sentence in the inspector, never the raw code | Webhooks, persisted telemetry | `delivery.test.ts`, `server/tests/github_app.rs`, captures `campaign-github-*` |
+| Ready for review vs integration | Two distinct states | `ready_for_review` (open, not a draft, GitHub rollup `success`). `merge_authority: false` | ✅ Ready for review #78. 🔴 Ready to integrate #81 | Same as above | Ready for review is never worded as merge. The rollup approximates required checks (stricter), because reading required checks needs administration permission | Authorized integration #81 | `delivery.test.ts`, `github_app.rs` contract test |
+| Parent-issue campaign / "luna yolo" | Campaign from `owner/repo#N` | `inspect_factory_issue_graph` (read-only intake, writes nothing), then the existing `create_factory_graph` and `propose`/`apply_factory_change` with confirmation | ✅ intake #76 (opt-in). 🔴 campaign entity #77 | On request | Ineligible or unavailable with a reason. Cycles rejected, cross-repository references reported and not imported | Campaign grouping #77 | `server/tests/github_app.rs` |
 | Parallel workers | Multiple workers on independent issues | Children observed only | 🔴 | | Liveness only | #71, #79, #61 | |
 | Sol / Astra treatment | Verified escalation | `route` is reroute-only today | 🔴 | | Neutral. Reroute shown as stop evidence | #80 | `mission.test.ts` reroute |
 | Execution | Start, steer, stop | `capabilities.execution.eligible` (false) | ✅ gated | | Start disabled | #71 | `dogfood.test.ts` |
 | Multiple campaigns per repo | | One claim per repository | 🔴 | | | #82 | |
 | Brand mark asset | Logo, composer icon, MCP server icon | `assets/logo.svg`, 512 px `assets/logo.png` (moonlight night tile, `lunaMark` geometry) | ✅ in #72 | Static asset | n/a | none | `test_container_build.py` icon pin, `test_package_runtime.py` branding, `mcp_contract.rs` server icon |
+
+## Acceptance evidence for #76 and #78
+
+- Server: `cargo test --locked`, including `tests/github_app.rs`, which runs a loopback fake
+  GitHub with recorded shapes and throwaway keys. See [GitHub App](github-app.md).
+- UI: `test/delivery.test.ts` covers parsing, the once-a-minute read, quiet failure, chips, Ready
+  for review without merge wording, stale age and unavailable reason, plus unchanged proof and
+  attention.
+- `npm run test:host` adds `campaign-github-ready-light.png` and
+  `campaign-github-unavailable-narrow.png`. The capture allowlists include `read_factory_delivery`
+  and `inspect_factory_issue_graph`. A capture fails if delivery is read while the synthetic host
+  reports the app as unconfigured.
+- **Not claimed:** a live GitHub read. That's the integrator's opt-in `github_live` check, and the
+  OCI egress decision is still the owner's. See [GitHub App](github-app.md#egress-an-owner-decision-is-required).
 
 ## Implementation order
 

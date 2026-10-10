@@ -8,6 +8,8 @@ This is a local/private application package. Build and protocol tests do not est
 
 The stacked implementation's [integration-readiness report](docs/integration-readiness.md) separates code-merge gates from live acceptance. [Bounded CAS inspection](docs/cas-verification.md) is available for explicitly configured loopback targets; CAS execution remains disabled pending protocol, identity, entitlement and cessation qualification.
 
+Luna's optional, read-only [GitHub App](docs/github-app.md) adds source-bound issue-graph intake and GitHub-reported PR and check telemetry. It's off by default, and its data is never Factory proof.
+
 ## Build from this checkout
 
 Requirements: Rust 1.88 or newer, Node.js/npm for the UI, Git, and a supported authenticated Codex CLI. Use the operator's existing Codex profile; do not copy credentials into this checkout.

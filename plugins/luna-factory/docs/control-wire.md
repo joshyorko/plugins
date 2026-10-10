@@ -101,6 +101,8 @@ This is historical swarm evidence. The [October 9 maintainer decision](https://g
 ## Planning graph contract, LF-01 through LF-06
 
 This slice adds five model-and-app tools. Total catalog: 20; model-visible: 13.
+(Later slices: 22 total and 14 model-visible after CAS inspection and repository onboarding; 24
+total and 16 model-visible after the [GitHub App reads](#github-app-reads-76-78).)
 All structured results now declare typed output schemas, including nested graph,
 control, presentation, settings and backend data. Existing native action methods
 retain their execution and evidence gates.
@@ -209,7 +211,7 @@ LUNA_GRAPH_E2E=1 npm test -- --run test/graph_e2e.test.ts
 ```
 
 Toolkit PR #11 and any deployed host must refresh their exact source/catalog/schema
-pins to 20 total and 13 model-visible tools, preserve the settings wrapper and
+pins to the current catalog (24 total and 16 model-visible tools as of the GitHub App reads), preserve the settings wrapper and
 required graph revision fields, and qualify model context/remount/removal against
 the actual host. No tunnel, Executor, registration or production package is changed
 by this slice. Live replacement remains blocked while original cessation is unknown.
@@ -250,3 +252,27 @@ tool, scheduler or execution backend is added. Manual continuation of a fresh
 admitted task also no longer consumes repair allowance; existing decision-answer
 idempotency remains unchanged. Legacy unstamped runs retain manual recovery but
 cannot enter new automatic continuation. Planning-only records never dispatch.
+
+## GitHub App reads (#76, #78)
+
+This slice adds two read-only, model-and-app tools. Total catalog: **24**. Model-visible: **16**.
+The annotations are `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true` and
+`openWorldHint: true`, because both tools read an external system. Both are off by default. The
+operator runbook, permissions and egress decision are in [GitHub App](github-app.md).
+
+| Tool | Input | Result |
+| --- | --- | --- |
+| `inspect_factory_issue_graph` | `repository` (`owner/repo`), `parent` (issue number) | `status` (`available`, `unavailable` or `ineligible`), `reason`, `retry_at`, `eligibility`, candidate `nodes` with GitHub sources, `acceptance_candidates` labelled `derived_from_issue`, rejected `cycles`, `external_dependencies`, `cross_repository`, `omitted`, `truncated` and `import` guidance. Writes nothing |
+| `read_factory_delivery` | `run_id` | `reported_by: "github"`, `proof: "none"`, `merge_capability: "none"`, `available`, `reason`, `retry_at`, `min_interval_seconds: 60` and per-node `{status, freshness, observed_at, issue, pull_requests[]}` with checks, combined rollup, review decision, diff stats and `ready_for_review` |
+
+- **Intake sources.** Candidate sources carry `repository_id: null`. The caller sets it to
+  `graph.repository.identity` when it proposes `import_candidates`. The existing graph rules are
+  unchanged: `foreign_graph_source`, `duplicate_graph_source` and replay-safe proposals.
+  `item_id` is `"<numeric repository id>:<issue node id>"`, the immutable forge repository ID
+  qualifier described above.
+- **Delivery is in memory and display only.** It's cached per node, with a minimum interval of 60
+  seconds. It never enters control, criteria, presentation `result` or `actions`, `deliverable`,
+  receipts or **Needs you**. Contract tests compare those fields before and after a GitHub
+  "success".
+- **Capabilities.** `capabilities.github` is `{configured, reason}` only. Credentials, key paths
+  and tokens are never projected.
