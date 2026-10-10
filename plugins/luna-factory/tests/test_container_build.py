@@ -158,6 +158,9 @@ class ContainerBuildTests(unittest.TestCase):
         BUILD.validate_release_delta(
             [
                 "plugins/luna-factory/server/src/config.rs",
+                "plugins/luna-factory/server/src/campaign.rs",
+                "plugins/luna-factory/server/src/store.rs",
+                "plugins/luna-factory/server/tests/campaign.rs",
                 "plugins/luna-factory/container/Containerfile",
                 "plugins/luna-factory/server/src/extensions.rs",
                 "plugins/luna-factory/server/src/mentions.rs",
