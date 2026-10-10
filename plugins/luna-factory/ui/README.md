@@ -30,8 +30,11 @@ pins the complete dependency graph.
   repeating the opening tool call.
 - Use `App.callServerTool` for the existing Rust MCP tools. There is no HTTP API
   fallback or invented client-to-server command.
-- The landing page groups Needs me, Active, and Recent. List summaries may omit
-  receipts. Selecting one calls `get_factory_run` to load its evidence.
+- Home groups runs into Needs you, In progress, Planned · not started, and History.
+  Needs you is exactly `needsOperatorDecision`. List summaries may omit receipts.
+  Opening a run calls `get_factory_run`, then reads its plan with `get_factory_graph`;
+  both are reads. Map and Lanes share one task-and-agent selection. See
+  `../docs/mission-control.md` for the design and the contract matrix.
 - Tool responses are validated at the boundary. Unknown fields are stripped.
   Errors keep the last valid state. Read request tokens and server generation /
   update time fence late snapshots; repeated opening results cannot roll back a
@@ -43,17 +46,19 @@ pins the complete dependency graph.
   creates a new key. There is no automatic retry of state-changing requests.
 - Status refresh uses `refresh_factory` every 30 seconds while visible, connected,
   and not editing or waiting on an action. It is a persisted-state read, not a
-  model polling loop.
+  model polling loop. A stale plan is reread after the poll.
 - Settings save only capacity, finish, and an approved profile alias. Repository
   access, providers, credentials, and trusted limits remain server-owned.
 
 ## Host compatibility
 
 The OpenAI SDK helper is feature-detected for Model-App Context. Standard
-`ui/update-model-context` is the fallback when advertised. Only eight selected-run
-fields are sent, with hard text limits: run ID, repository, objective, state,
-subject, mandatory gap, blocker, and finish authority. No receipts or logs are
-sent to model context. Updates are serialized, and overview clears selection.
+`ui/update-model-context` is the fallback when advertised. Only bounded selected-run
+fields are sent: run ID, revision, repository, objective, state, subject, mandatory
+gap, blocker, and finish authority. A selected task adds its ID, title, state and
+graph revision. A selected agent adds its display label, role, liveness and bound
+task ID, never a raw thread ID. No receipts or logs are sent to model context.
+Updates are serialized, and overview clears selection.
 
 `openai/deepLink.url` is read through the official helper on initialization and
 host-context changes. Only `/runs/:id` with a validated exact ID is accepted;
