@@ -109,6 +109,14 @@ class ContainerBuildTests(unittest.TestCase):
         self.assertIn("COPY --from=ui-build /build/ui/dist/index.html", containerfile)
         self.assertNotIn("COPY release/luna-factory-0.2.1-x86_64-unknown-linux-gnu/ui/dist/index.html", containerfile)
 
+    def test_oci_build_caps_memory_cpu_stages_and_cargo_jobs(self):
+        builder = (CONTAINER_DIR / "build_image.py").read_text()
+        containerfile = (CONTAINER_DIR / "Containerfile").read_text()
+        for limit in ("--memory=4g", "--cpu-quota=200000", "--jobs=1", "CARGO_BUILD_JOBS=2"):
+            self.assertIn(limit, builder)
+        self.assertIn("ARG CARGO_BUILD_JOBS=2", containerfile)
+        self.assertIn("CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} cargo build --locked --release", containerfile)
+
     def test_build_fingerprint_covers_the_chatgpt_ui_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
