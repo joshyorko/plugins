@@ -27,7 +27,8 @@ METADATA = (
     "docs/package.md", "docs/local-service.md", "docs/repository-onboarding.md",
     "docs/control-adoption.md", "docs/control-plan.md", "docs/control-wire.md",
     "docs/dogfood-recovery.md",
-    "docs/integration-readiness.md", "docs/stack-ci-evidence.json",
+    "docs/integration-readiness.md", "docs/container-architecture.md",
+    "docs/container-deployment.md", "docs/stack-ci-evidence.json",
     "docs/rollback-verification.json", "docs/cas-verification.md",
     "docs/cas-verification-results.txt", "docs/cas-runtime-evidence.json",
     "docs/graph-backend-evidence.md", "docs/continuation-verification.md",
@@ -40,9 +41,11 @@ SKILL_FILES = (
     "references/routing-and-evidence.md", "references/runtime-compatibility.md",
     "scripts/audit_runtime.py", "tests/test_audit_runtime.py",
 )
+ONBOARDING_FILE = "skills/setup/SKILL.md"
 SHARED_FIELDS = ("name", "version", "description", "author", "homepage", "repository", "license", "keywords")
 MAX_UI = 4 * 1024 * 1024
 MAX_BINARY = 512 * 1024 * 1024
+MAX_ONBOARDING = 64 * 1024
 
 
 def validate_branding(files: dict[str, bytes], interface: dict) -> None:
@@ -124,6 +127,46 @@ def json_bytes(value: object) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
 
 
+def openai_extension(files: dict[str, bytes]) -> tuple[dict, str | None]:
+    portable = json.loads(files["plugin.json"])
+    extensions = portable.get("extensions", {})
+    extension = extensions.get("com.openai", {}) if isinstance(extensions, dict) else None
+    if not isinstance(extension, dict) or set(extension) - {"interface", "onboardingSkill"}:
+        raise ValueError("portable OpenAI metadata must contain only interface and optional onboardingSkill; no private app mapping")
+    interface = extension.get("interface")
+    if not isinstance(interface, dict):
+        raise ValueError("portable OpenAI interface is required")
+    onboarding = extension.get("onboardingSkill")
+    if onboarding is not None and onboarding != "./skills/setup/SKILL.md":
+        raise ValueError("onboardingSkill must use the documented package-relative ./skills/setup/SKILL.md path")
+    if "onboardingSkill" in extension and not isinstance(onboarding, str):
+        raise ValueError("onboardingSkill must use the documented package-relative ./skills/setup/SKILL.md path")
+    return interface, onboarding
+
+
+def validate_onboarding_skill(data: bytes) -> None:
+    try:
+        content = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("onboarding skill must be UTF-8 Markdown") from error
+    if not content.startswith("---\n") or "\nname: setup\n" not in content.split("\n---\n", 1)[0]:
+        raise ValueError("onboarding skill identity must be setup")
+    secret_patterns = (
+        r"(?im)^\s*(?:OPENAI_API_KEY|ANTHROPIC_API_KEY|GITHUB_TOKEN|GH_TOKEN)\s*[:=]\s*\S+",
+        r"\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b",
+        r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b",
+        r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}",
+    )
+    if len(data) > MAX_ONBOARDING or "\0" in content or any(re.search(pattern, content) for pattern in secret_patterns):
+        raise ValueError("onboarding skill contains secret-like content or exceeds the content limit")
+    frontmatter, separator, body = content[4:].partition("\n---\n")
+    if (not separator or "description: Guide a user through safe, operator-approved Luna Factory plugin setup." not in frontmatter
+            or not body.lstrip("\n").startswith("# Set up Luna Factory\n")
+            or "Do not print or paste credentials." not in body
+            or "This setup does not change protected services or profiles." not in body):
+        raise ValueError("onboarding skill content does not match the canonical setup guide")
+
+
 class SingleHTML(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -150,20 +193,28 @@ def validate_metadata(files: dict[str, bytes], inputs: dict[str, dict[str, bytes
     version = portable.get("version", "")
     if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", version):
         raise ValueError("plugin version must be a semantic version")
-    extension = portable.get("extensions", {}).get("com.openai", {})
-    if set(extension) != {"interface"}:
-        raise ValueError("portable OpenAI metadata must contain only the existing interface; no private app mapping")
-    validate_branding(files, extension["interface"])
+    interface, onboarding = openai_extension(files)
+    validate_branding(files, interface)
+    if onboarding is not None:
+        if ONBOARDING_FILE not in files:
+            raise ValueError("onboarding skill is missing from the staged package")
+        validate_onboarding_skill(files[ONBOARDING_FILE])
     for name in (".codex-plugin/plugin.json", ".claude-plugin/plugin.json"):
         compat = json.loads(files[name])
         for key in SHARED_FIELDS:
             if compat.get(key) != portable.get(key):
                 raise ValueError(f"{name} {key} differs from portable identity/version metadata")
         if name.startswith(".codex"):
-            if compat.get("interface") != extension["interface"]:
+            if compat.get("interface") != interface:
                 raise ValueError("Codex interface differs from portable interface")
             if compat.get("skills") != "./skills/" or compat.get("mcpServers") != "./.mcp.json":
                 raise ValueError("Codex skill/MCP pointers must stay package-relative")
+            codex_extensions = compat.get("extensions", {})
+            codex_openai = codex_extensions.get("com.openai", {}) if isinstance(codex_extensions, dict) else None
+            if not isinstance(codex_openai, dict) or set(codex_openai) - {"onboardingSkill"}:
+                raise ValueError("Codex compatibility OpenAI metadata contains a private app mapping or unsupported field")
+            if codex_openai.get("onboardingSkill") != onboarding:
+                raise ValueError("Codex onboardingSkill differs from portable onboardingSkill")
     # The repository generator deliberately writes JSON-compatible YAML.
     hermes = json.loads(files["plugin.yaml"])
     for key in ("name", "version", "description"):
@@ -203,14 +254,22 @@ def stage(binary: Path, ui: Path, output: Path) -> None:
         raise ValueError("output parent must already exist")
 
     skill_root = root / "skills/luna-factory"
-    if {path.name for path in (root / "skills").iterdir()} != {"luna-factory"}:
-        raise ValueError("package must contain exactly one canonical skill")
+    metadata_sources = {name: read_file(root / name, name)[0] for name in ("plugin.json",)}
+    _, onboarding = openai_extension(metadata_sources)
+    expected_skills = {"luna-factory"} | ({"setup"} if onboarding is not None else set())
+    if {path.name for path in (root / "skills").iterdir()} != expected_skills:
+        raise ValueError("package must contain exactly one canonical skill and its declared onboarding skill")
     actual_skill = {path.relative_to(skill_root).as_posix() for path in tree_files(skill_root)}
     if actual_skill != set(SKILL_FILES):
         raise ValueError(f"unexpected skill inventory: {sorted(actual_skill ^ set(SKILL_FILES))}")
     files = {}
     for name in (*METADATA, *("skills/luna-factory/" + name for name in SKILL_FILES)):
         files[name] = read_file(root / name, "branding " + name if name.startswith("assets/") else name)[0]
+    if onboarding is not None:
+        setup_root = root / "skills/setup"
+        if {path.relative_to(setup_root).as_posix() for path in tree_files(setup_root)} != {"SKILL.md"}:
+            raise ValueError("unexpected onboarding skill inventory")
+        files[ONBOARDING_FILE] = read_file(root / ONBOARDING_FILE, "onboarding skill", MAX_ONBOARDING)[0]
 
     input_names = {
         "runtime": ["server/Cargo.toml", "server/Cargo.lock", "assets/logo.png"],
