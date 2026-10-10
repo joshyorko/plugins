@@ -54,7 +54,16 @@ def check_surface(client: McpClient) -> dict[str, Any]:
     require(ui_hash == RELEASE_UI_SHA256, "workbench does not match the released UI")
     capabilities = client.call("get_factory_capabilities")
     require(capabilities.get("status_inference_calls") == 0, "capability read reported inference")
-    return {"server": server, "tool_count": len(tools), "workbench_sha256": ui_hash, "inference_calls": 0}
+    settings = client.call("read_factory_settings").get("values", {})
+    require(settings.get("profile") == "oci-canary", "canary profile setting did not persist")
+    return {
+        "server_name": server["name"],
+        "server_version": server["version"],
+        "tool_count": len(tools),
+        "workbench_sha256": ui_hash,
+        "persisted_profile": settings["profile"],
+        "inference_calls": 0,
+    }
 
 
 def graph_from(result: dict[str, Any]) -> dict[str, Any]:
@@ -72,11 +81,12 @@ def call_must_error(client: McpClient, name: str, arguments: dict[str, Any], fra
 
 def prepare(client: McpClient, receipt_path: Path, surface: dict[str, Any]) -> dict[str, Any]:
     existing = client.call("list_factory_runs").get("runs", [])
-    require(existing == [], "planning canary requires an empty run ledger")
+    require(len(existing) <= 1 and all(item.get("planning_only") is True for item in existing), "planning canary requires an empty or canary-only planning ledger")
     created = graph_from(client.call("create_factory_graph", REQUEST))
     replayed = graph_from(client.call("create_factory_graph", REQUEST))
     run_id = created["run_id"]
     require(run_id == replayed["run_id"] and created.get("planning_only") is True, "planning graph replay mismatch")
+    require(not existing or existing[0].get("id") == run_id, "planning canary found an unrelated ledger run")
 
     initial = graph_from(client.call("get_factory_graph", {"run_id": run_id}))
     revision = initial["revision"]
@@ -89,8 +99,8 @@ def prepare(client: McpClient, receipt_path: Path, surface: dict[str, Any]) -> d
         "revision": initial["repository"]["base_head"],
     }
     nodes = [
-        {"id": "oci-canary-a", "title": "Disposable canary prerequisite", "criterion_ids": [criterion], "dependencies": [], "source": source},
-        {"id": "oci-canary-b", "title": "Disposable canary dependent", "criterion_ids": [criterion], "dependencies": [], "source": source},
+        {"id": "oci-canary-a", "title": "Disposable canary prerequisite", "criterion_ids": [criterion], "dependencies": [], "source": {**source, "item_id": "oci-canary-source-a"}},
+        {"id": "oci-canary-b", "title": "Disposable canary dependent", "criterion_ids": [criterion], "dependencies": [], "source": {**source, "item_id": "oci-canary-source-b"}},
     ]
     import_request = {
         "run_id": run_id,

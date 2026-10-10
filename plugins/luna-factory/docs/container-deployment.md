@@ -6,7 +6,7 @@ For the role of Codex CLI, Codex app-server, CAS, and Luna Factory, read [Contai
 
 ## What the image contains
 
-The image uses the published 0.2.1 workbench and skill. The Rust server is a local derivative of source commit `ebe2753ed032347456ef9b1c193646469bf17c96`. The derivative adds an opt-in loopback publish authority. It does not change the published tag or archive. The runtime includes Debian Trixie Git `1:2.47.3-0+deb13u1`, required for repository-bound planning graphs; it is installed at the pinned Python base image's build step and is unavailable to remote network routes at runtime.
+The image uses the published 0.2.1 workbench and skill. The Rust server is a local derivative of source commit `ebe2753ed032347456ef9b1c193646469bf17c96`. The derivative adds an opt-in loopback publish authority. It does not change the published tag or archive. The runtime includes Debian Trixie Git `1:2.47.3-0+deb13u1`, required for repository-bound planning graphs; it is installed from the pinned `20261010T000000Z` Debian snapshot and is unavailable to remote network routes at runtime.
 
 The released server accepts only loopback bind addresses. A rootless Podman port publish forwards traffic to the container interface. The optional `published_origin` setting lets the server bind `0.0.0.0` inside the isolated container while accepting only the exact loopback host and origin. The Compose network is private, and the host port binds to `127.0.0.1`.
 
@@ -70,7 +70,7 @@ An empty `ss` result means no process is listening on port 18788. If the port is
 
 The service runs as UID and GID 65532. Rootless `keep-id` maps that identity to the invoking user for the two bind mounts. Podman drops all capabilities, enables `no-new-privileges`, makes the image filesystem read-only, limits memory, CPU, and PIDs, and retries process failures at most three times. The MCP health check reports initialization health; Podman's Compose provider does not restart a still-running container solely because that health check fails.
 
-Compose controls restart after process failure while the container engine is running. It does not create a boot-time user service; start this deployment explicitly after reboot or add a separately reviewed user Quadlet/systemd unit. The host's independent 18787 service remains outside this Compose project.
+The initialize-only health probe performs no tool call or inference, but the pinned `rmcp` server may retain an initialize session until its timeout. Compose controls restart after process failure while the container engine is running; an unhealthy status alone does not trigger restart. Compose also does not create a boot-time user service; start this deployment explicitly after reboot or add a separately reviewed user Quadlet/systemd unit. The host's independent 18787 service remains outside this Compose project.
 
 The host publishes only `127.0.0.1:18788`. The config mount is read-only. The state mount holds `runs.sqlite`, `runs.sqlite-wal`, and `runs.sqlite-shm` across container recreation. The private network has no external route.
 
