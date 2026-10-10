@@ -32,7 +32,7 @@ def require(condition: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
-def check_surface(client: McpClient) -> dict[str, Any]:
+def check_surface(client: McpClient, expected_ui_sha256: str = RELEASE_UI_SHA256) -> dict[str, Any]:
     initialized = client.request(
         "initialize",
         {"protocolVersion": "2025-11-25", "clientInfo": CLIENT, "capabilities": CAPABILITIES},
@@ -51,7 +51,7 @@ def check_surface(client: McpClient) -> dict[str, Any]:
     read = client.request("resources/read", {"uri": WORKBENCH_URI}).get("contents", [])
     require(len(read) == 1 and read[0].get("mimeType") == "text/html;profile=mcp-app", "workbench resource shape mismatch")
     ui_hash = hashlib.sha256(read[0].get("text", "").encode()).hexdigest()
-    require(ui_hash == RELEASE_UI_SHA256, "workbench does not match the released UI")
+    require(ui_hash == expected_ui_sha256, "workbench does not match the expected pinned UI")
     capabilities = client.call("get_factory_capabilities")
     require(capabilities.get("status_inference_calls") == 0, "capability read reported inference")
     settings = client.call("read_factory_settings").get("values", {})
@@ -190,10 +190,11 @@ def main() -> int:
     parser.add_argument("--url", default="http://127.0.0.1:18788/mcp")
     parser.add_argument("--mode", choices=("prepare", "verify"), required=True)
     parser.add_argument("--receipt", type=Path, required=True)
+    parser.add_argument("--expected-ui-sha256", default=RELEASE_UI_SHA256)
     args = parser.parse_args()
     try:
         client = McpClient(args.url)
-        surface = check_surface(client)
+        surface = check_surface(client, args.expected_ui_sha256)
         result = prepare(client, args.receipt, surface) if args.mode == "prepare" else verify(client, args.receipt, surface)
         print(json.dumps({"mode": args.mode, **result}, sort_keys=True))
     except (OSError, UnicodeError, ValueError, RuntimeError, KeyError, IndexError, TypeError, json.JSONDecodeError) as error:

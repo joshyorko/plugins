@@ -83,7 +83,9 @@ The `prepare` phase checks MCP initialize, tools/list, resources/list, and the b
 
 ```sh
 python3 plugins/luna-factory/container/acceptance_canary.py \
-  --url http://127.0.0.1:18788/mcp --mode prepare
+  --url http://127.0.0.1:18788/mcp \
+  --expected-ui-sha256 "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["oci_ui_sha256"])' "$DEPLOY_ROOT/image-build.json")" \
+  --mode prepare
 ```
 
 Recreate only this Compose service. Do not remove volumes or delete the state directory.
@@ -94,7 +96,9 @@ podman compose \
   --file plugins/luna-factory/container/compose.yaml \
   up --detach --force-recreate --wait --wait-timeout 60
 python3 plugins/luna-factory/container/acceptance_canary.py \
-  --url http://127.0.0.1:18788/mcp --mode verify
+  --url http://127.0.0.1:18788/mcp \
+  --expected-ui-sha256 "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["oci_ui_sha256"])' "$DEPLOY_ROOT/image-build.json")" \
+  --mode verify
 ```
 
 The `verify` phase requires the same `oci-canary` setting after recreation. It repeats MCP discovery and the UI hash check. The settings canary rejects execution and CAS tool calls.
@@ -135,7 +139,8 @@ podman compose --env-file "$DEPLOY_ROOT/.env" \
   --file plugins/luna-factory/container/compose.planning-canary.yaml \
   up --detach --force-recreate --wait --wait-timeout 60
 python3 plugins/luna-factory/container/planning_graph_canary.py \
-  --mode prepare --receipt "$DEPLOY_ROOT/planning-graph-receipt.json"
+  --mode prepare --receipt "$DEPLOY_ROOT/planning-graph-receipt.json" \
+  --expected-ui-sha256 "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["oci_ui_sha256"])' "$DEPLOY_ROOT/image-build.json")"
 ```
 
 After `prepare`, the disposable ledger contains one `planning_only` graph record and no claims. Recreate only this service with the same two Compose files, then run the canary with `--mode verify` and the same receipt path. It requires the same graph ID, revision, node dependency, and target preference after recreation.

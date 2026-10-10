@@ -24,6 +24,7 @@ ALLOWED_TOOL_CALLS = {
     "list_factory_runs",
     "read_factory_settings",
     "update_factory_settings",
+    "search_factory_mentions",
     "create_factory_graph",
     "get_factory_graph",
     "propose_factory_change",
@@ -88,7 +89,7 @@ class McpClient:
         raise RuntimeError(f"{name} returned no structured result")
 
 
-def run(url: str, mode: str) -> dict[str, Any]:
+def run(url: str, mode: str, expected_ui_sha256: str = RELEASE_UI_SHA256) -> dict[str, Any]:
     client = McpClient(url)
     initialized = client.request(
         "initialize",
@@ -97,6 +98,9 @@ def run(url: str, mode: str) -> dict[str, Any]:
     server = initialized.get("serverInfo", {})
     if server.get("name") != "luna-factory" or server.get("version") != "0.2.1":
         raise RuntimeError("unexpected MCP server identity/version")
+    extensions = initialized.get("capabilities", {}).get("extensions", {})
+    if extensions.get("openai/mentions") != {"searchTool": "search_factory_mentions"}:
+        raise RuntimeError("composer mention capability missing")
 
     tools = client.request("tools/list").get("tools", [])
     names = {tool.get("name") for tool in tools}
@@ -106,6 +110,15 @@ def run(url: str, mode: str) -> dict[str, Any]:
         or not FORBIDDEN_TOOL_CALLS.issubset(names)
     ):
         raise RuntimeError("MCP tool catalog mismatch")
+    mention = next(tool for tool in tools if tool.get("name") == "search_factory_mentions")
+    metadata = mention.get("_meta", {})
+    if (
+        mention.get("annotations", {}).get("readOnlyHint") is not True
+        or "app" not in metadata.get("ui", {}).get("visibility", [])
+        or metadata.get("openai/extensions", {}).get("mentions/search") != {}
+        or "query" not in mention.get("inputSchema", {}).get("required", [])
+    ):
+        raise RuntimeError("composer mention tool contract mismatch")
     resources = client.request("resources/list").get("resources", [])
     if not any(
         resource.get("uri") == WORKBENCH_URI
@@ -118,8 +131,8 @@ def run(url: str, mode: str) -> dict[str, Any]:
     if len(contents) != 1 or contents[0].get("mimeType") != "text/html;profile=mcp-app":
         raise RuntimeError("bundled workbench resource shape mismatch")
     ui_hash = hashlib.sha256(contents[0].get("text", "").encode()).hexdigest()
-    if ui_hash != RELEASE_UI_SHA256:
-        raise RuntimeError("served workbench hash differs from the published 0.2.1 UI")
+    if ui_hash != expected_ui_sha256:
+        raise RuntimeError("served workbench hash differs from the expected pinned UI")
 
     capabilities = client.call("get_factory_capabilities")
     if capabilities.get("status_inference_calls") != 0:
@@ -127,6 +140,9 @@ def run(url: str, mode: str) -> dict[str, Any]:
     run_list = client.call("list_factory_runs")
     if run_list.get("runs") != []:
         raise RuntimeError("canary ledger must start and remain empty")
+    mentions = client.call("search_factory_mentions", {"query": ""})
+    if mentions.get("items") != []:
+        raise RuntimeError("empty canary ledger returned a mention result")
     settings = client.call("read_factory_settings").get("values", {})
     if mode == "prepare":
         if settings.get("profile") != "default":
@@ -149,6 +165,7 @@ def run(url: str, mode: str) -> dict[str, Any]:
         "version": server["version"],
         "protocol": initialized.get("protocolVersion"),
         "tool_count": len(tools),
+        "mention_results": len(mentions["items"]),
         "workbench_uri": WORKBENCH_URI,
         "workbench_sha256": ui_hash,
         "inference_calls": capabilities["status_inference_calls"],
@@ -163,9 +180,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="http://127.0.0.1:18788/mcp")
     parser.add_argument("--mode", choices=("prepare", "verify"), required=True)
+    parser.add_argument("--expected-ui-sha256", default=RELEASE_UI_SHA256)
     args = parser.parse_args()
     try:
-        print(json.dumps(run(args.url, args.mode), sort_keys=True))
+        print(json.dumps(run(args.url, args.mode, args.expected_ui_sha256), sort_keys=True))
     except (OSError, UnicodeError, ValueError, RuntimeError, json.JSONDecodeError) as error:
         print(f"canary failed: {error}", file=sys.stderr)
         return 1

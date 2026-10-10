@@ -199,6 +199,7 @@ class ContainerBuildTests(unittest.TestCase):
                 INIT.prepare_private(root, port, image_ref)
 
     def test_canary_blocks_execution_and_cas_tool_calls_before_network(self):
+        self.assertIn("search_factory_mentions", CANARY.ALLOWED_TOOL_CALLS)
         client = CANARY.McpClient("http://127.0.0.1:1/mcp")
         for name in ("start_factory", "resume_factory_run", "cancel_factory_run", "inspect_factory_cas"):
             with self.assertRaisesRegex(RuntimeError, "policy rejected"):
