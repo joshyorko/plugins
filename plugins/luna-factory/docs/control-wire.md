@@ -100,7 +100,8 @@ This is historical swarm evidence. The [October 9 maintainer decision](https://g
 
 ## Planning graph contract, LF-01 through LF-06
 
-This slice adds five model-and-app tools. Total catalog: 20; model-visible: 13.
+This slice added five model-and-app tools, for 20 tools at the time, 13 of them
+model-visible. The current counts are in [Tool catalog](#tool-catalog).
 All structured results now declare typed output schemas, including nested graph,
 control, presentation, settings and backend data. Existing native action methods
 retain their execution and evidence gates.
@@ -209,7 +210,7 @@ LUNA_GRAPH_E2E=1 npm test -- --run test/graph_e2e.test.ts
 ```
 
 Toolkit PR #11 and any deployed host must refresh their exact source/catalog/schema
-pins to 20 total and 13 model-visible tools, preserve the settings wrapper and
+pins to the current catalog (see [Tool catalog](#tool-catalog)), preserve the settings wrapper and
 required graph revision fields, and qualify model context/remount/removal against
 the actual host. No tunnel, Executor, registration or production package is changed
 by this slice. Live replacement remains blocked while original cessation is unknown.
@@ -250,3 +251,34 @@ tool, scheduler or execution backend is added. Manual continuation of a fresh
 admitted task also no longer consumes repair allowance; existing decision-answer
 idempotency remains unchanged. Legacy unstamped runs retain manual recovery but
 cannot enter new automatic continuation. Planning-only records never dispatch.
+
+## Tool catalog
+
+The current catalog has 23 tools: 14 are model-visible and 9 are app-only.
+
+- **Model-visible:** `start_factory`, `list_factory_runs`, `get_factory_run`,
+  `get_factory_capabilities`, `steer_factory_run`, `cancel_factory_run`,
+  `resume_factory_run`, `reconcile_factory_run`, `create_factory_graph`,
+  `get_factory_graph`, `get_factory_backends`, `inspect_factory_cas`,
+  `propose_factory_change` and `apply_factory_change`.
+- **App-only:** `search_factory_mentions`, `open_factory`, `open_factory_panel`,
+  `refresh_factory`, `read_factory_settings`, `update_factory_settings`,
+  `discover_factory_repositories`, `request_factory_repository` and
+  `read_factory_agent_timeline`.
+
+`server/tests/mcp_contract.rs` and `server/tests/output_schemas.rs` pin the total.
+Any bridge or toolkit pin must be refreshed against these exact bytes. The
+container canary (`container/acceptance_canary.py`) still pins the 0.2.1
+release catalog of 22 tools until the next release refresh.
+
+## Observed agent timeline (#75)
+
+`read_factory_agent_timeline` adds one app-only, read-only tool. The model-visible
+catalog is unchanged. Its input is `{run_id, thread_id, cursor?}`, and only the
+run's owner or owned/active worker threads resolve. The CAS target and CWD come
+only from the operator's `cas_timelines` binding. The output is a bounded, redacted
+"Observed in Codex" timeline, or a structured `unavailable` result with a reason.
+`get_factory_capabilities` (and the workbench capabilities) add
+`agent_timeline: {source, enabled, detail}` so the UI knows the server supports the
+tool. Observations never enter `control` or `presentation`, never satisfy criteria
+and never produce attention. See [CAS verification](cas-verification.md#observed-agent-timeline-75).

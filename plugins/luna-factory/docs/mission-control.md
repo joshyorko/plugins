@@ -83,7 +83,7 @@ disabled under `prefers-reduced-motion`.
 | Plan imported | New nodes in `get_factory_graph` | Nodes settle into their waves (420ms ease) | Available |
 | Dependency satisfied | A prerequisite's state becomes `done` | Its edge turns solid green, and the dependent gains "prerequisites met" | Available (state diff) |
 | Worker launched | A new `presentation.workers[]` entry | A satellite joins the orbit, and its token docks on the bound task | Liveness only. Binding needs #79 |
-| Investigating a failed test | `check_result` failure with a thread | Lane segment changes to the held hue, and the inspector shows the failing step | Needs #75 and #78 |
+| Investigating a failed test | `check_result` failure with a thread | Lane segment changes to the held hue, and the inspector shows the failing step | Observed tick and event row only (#75). The hue change and failing step need #78 |
 | PR review-ready | GitHub PR plus required checks | A PR chip on the node shows check dots, plus a "Ready for review" line | Needs #78 |
 | Ready for authorized integration | Authority granted and checks green | A separate "Ready to integrate" line, never auto-merged | Needs #81 |
 | Verified Sol/Astra escalation | Policy-permitted observed route | One restrained solar glow (Sol) or star glint (Astra) on the agent token, plus a route line in the inspector. Unknown routes stay neutral. | Needs #80 |
@@ -98,7 +98,7 @@ disabled under `prefers-reduced-motion`.
 | Graph stale (run revision ahead of graph) | Last valid map kept. A stale notice. Plan edits and context are suppressed until the next read. Polling rereads it. |
 | Old timestamps | Dates are shown when not from today. Lanes ends at the last event instead of "now" for records older than 6 hours. |
 | No agents | "No agents yet. Execution hasn't started on this plan." Or "The server reports no agent identities." |
-| Per-agent timeline | A hatched lane reading "Per-agent timeline not reported by this server" until #75. |
+| Per-agent timeline | Ticks labelled "Observed in Codex" from `read_factory_agent_timeline` (#75). With no observation, the lane stays hatched with the server's reason: "not reported by this server" (no capability), the capability `detail` (not configured), or the tool's `unavailable.detail`. |
 | Unknown reason code | "The server reported this action without further detail." Never the raw code. |
 | Execution unqualified | Start stays disabled. The footer states that execution stays unavailable until independently qualified. |
 
@@ -116,10 +116,10 @@ contract** (issue).
 | Campaign Map waves | Tasks, edges, waves | `get_factory_graph.graph.nodes[].dependencies/state`, else `run.control.tasks` | ✅ | Read on open, plus reread when stale | Stale notice, plan edits locked | Issue numbers and URLs #69 | `mission.test.ts` layout, captures |
 | Prerequisites met / chain | Derived overlays | Derived from node states and dependencies | ✅ (labelled derived) | Same | Hidden when not computable | none | `mission.test.ts` |
 | Source label | Provider (`GitHub`) | `node.source.provider`, `item_id` | ✅ provider only | Same | Opaque ID only in the inspector | `display.number/url` #69 | captures |
-| Crew / orbit | Coordinator plus workers, liveness | `presentation.owner`, `presentation.workers[]` | ✅ | Poll | "No agents" copy | Roles, agent tree #75 | `mission.test.ts` roster |
+| Crew / orbit | Coordinator plus workers, liveness | `presentation.owner`, `presentation.workers[]` | ✅ | Poll | "No agents" copy | Roles. The observed spawn tree is in Lanes (#75) | `mission.test.ts` roster |
 | Token docking | Agent on task | `task.owner_thread` matches a reported thread | ✅ | Same | Not docked when unmatched | Per-attempt worker binding #79 | `mission.test.ts` |
 | Lanes run row | Receipt ticks over time | `get_factory_run.receipts[]` (≤20) | ✅ | On select, plus poll | "No receipts retained". Old records end at last event | Thread attribution #69 | `mission.test.ts` lanes |
-| Lanes agent rows | Per-agent events | none today | 🔴 shown as unavailable | | Hatched "not reported" | CAS timeline adapter #75 | `mission.test.ts` |
+| Lanes agent rows | Per-agent ticks labelled "Observed in Codex", the selected agent's events, and helpers it was seen spawning | `read_factory_agent_timeline` (app-only), via the operator's loopback CAS binding (`cas_timelines`); gated on `capabilities.agent_timeline` | ✅ #75 (display only: never proof, attention or Map state) | On switching to Lanes, run or agent selection, and the 30s poll. Each agent at most every 25s, sequentially, up to 8 agents. Server cache: 20s, then a revision check | Hatched lane with the server's reason (no capability, not configured, or `unavailable.detail`) | Operator-approved loopback forward for the non-loopback CAS endpoint | `mission.test.ts` observed timelines, `server/tests/cas_timeline.rs`, swarm Lanes capture |
 | Inspector task | Wave, waits on, unblocks, owner, proof, attempts | graph node, criteria, attempts | ✅ | Same | "No criterion bindings", "No agent assigned" | Typed blockers #70 | `graph-view.test.ts`, captures |
 | Shared selection → ChatGPT | Run, task and agent context | Existing fenced `syncContext` plus `agent_label/role/liveness/task_id` | ✅ | On selection | Cleared on overview, disconnect, teardown or stale | `openai/title` chip #74 | `mission.test.ts`, host capture context assertion |
 | ChatGPT asks | summary / blocker / choose | `buildFollowUpPrompt` (≤1800 chars, current revision) | ✅ explicit click, `send:true` | n/a | Disabled when the host lacks messages or the view is stale | Desktop `send:false` prefill #74 | `follow-up.test.ts`, `view.test.ts` |

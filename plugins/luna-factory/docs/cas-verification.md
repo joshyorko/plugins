@@ -4,7 +4,7 @@ Implementation: `35fdf6e714d5ae606579fdfd884b9fb8ecee35f0`, draft [PR #64](https
 
 ## Implemented boundary
 
-`inspect_factory_cas` is visible to both model and app. It accepts an operator-configured alias; optionally, a run ID and recorded planning request ID together. It sends only `inspect_target`, `read_dispatch_receipt`, and `read_thread` to CAS. Graph/status reads remain free of CAS network calls. The existing workbench does not add a CAS execution control.
+`inspect_factory_cas` is visible to both model and app. It accepts an operator-configured alias; optionally, a run ID and recorded planning request ID together. It sends only `inspect_target`, `read_dispatch_receipt`, and `read_thread` to CAS. The app-only Lanes timeline read added in #75 is described [below](#observed-agent-timeline-75). Graph/status reads remain free of CAS network calls. The existing workbench does not add a CAS execution control.
 
 The operator may add this optional field to a **new isolated** configuration:
 
@@ -30,6 +30,54 @@ The optional `Control.cas_requests` map uses the existing SQLite journal. `CasPl
 The Factory digest covers its normalized operation/request payload; it is **not CAS's internal receipt fingerprint**. Public CAS receipts omit the fingerprint and target/CWD provenance. Recorded local bindings prevent alias drift but cannot establish remote identity or defeat endpoint substitution. Every response therefore retains `binding_verified:false` and `execution_eligible:false`.
 
 Receipt observations never write run state, acceptance, audit revisions, attempts, budgets, owner identity, claims or settlement. A missing/unknown/in-progress receipt does not mean no external effect occurred. Even CAS states named accepted/completed/failed/interrupted are observations, not Factory acceptance or cessation proof. No new key, mutation retry, interruption or authentication follows a receipt. Exact thread/CWD reads remain untrusted observations; they never run local file predicates against alleged remote work.
+
+## Observed agent timeline (#75)
+
+`read_factory_agent_timeline {run_id, thread_id, cursor?}` is an **app-only** read (`_meta.ui.visibility: ["app"]`, `readOnlyHint: true`) for the Lanes view. It is display data labelled "Observed in Codex". It is never Factory proof, never creates "Needs you" attention and never changes the Map.
+
+**Read allowlist.** The adapter may call exactly these CAS actions, all reads: `inspect-target`, `read-dispatch-receipt`, `read-thread`, `get-thread-snapshot`, `list-thread-items`, `list-thread-turns` and `list-thread-timeline`. `CasClient` rejects any other action name before it builds a request. One client serves one tool call and refuses a fourth request. The existing limits are unchanged: literal loopback HTTP origins only, no credentials, no proxies or redirects, a 10 s timeout per request and a streamed 1 MiB response limit. Every response keeps `binding_verified:false` and `execution_eligible:false`.
+
+**Exact binding.** The operator binds a repository to a configured CAS target:
+
+```json
+{
+  "cas_targets": {"preview": {"endpoint": "http://127.0.0.1:8080", "package": "codex-action-server", "target": "local", "cwd": "/absolute/path/to/repository"}},
+  "cas_timelines": {"fixture": "preview"}
+}
+```
+
+`cas_timelines` maps a Factory repository alias to a CAS target alias. It is optional and defaults to empty, so the feature is off unless the operator enables it. The request scope is always `{target, cwd}` from that configuration plus a `thread_id` the Factory already knows: the run's owner thread, or one of its owned or active worker threads. The tool input has no target, CWD or endpoint field (unknown fields are rejected), and any other thread fails before HTTP. A cursor is forwarded only if this server issued it for that thread.
+
+**Reads per call.** One call makes at most two requests:
+
+1. `get-thread-snapshot` checks the echoed target, CWD and thread ID client-side and reads status, waiting flags, the latest turn's error code, `native_updated_at` and the snapshot `revision`. The latest item's text is never read.
+2. `list-thread-items` reads one newest-first page (`limit: 100`, `sort_direction: "desc"`), only when the snapshot changed.
+
+`list-thread-turns` and `list-thread-timeline` are allowlisted, with strict parsers and unit tests, but Lanes does not call them. Timeline item entries carry no per-item timestamps, and CAS gates `thread/timeline/list` to native 0.160.1. Item entries carry `startedAtMs`/`completedAtMs`.
+
+**Vocabulary.** Each event is `{at, kind, summary, thread_id}`. `at` is Unix seconds from the item's `completedAtMs`, or `startedAtMs` when that is absent. `kind` is one of `assigned`, `command`, `file_change`, `commit`, `pr_opened`, `check_result`, `subagent_spawned`, `message`, `waiting` or `error`. `summary` is at most 160 characters and passes through `safe_summary`.
+
+- **Commands.** Classified from program words only, for example `cargo test`, `git commit` or `gh pr create`. Arguments, paths, environment values and output are never shown.
+- **File changes.** Reported as counts only.
+- **Agent messages.** Contribute only their first prose line. Long opaque tokens are withheld, and code blocks are never shown.
+- **Snapshot events.** Waiting flags and a failed latest turn become `waiting` and `error` events at the thread's `native_updated_at`.
+- **Dropped items.** Reasoning, plans, compaction, image, review-marker and unknown item types are dropped and counted in `omitted`, as are items with no timestamp.
+- **Children.** `children[]` is derived from `collabAgentToolCall`/`spawnAgent` items as `parent_thread → receiver_thread`.
+
+The result is `{run_id, thread_id, observed, status, source:"codex-action-server", events[≤100], children[≤64], omitted, next_cursor, freshness}`.
+
+**Unavailable is a result, not an error.** A repository without a binding returns `status:"unavailable"`, `reason:"cas_timeline_not_configured"` and a human `detail`, with no HTTP. CAS failures collapse to a closed set of reasons with no remote text: `cas_unavailable`, `cas_action_failed`, `cas_binding_mismatch`, `cas_response_too_large` and `cas_invalid_response`. Unknown runs, foreign threads, caller-supplied scope and unissued cursors are request errors.
+
+**Cache.** Each configured alias and thread has an entry in a bounded in-memory cache: at most 64 threads and 4 older pages per thread. Memory rather than SQLite is deliberate. Observations are disposable, and keeping them out of the ledger means they can never reach the control journal or need a migration. A restart costs one fresh read.
+
+- **Within 20 s.** Repeated calls are answered from memory with no CAS request, including cached failures.
+- **After 20 s.** The snapshot is re-read with the cached `revision`. An unchanged thread costs one small request (`changed:false`). Only a changed thread reads a new item page.
+
+With the workbench's 30 s poll, and its own 25 s per-agent bound, each rostered agent costs at most one snapshot per poll while Lanes is visible, plus one item page when that thread changed.
+
+**Observations stay observations.** `read_agent_timeline` reads the run once, without holding the SQLite lock across network IO, and never writes. A fixture test compares every ledger table row for row, and the run projection, before and after observed reads. The reads include commits, PR creation, failed and passing checks, approvals, failures and CAS errors. Run state, criteria, claims, attempts, budgets and receipts stay unchanged.
+
+**Operator endpoint is not loopback.** The operator's current CAS endpoint, `http://172.30.86.1:8088`, is not a literal loopback origin. This adapter rejects it at configuration load (`cas_literal_loopback_required`). To use the timeline against it, the operator must approve a loopback forward, for example a local port forward bound to `127.0.0.1`, and configure that loopback origin. A separately reviewed remote adapter is the alternative. A forward is not independently authenticated by this client. A configured CAS target is configuration, not proof that a live environment exists. This slice never contacted that endpoint or any running service.
 
 ## Pinned upstream contract and blockers
 
