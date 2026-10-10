@@ -3,9 +3,12 @@
 const svg = (body: string, size = 20, view = 20, className = ""): string =>
   `<svg class="glyph${className ? ` ${className}` : ""}" width="${size}" height="${size}" viewBox="0 0 ${view} ${view}" aria-hidden="true" focusable="false">${body}</svg>`;
 
-/** The Luna Factory mark: a crescent held by a thin orbit. Works from 12px up. */
+/**
+ * The Luna Factory mark: a crescent held by a thin orbit, with one satellite riding the orbit's
+ * opening. Works from 12px up. `assets/logo.svg` draws this exact 20-unit geometry on its night tile.
+ */
 export function lunaMark(size = 20): string {
-  return svg(`<circle cx="10" cy="10" r="8.6" fill="none" stroke="currentColor" stroke-opacity=".28" stroke-width="1"/><path d="M12.9 4.2a6.2 6.2 0 1 0 2.9 9.9A5 5 0 0 1 12.9 4.2Z" fill="currentColor"/><circle cx="16.1" cy="5.1" r="1.25" fill="currentColor"/>`, size, 20, "luna-mark");
+  return svg(`<path d="M18 6.84A8.6 8.6 0 1 1 14.79 2.85" fill="none" stroke="currentColor" stroke-opacity=".28" stroke-width="1" stroke-linecap="round"/><path d="M12.9 4.2a6.2 6.2 0 1 0 2.9 9.9A5 5 0 0 1 12.9 4.2Z" fill="currentColor"/><circle cx="16.7" cy="4.6" r="1.25" fill="currentColor"/>`, size, 20, "luna-mark");
 }
 
 /**
