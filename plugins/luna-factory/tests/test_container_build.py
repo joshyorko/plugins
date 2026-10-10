@@ -186,6 +186,14 @@ class ContainerBuildTests(unittest.TestCase):
             ]
         )
 
+    def test_oci_icon_pins_the_reviewed_moonlight_logo(self):
+        logo = CONTAINER_DIR.parent / "assets/logo.png"
+        self.assertEqual(BUILD.sha256_file(logo), BUILD.SOURCE_LOGO_SHA256)
+        self.assertNotEqual(BUILD.SOURCE_LOGO_SHA256, BUILD.RELEASE_LOGO_SHA256)
+        BUILD.validate_release_delta(["plugins/luna-factory/assets/logo.png", "plugins/luna-factory/assets/logo.svg"])
+        with self.assertRaisesRegex(ValueError, "unreviewed release source delta"):
+            BUILD.validate_release_delta(["plugins/luna-factory/assets/banner.png"])
+
     def test_compose_keeps_bind_loopback_and_config_read_only(self):
         compose = (CONTAINER_DIR / "compose.yaml").read_text()
         self.assertNotIn("container_name:", compose)

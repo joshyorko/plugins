@@ -30,6 +30,10 @@ RELEASE_CHECKSUMS_SHA256 = "2f436fffa19c38ff126eff0221f680a65ee1ccbfd3d912cdd0be
 RELEASE_BINARY_SHA256 = "8ce20a7f4bc17bfaa10afb4ca450e44318b67c6f9479aa3a7190da8a2b15e03b"
 RELEASE_UI_SHA256 = "8ea6a2029aa29cac4577753df3f8a01466c92647e3dc1b34f33b6c48e5ce3004"
 RELEASE_SKILL_SHA256 = "c03d30a21a67cf9a63e4262a4fbac172e53682e73c5bb12e6998950b736b1c74"
+# The 0.2.1 bundle ships the older purple tile. The OCI derivative compiles the reviewed moonlight
+# icon (#72) into its MCP serverInfo icon instead, so both sides are pinned explicitly.
+RELEASE_LOGO_SHA256 = "b764190e147953a9ec8a383d91044afbe7c3d1ff3757730e8f345b22b42922a1"
+SOURCE_LOGO_SHA256 = "3ea67d3a15390fb352cf84d2595344beb2a7d7bf315dac6e551d442cf50ec6f6"
 GIT_PACKAGE_VERSION = "1:2.47.3-0+deb13u1"
 DEBIAN_SNAPSHOT = "20261010T000000Z"
 NODE_BASE = "docker.io/library/node:24.11.1-bookworm-slim@sha256:48abc13a19400ca3985071e287bd405a1d99306770eb81d61202fb6b65cf0b57"
@@ -42,6 +46,8 @@ ALLOWED_RELEASE_DELTA = {
     ".github/workflows/luna-factory.yml",
     ".agents/skills/setup",
     "skills/setup",
+    "plugins/luna-factory/assets/logo.png",
+    "plugins/luna-factory/assets/logo.svg",
     "plugins/luna-factory/.codex-plugin/plugin.json",
     "plugins/luna-factory/docs/container-architecture.md",
     "plugins/luna-factory/docs/container-deployment.md",
@@ -380,9 +386,10 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
         safe_extract_archive(archive, release_root)
         package = release_root / RELEASE_BUNDLE_DIR
         verify_package(package, provenance)
-        source_logo = source_root / "plugins/luna-factory/assets/logo.png"
-        if sha256_file(source_logo) != sha256_file(package / "assets/logo.png"):
-            raise ValueError("pinned source logo differs from the released MCP icon")
+        if sha256_file(package / "assets/logo.png") != RELEASE_LOGO_SHA256:
+            raise ValueError("published MCP icon hash mismatch")
+        if sha256_file(source_root / "plugins/luna-factory/assets/logo.png") != SOURCE_LOGO_SHA256:
+            raise ValueError("source logo differs from the reviewed moonlight MCP icon")
         shutil.copytree(source_root / "plugins/luna-factory/server", context / "server", ignore=shutil.ignore_patterns("target", ".git"))
         shutil.copytree(source_root / "plugins/luna-factory/ui", context / "ui", ignore=shutil.ignore_patterns("node_modules", "dist", ".vite", "coverage"))
         (context / "assets").mkdir()
