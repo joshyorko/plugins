@@ -231,7 +231,7 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .wave-label { position: absolute; left: var(--wave-x); top: 4px; margin: 0; font-size: 11px; font-weight: 640; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
 .wave-label span { margin-left: 8px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--faint); }
 .wave.settled .wave-label { color: var(--done); }
-.map-node { position: absolute; left: var(--x); top: var(--y); width: 216px; height: 68px; display: grid; align-content: start; gap: 3px; padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--ink); text-align: left; transition: border-color var(--t-quick) var(--ease), box-shadow var(--t-quick) var(--ease), opacity var(--t-settle) var(--ease); }
+.map-node { position: absolute; left: var(--x); top: var(--y); width: var(--node-w, 216px); height: 68px; display: grid; align-content: start; gap: 3px; padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--ink); text-align: left; transition: border-color var(--t-quick) var(--ease), box-shadow var(--t-quick) var(--ease), opacity var(--t-settle) var(--ease); }
 .map-node:hover { border-color: var(--luna); }
 .map-node.selected { border-color: var(--luna); box-shadow: 0 0 0 3px var(--luna-glow); }
 .map-node.chain:not(.selected) { border-color: color-mix(in srgb, var(--luna) 45%, var(--line-strong)); }

@@ -16,6 +16,8 @@ export interface WorkbenchOptions {
   /** Session-scoped "since you opened Luna Factory" baselines. Absent in tests and fixtures. */
   since?: SinceTracker;
   now?: number;
+  /** Measured map pane width, so wave columns fit before the canvas has to pan. */
+  canvasWidth?: number;
 }
 const escape = (value: string | number): string => String(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
 const reasonCopy = (reason: string | null): string => {
@@ -63,6 +65,11 @@ export function renderWorkbench(root: HTMLElement, state: ViewState, editor: Edi
     return;
   }
   const canStart = Boolean(state.connected && state.capabilities?.repositories.length && state.capabilities.profiles.length && !state.pending);
+  if (options.canvasWidth === undefined && root.clientWidth > 0) {
+    // Mirrors the CSS: main max 1360px with 24px padding; the inspector column leaves at 861px+.
+    const main = Math.min(root.clientWidth, 1360) - (root.clientWidth <= 520 ? 24 : 48);
+    options.canvasWidth = (main > 860 ? main - 340 - 16 : main) - 2;
+  }
   root.innerHTML = `<div class="workbench" data-surface="${surface}" data-display-mode="${escape(options.displayMode ?? "inline")}" data-connection="${state.connectionStatus}">
     ${preview ? '<div class="preview-banner">Fixture visual preview · Synthetic run data · No live integration</div>' : ""}
     <header class="appbar"><a class="brand" href="/" data-action="overview" aria-label="Luna Factory campaigns">${lunaMark(22)}<span>Luna Factory</span></a>${run && !editor ? `<nav class="breadcrumbs" aria-label="Breadcrumb">${icon("arrow", 12)}<a href="/" data-action="overview">Campaigns</a>${icon("arrow", 12)}<span>${escape(run.repository)}</span></nav>` : ""}
@@ -162,7 +169,7 @@ function renderCampaign(run: RunView, state: ViewState, options: WorkbenchOption
     </section>
     <section class="decision-panel tier-${attention ? "needs" : tier}${attention ? " needs-you" : ""}" aria-labelledby="decision-title"><div class="eyebrow">${escape(eyebrow)}</div><h2 id="decision-title">${escape(headline)}</h2><p id="action-reason">${escape(reasonCopy(presentation ? action.reason : null))}${presentation ? " The server rechecks this at the action boundary." : " Refresh to load the server's action and proof view."}</p><div class="run-controls">${actionButton(action, true, busy)}${secondary.length ? `<details id="other-actions" class="other-actions"><summary>Other available actions</summary><div class="run-controls">${secondary.map(item => actionButton(item, false, busy)).join("")}</div></details>` : ""}</div></section>
     ${renderProposalReview(state)}
-    ${renderMission(state, run, task => renderFollowUpActions(run, options, task))}
+    ${renderMission(state, run, task => renderFollowUpActions(run, options, task), options.canvasWidth)}
     ${renderEvidence(run, state)}`;
 }
 

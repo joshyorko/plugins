@@ -1,7 +1,7 @@
 import type { ViewState } from "./controller";
 import type { FactoryGraph, GraphChange, RunView } from "./domain";
 import { roster, livenessLabel, type Agent } from "./agents";
-import { canvasSize, edgePath, layoutWaves, MAP_GEOMETRY, nodePosition, type MapNode, type WaveLayout } from "./campaign-map";
+import { canvasSize, edgePath, fitGeometry, layoutWaves, nodePosition, type MapGeometry, type MapNode, type WaveLayout } from "./campaign-map";
 import { coordinatorToken, icon, taskGlyph, taskTone, taskToneLabel, workerToken } from "./lunar";
 import { renderLanes } from "./lanes";
 
@@ -20,7 +20,7 @@ export function agentToken(agent: Agent, size?: number): string {
 }
 
 /** Map | Lanes, the crew, and the shared inspector. */
-export function renderMission(state: ViewState, run: RunView, followUps: (task?: { id: string; title: string }) => string): string {
+export function renderMission(state: ViewState, run: RunView, followUps: (task?: { id: string; title: string }) => string, canvasWidth?: number): string {
   const { tasks, graph } = missionTasks(state, run);
   const agents = roster(run, graph);
   const layout = layoutWaves(tasks);
@@ -40,7 +40,7 @@ export function renderMission(state: ViewState, run: RunView, followUps: (task?:
       </div>
       ${state.graphStale ? '<div class="notice error" role="status">This plan may be stale. Its last valid view is kept; refresh before changing it.</div>' : ""}
       ${renderCrew(agents, state, run)}
-      ${lanes ? renderLanes(run, agents, state) : loading ? '<div class="canvas-empty" role="status">Reading the plan…</div>' : tasks.length ? renderMap(tasks, layout, agents, state) : '<div class="canvas-empty"><h3>No tasks yet</h3><p>Ask ChatGPT to import tasks into this plan. Changes are proposed first and applied only after you confirm.</p></div>'}
+      ${lanes ? renderLanes(run, agents, state) : loading ? '<div class="canvas-empty" role="status">Reading the plan…</div>' : tasks.length ? renderMap(tasks, layout, agents, state, fitGeometry(layout.waves.length, canvasWidth)) : '<div class="canvas-empty"><h3>No tasks yet</h3><p>Ask ChatGPT to import tasks into this plan. Changes are proposed first and applied only after you confirm.</p></div>'}
     </div>
     ${renderInspector(state, run, tasks, graph, layout, agents, followUps)}
   </section>`;
@@ -69,26 +69,25 @@ function taskTitle(state: ViewState, run: RunView, id: string): string {
   return missionTasks(state, run).tasks.find(task => task.id === id)?.title ?? id;
 }
 
-function renderMap(tasks: MapTask[], layout: WaveLayout, agents: Agent[], state: ViewState): string {
-  const size = canvasSize(layout);
-  const g = MAP_GEOMETRY;
+function renderMap(tasks: MapTask[], layout: WaveLayout, agents: Agent[], state: ViewState, g: MapGeometry): string {
+  const size = canvasSize(layout, g);
   const byId = new Map(tasks.map(task => [task.id, task]));
   const chain = new Set(layout.remainingChain);
   const selected = state.selectedNodeId;
   const neighbors = new Set<string>(selected ? [selected, ...(byId.get(selected)?.dependencies ?? []), ...(layout.dependents.get(selected) ?? [])] : []);
   const edges = tasks.flatMap(task => task.dependencies.filter(id => byId.has(id)).map(id => {
-    const from = nodePosition(layout, id); const to = nodePosition(layout, task.id);
+    const from = nodePosition(layout, id, g); const to = nodePosition(layout, task.id, g);
     if (!from || !to) return "";
     const satisfied = taskTone(byId.get(id)?.state ?? "") === "done";
     const onChain = chain.has(id) && chain.has(task.id);
     const focus = selected && (task.id === selected || id === selected);
-    return `<path d="${edgePath({ x: from.x, y: from.y + 24 }, { x: to.x, y: to.y + 24 })}" class="edge${satisfied ? " satisfied" : " pending"}${onChain ? " chain" : ""}${focus ? " focus" : ""}"/>`;
+    return `<path d="${edgePath({ x: from.x, y: from.y + 24 }, { x: to.x, y: to.y + 24 }, g)}" class="edge${satisfied ? " satisfied" : " pending"}${onChain ? " chain" : ""}${focus ? " focus" : ""}"/>`;
   })).join("");
   const waves = layout.waves.map((wave, index) => {
     const done = wave.filter(id => taskTone(byId.get(id)?.state ?? "") === "done").length;
     return `<li class="wave${done === wave.length ? " settled" : ""}" style="--wave-x:${g.padX + index * (g.nodeWidth + g.columnGap)}px"><h3 class="wave-label">Wave ${index + 1}<span>${wave.length} ${wave.length === 1 ? "task" : "tasks"}${done ? ` · ${done} done` : ""}</span></h3><ol class="wave-nodes">${wave.map(id => {
       const task = byId.get(id)!;
-      const position = nodePosition(layout, id)!;
+      const position = nodePosition(layout, id, g)!;
       const tone = taskTone(task.state);
       const owner = agents.find(agent => agent.thread === task.owner_thread);
       const prerequisites = task.dependencies.map(dependency => byId.get(dependency)?.title ?? dependency);
@@ -101,7 +100,7 @@ function renderMap(tasks: MapTask[], layout: WaveLayout, agents: Agent[], state:
       </button></li>`;
     }).join("")}</ol></li>`;
   }).join("");
-  return `<div class="map-scroll"><div class="map-canvas" style="--map-w:${size.width}px;--map-h:${size.height + 24}px">
+  return `<div class="map-scroll"><div class="map-canvas" style="--map-w:${size.width}px;--map-h:${size.height + 24}px;--node-w:${g.nodeWidth}px">
     <svg class="map-edges" width="${size.width}" height="${size.height + 24}" viewBox="0 0 ${size.width} ${size.height + 24}" aria-hidden="true" focusable="false">${edges}</svg>
     <ol class="map-waves" aria-label="Tasks by wave">${waves}</ol>
   </div></div>${layout.cyclic ? '<p class="notice">The server reported a dependency loop. Waves are approximate until it is resolved.</p>' : ""}`;

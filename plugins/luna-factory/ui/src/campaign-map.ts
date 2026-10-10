@@ -83,31 +83,41 @@ export function layoutWaves(nodes: MapNode[]): WaveLayout {
   return { waves, depth, dependents, missing, prerequisitesMet, remainingChain: remainingChain.length > 1 ? remainingChain : [], cyclic };
 }
 
-export const MAP_GEOMETRY = { nodeWidth: 216, nodeHeight: 68, columnGap: 76, rowGap: 18, padX: 20, padY: 22 } as const;
+export interface MapGeometry { nodeWidth: number; nodeHeight: number; columnGap: number; rowGap: number; padX: number; padY: number }
+export const MAP_GEOMETRY: MapGeometry = { nodeWidth: 216, nodeHeight: 68, columnGap: 76, rowGap: 18, padX: 20, padY: 22 };
 
-export function nodePosition(layout: WaveLayout, id: string): { x: number; y: number } | null {
+/** Shrinks columns to fit the pane when it can (down to readable minimums); wider graphs pan instead. */
+export function fitGeometry(waveCount: number, available?: number): MapGeometry {
+  const base = MAP_GEOMETRY;
+  const columns = Math.max(1, waveCount);
+  if (!available || available <= 0) return base;
+  const natural = base.padX * 2 + columns * base.nodeWidth + (columns - 1) * base.columnGap;
+  if (natural <= available) return base;
+  const columnGap = Math.max(36, Math.min(base.columnGap, Math.floor((available - base.padX * 2) / columns * 0.22)));
+  const nodeWidth = Math.floor((available - base.padX * 2 - (columns - 1) * columnGap) / columns);
+  return nodeWidth >= 156 ? { ...base, columnGap, nodeWidth: Math.min(base.nodeWidth, nodeWidth) } : { ...base, nodeWidth: 156, columnGap: 36 };
+}
+
+export function nodePosition(layout: WaveLayout, id: string, g: MapGeometry = MAP_GEOMETRY): { x: number; y: number } | null {
   const wave = layout.depth.get(id);
   if (wave === undefined) return null;
   const row = layout.waves[wave]?.indexOf(id) ?? -1;
   if (row < 0) return null;
-  const g = MAP_GEOMETRY;
   return { x: g.padX + wave * (g.nodeWidth + g.columnGap), y: g.padY + row * (g.nodeHeight + g.rowGap) };
 }
 
-export function canvasSize(layout: WaveLayout): { width: number; height: number } {
-  const g = MAP_GEOMETRY;
+export function canvasSize(layout: WaveLayout, g: MapGeometry = MAP_GEOMETRY): { width: number; height: number } {
   const columns = Math.max(1, layout.waves.length);
   const rows = Math.max(1, ...layout.waves.map(wave => wave.length));
   return { width: g.padX * 2 + columns * g.nodeWidth + (columns - 1) * g.columnGap, height: g.padY * 2 + rows * g.nodeHeight + (rows - 1) * g.rowGap };
 }
 
 /** Smooth dependency curve from a prerequisite's right edge to a dependent's left edge. */
-export function edgePath(from: { x: number; y: number }, to: { x: number; y: number }): string {
-  const g = MAP_GEOMETRY;
+export function edgePath(from: { x: number; y: number }, to: { x: number; y: number }, g: MapGeometry = MAP_GEOMETRY): string {
   const x1 = from.x + g.nodeWidth;
   const y1 = from.y + g.nodeHeight / 2;
   const x2 = to.x;
   const y2 = to.y + g.nodeHeight / 2;
-  const bend = Math.max(28, (x2 - x1) * 0.5);
+  const bend = Math.max(18, (x2 - x1) * 0.5);
   return `M${x1} ${y1} C${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`;
 }
