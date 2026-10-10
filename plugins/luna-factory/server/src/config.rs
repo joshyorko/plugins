@@ -170,8 +170,7 @@ pub(crate) fn valid_published_origin(origin: &str) -> bool {
     let Ok(ip) = address.host().parse::<std::net::IpAddr>() else {
         return false;
     };
-    address.port_u16().is_some_and(|port| port != 0)
-        && ip.is_loopback()
+    address.port_u16().is_some_and(|port| port != 0) && ip.is_loopback()
 }
 
 #[cfg(test)]
