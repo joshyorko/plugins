@@ -17,6 +17,9 @@ jobs:
         working-directory: plugins/luna-factory/server
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history lets the OCI release-delta contract test diff against the pinned release.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
