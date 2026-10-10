@@ -258,13 +258,36 @@ impl ServerHandler for McpServer {
     }
 }
 
-pub fn allowed_http(host: Option<&str>, origin: Option<&str>, listen: &str) -> bool {
+pub fn allowed_http(
+    host: Option<&str>,
+    origin: Option<&str>,
+    listen: &str,
+    published_origin: Option<&str>,
+) -> bool {
     let Some(host) = host else {
         return false;
     };
     let Ok(address) = listen.parse::<std::net::SocketAddr>() else {
         return false;
     };
+    if let Some(published_origin) = published_origin {
+        if !address.ip().is_unspecified()
+            || !crate::config::valid_published_origin(published_origin)
+        {
+            return false;
+        }
+        let Ok(uri) = published_origin.parse::<axum::http::Uri>() else {
+            return false;
+        };
+        let Some(authority) = uri.authority() else {
+            return false;
+        };
+        return host == authority.as_str()
+            && origin.is_none_or(|request_origin| request_origin == published_origin);
+    }
+    if !address.ip().is_loopback() {
+        return false;
+    }
     let localhost = format!("localhost:{}", address.port());
     if host != listen && host != localhost {
         return false;
@@ -273,13 +296,17 @@ pub fn allowed_http(host: Option<&str>, origin: Option<&str>, listen: &str) -> b
         origin == format!("http://{listen}") || origin == format!("http://{localhost}")
     })
 }
-async fn guard(State(listen): State<String>, request: Request, next: Next) -> Response {
+async fn guard(
+    State((listen, published_origin)): State<(String, Option<String>)>,
+    request: Request,
+    next: Next,
+) -> Response {
     let host = request.headers().get("host").and_then(|v| v.to_str().ok());
     let origin = request
         .headers()
         .get("origin")
         .and_then(|v| v.to_str().ok());
-    if !allowed_http(host, origin, &listen) {
+    if !allowed_http(host, origin, &listen, published_origin.as_deref()) {
         return Response::builder()
             .status(StatusCode::FORBIDDEN)
             .body(axum::body::Body::from("Host or Origin rejected"))
@@ -289,6 +316,7 @@ async fn guard(State(listen): State<String>, request: Request, next: Next) -> Re
 }
 pub fn router(factory: Factory, html: String, cancel: CancellationToken) -> Router {
     let listen = factory.config.listen.to_string();
+    let published_origin = factory.config.published_origin.clone();
     let html = Arc::new(html);
     let service = StreamableHttpService::new(
         move || {
@@ -305,5 +333,8 @@ pub fn router(factory: Factory, html: String, cancel: CancellationToken) -> Rout
     Router::new()
         .nest_service("/mcp", service)
         .layer(tower_http::limit::RequestBodyLimitLayer::new(65536))
-        .layer(middleware::from_fn_with_state(listen, guard))
+        .layer(middleware::from_fn_with_state(
+            (listen, published_origin),
+            guard,
+        ))
 }

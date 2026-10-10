@@ -1,0 +1,37 @@
+ARG RUST_BASE=docker.io/library/rust:1.99.0-slim-trixie@sha256:2752b332db73fdbb7dc576f06c82ed1f312005784ef913d7e04a28f5f55dc581
+ARG PYTHON_BASE=docker.io/library/python:3.13-slim-trixie@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+FROM ${RUST_BASE} AS build
+
+WORKDIR /build/server
+COPY server/Cargo.toml server/Cargo.lock ./
+COPY server/src ./src
+COPY assets/logo.png /build/assets/logo.png
+RUN cargo build --locked --release
+
+FROM ${PYTHON_BASE}
+
+ARG SOURCE_COMMIT
+ARG SOURCE_PATCH_SHA256
+ARG IMAGE_FINGERPRINT
+ARG RELEASE_ARCHIVE_SHA256
+ARG RELEASE_UI_SHA256
+LABEL org.opencontainers.image.title="Luna Factory OCI preview" \
+      org.opencontainers.image.version="0.2.1" \
+      org.opencontainers.image.revision="${SOURCE_COMMIT}" \
+      io.luna-factory.release-archive-sha256="${RELEASE_ARCHIVE_SHA256}" \
+      io.luna-factory.released-ui-sha256="${RELEASE_UI_SHA256}" \
+      io.luna-factory.oci-source-patch-sha256="${SOURCE_PATCH_SHA256}" \
+      io.luna-factory.oci-image-fingerprint="${IMAGE_FINGERPRINT}"
+
+COPY --from=build /build/server/target/release/luna-factoryd /usr/local/bin/luna-factoryd
+COPY release/luna-factory-0.2.1-x86_64-unknown-linux-gnu/ui/dist/index.html /opt/luna-factory/ui/dist/index.html
+COPY release/luna-factory-0.2.1-x86_64-unknown-linux-gnu/skills/luna-factory /opt/luna-factory/skills/luna-factory
+COPY healthcheck.py /opt/luna-factory/container/healthcheck.py
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HOME=/tmp
+USER 65532:65532
+WORKDIR /opt/luna-factory
+ENTRYPOINT ["/usr/local/bin/luna-factoryd"]
+CMD ["serve", "--config", "/run/luna-config/operator.json", "--ui", "/opt/luna-factory/ui/dist/index.html"]

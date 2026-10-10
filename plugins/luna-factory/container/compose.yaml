@@ -1,0 +1,54 @@
+name: luna-factory-oci-v021
+
+services:
+  luna-factory:
+    image: ${LUNA_FACTORY_IMAGE:?Set LUNA_FACTORY_IMAGE to the locally built pinned image}
+    pull_policy: never
+    container_name: luna-factory-oci-v021
+    user: "65532:65532"
+    userns_mode: "keep-id:uid=65532,gid=65532"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 512m
+    cpus: 1.0
+    restart: "on-failure:3"
+    stop_grace_period: 30s
+    stop_signal: SIGINT
+    ports:
+      - "127.0.0.1:${LUNA_HOST_PORT:?Set LUNA_HOST_PORT to a free port}:8787"
+    environment:
+      LUNA_PUBLISHED_ORIGIN: ${LUNA_PUBLISHED_ORIGIN:?Set LUNA_PUBLISHED_ORIGIN to the configured loopback origin}
+    volumes:
+      - type: bind
+        source: ${LUNA_CONFIG_DIR:?Set LUNA_CONFIG_DIR}
+        target: /run/luna-config
+        read_only: true
+        bind:
+          create_host_path: false
+          selinux: Z
+      - type: bind
+        source: ${LUNA_STATE_DIR:?Set LUNA_STATE_DIR}
+        target: /var/lib/luna-factory
+        bind:
+          create_host_path: false
+          selinux: Z
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD", "python3", "/opt/luna-factory/container/healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+networks:
+  private:
+    driver: bridge
+    internal: true

@@ -10,6 +10,8 @@ use std::{
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub listen: SocketAddr,
+    #[serde(default)]
+    pub published_origin: Option<String>,
     #[serde(default = "default_transport")]
     pub native_transport: String,
     #[serde(default)]
@@ -88,7 +90,16 @@ impl Config {
         Ok(config)
     }
     pub fn validate(&self) -> Result<()> {
-        ensure!(self.listen.ip().is_loopback(), "loopback_only");
+        match &self.published_origin {
+            Some(origin) => {
+                ensure!(
+                    self.listen.ip().is_unspecified(),
+                    "published_origin_requires_unspecified_bind"
+                );
+                ensure!(valid_published_origin(origin), "invalid_published_origin");
+            }
+            None => ensure!(self.listen.ip().is_loopback(), "loopback_only"),
+        }
         ensure!(self.cas_targets.len() <= 8, "too_many_cas_targets");
         for (alias, target) in &self.cas_targets {
             ensure!(valid_alias(alias), "invalid_cas_alias");
@@ -143,5 +154,77 @@ impl Config {
             }
         }
         Ok(())
+    }
+}
+
+pub(crate) fn valid_published_origin(origin: &str) -> bool {
+    let Some(authority) = origin.strip_prefix("http://") else {
+        return false;
+    };
+    if authority.is_empty() || authority.contains(['/', '?', '#', '@']) {
+        return false;
+    }
+    let Ok(address) = authority.parse::<axum::http::uri::Authority>() else {
+        return false;
+    };
+    let Ok(ip) = address.host().parse::<std::net::IpAddr>() else {
+        return false;
+    };
+    address.port_u16().is_some_and(|port| port != 0)
+        && ip.is_loopback()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+    use serde_json::json;
+
+    #[test]
+    fn container_bind_requires_an_explicit_loopback_published_origin() {
+        let config: Config = serde_json::from_value(json!({
+            "listen": "0.0.0.0:8787",
+            "published_origin": "http://127.0.0.1:18788",
+            "database": "/tmp/luna-factory-container-test/runs.sqlite",
+            "codex_binary": "/usr/bin/false",
+            "skill_path": "/opt/luna-factory/skills/luna-factory/SKILL.md",
+            "repositories": {},
+            "profiles": {},
+            "limits": {"capacity": 1, "repair_attempts": 0, "wall_seconds": 300}
+        }))
+        .expect("valid loopback-published container config should deserialize");
+
+        assert!(super::valid_published_origin("http://127.0.0.1:18788"));
+        config
+            .validate()
+            .expect("valid loopback-published container config should validate");
+    }
+
+    #[test]
+    fn container_publish_rejects_non_loopback_and_path_origins() {
+        for origin in [
+            "http://example.com:18788",
+            "https://127.0.0.1:18788",
+            "http://127.0.0.1:0",
+            "http://127.0.0.1:18788/mcp",
+            "http://127.0.0.1:18788?x=1",
+        ] {
+            assert!(!super::valid_published_origin(origin), "{origin}");
+        }
+    }
+
+    #[test]
+    fn non_loopback_bind_without_publish_origin_stays_rejected() {
+        let config: Config = serde_json::from_value(json!({
+            "listen": "0.0.0.0:8787",
+            "database": "/tmp/luna-factory-container-test/runs.sqlite",
+            "codex_binary": "/usr/bin/false",
+            "skill_path": "/opt/luna-factory/skills/luna-factory/SKILL.md",
+            "repositories": {},
+            "profiles": {},
+            "limits": {"capacity": 1, "repair_attempts": 0, "wall_seconds": 300}
+        }))
+        .expect("config without optional publish origin should deserialize");
+
+        assert!(config.validate().is_err());
     }
 }
