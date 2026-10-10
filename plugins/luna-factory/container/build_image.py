@@ -32,6 +32,18 @@ RELEASE_SKILL_SHA256 = "c03d30a21a67cf9a63e4262a4fbac172e53682e73c5bb12e6998950b
 RELEASE_BUNDLE_DIR = "luna-factory-0.2.1-x86_64-unknown-linux-gnu"
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 ROOT = Path(__file__).resolve().parents[3]
+ALLOWED_RELEASE_DELTA = {
+    "docs/superpowers/plans/2026-10-10-luna-factory-oci.md",
+    "plugins/luna-factory/docs/container-architecture.md",
+    "plugins/luna-factory/docs/container-deployment.md",
+    "plugins/luna-factory/docs/local-service.md",
+    "plugins/luna-factory/docs/package.md",
+    "plugins/luna-factory/server/src/config.rs",
+    "plugins/luna-factory/server/src/http.rs",
+    "plugins/luna-factory/server/tests/http_security.rs",
+    "plugins/luna-factory/tests/test_container_build.py",
+}
+ALLOWED_RELEASE_PREFIXES = ("plugins/luna-factory/container/",)
 
 
 def sha256_file(path: Path) -> str:
@@ -184,14 +196,29 @@ def verify_release_files(release_dir: Path) -> tuple[Path, dict[str, Any]]:
     return archive, provenance
 
 
-def source_patch_sha256(source_root: Path) -> str:
-    paths = (
-        Path("plugins/luna-factory/server/src/config.rs"),
-        Path("plugins/luna-factory/server/src/http.rs"),
-        Path("plugins/luna-factory/server/tests/http_security.rs"),
-    )
+def build_inputs(source_root: Path) -> tuple[Path, ...]:
+    server = source_root / "plugins/luna-factory/server"
+    paths = [
+        Path("plugins/luna-factory/server/Cargo.toml"),
+        Path("plugins/luna-factory/server/Cargo.lock"),
+        *(
+            path.relative_to(source_root)
+            for path in sorted((server / "src").rglob("*"))
+            if path.is_file()
+        ),
+        Path("plugins/luna-factory/assets/logo.png"),
+        Path("plugins/luna-factory/container/Containerfile"),
+        Path("plugins/luna-factory/container/healthcheck.py"),
+    ]
+    missing = [path.as_posix() for path in paths if not (source_root / path).is_file()]
+    if missing:
+        raise ValueError(f"missing OCI build inputs: {', '.join(missing)}")
+    return tuple(paths)
+
+
+def hash_build_inputs(source_root: Path) -> str:
     digest = hashlib.sha256()
-    for relative in paths:
+    for relative in build_inputs(source_root):
         content = (source_root / relative).read_bytes()
         digest.update(relative.as_posix().encode())
         digest.update(b"\0")
@@ -199,21 +226,25 @@ def source_patch_sha256(source_root: Path) -> str:
     return digest.hexdigest()
 
 
+def source_patch_sha256(source_root: Path) -> str:
+    return hash_build_inputs(source_root)
+
+
+def validate_release_delta(paths: list[str]) -> None:
+    unexpected = [
+        path
+        for path in paths
+        if path not in ALLOWED_RELEASE_DELTA
+        and not any(path.startswith(prefix) for prefix in ALLOWED_RELEASE_PREFIXES)
+    ]
+    if unexpected:
+        raise ValueError(f"unreviewed release source delta: {', '.join(unexpected)}")
+
+
 def image_fingerprint(source_root: Path) -> str:
-    paths = (
-        Path("plugins/luna-factory/server/src/config.rs"),
-        Path("plugins/luna-factory/server/src/http.rs"),
-        Path("plugins/luna-factory/container/Containerfile"),
-        Path("plugins/luna-factory/container/healthcheck.py"),
-        Path("plugins/luna-factory/assets/logo.png"),
-    )
     digest = hashlib.sha256()
     digest.update(RELEASE_ARCHIVE_SHA256.encode())
-    for relative in paths:
-        content = (source_root / relative).read_bytes()
-        digest.update(relative.as_posix().encode())
-        digest.update(b"\0")
-        digest.update(hashlib.sha256(content).digest())
+    digest.update(hash_build_inputs(source_root).encode())
     return digest.hexdigest()
 
 
@@ -228,8 +259,27 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
         capture_output=True,
         text=True,
     ).stdout.strip()
-    if head != RELEASE_COMMIT:
-        raise ValueError(f"build source must be based on {RELEASE_COMMIT}")
+    ancestor = subprocess.run(
+        ["git", "-C", str(source_root), "merge-base", "--is-ancestor", RELEASE_COMMIT, head],
+        check=False,
+    )
+    if ancestor.returncode != 0:
+        raise ValueError(f"build HEAD must descend from pinned release {RELEASE_COMMIT}")
+    dirty = subprocess.run(
+        ["git", "-C", str(source_root), "status", "--porcelain", "--untracked-files=all"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if dirty:
+        raise ValueError("build source checkout must be clean")
+    changed_paths = subprocess.run(
+        ["git", "-C", str(source_root), "diff", "--name-only", f"{RELEASE_COMMIT}..{head}"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    validate_release_delta(changed_paths)
     archive, provenance = verify_release_files(release_dir)
     patch_hash = source_patch_sha256(source_root)
     fingerprint = image_fingerprint(source_root)
@@ -318,6 +368,7 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
         "release_binary_sha256": RELEASE_BINARY_SHA256,
         "release_ui_sha256": RELEASE_UI_SHA256,
         "source_commit": RELEASE_COMMIT,
+        "build_head": head,
         "source_patch_sha256": patch_hash,
         "image_fingerprint": fingerprint,
         "oci_binary_sha256": runtime["binary_sha256"],

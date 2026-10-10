@@ -6,6 +6,7 @@ import tarfile
 import tempfile
 import unittest
 import socket
+import shutil
 from pathlib import Path
 
 
@@ -90,6 +91,29 @@ class ContainerBuildTests(unittest.TestCase):
         self.assertIn("rust:1.99.0-slim-trixie@sha256:", containerfile)
         self.assertIn("python:3.13-slim-trixie@sha256:", containerfile)
         self.assertNotIn(":latest", containerfile)
+
+    def test_build_fingerprint_covers_every_compiled_rust_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = root / "plugins/luna-factory"
+            shutil.copytree(CONTAINER_DIR.parent / "server", plugin / "server")
+            shutil.copytree(CONTAINER_DIR, plugin / "container")
+            (plugin / "assets").mkdir()
+            shutil.copy2(CONTAINER_DIR.parent / "assets/logo.png", plugin / "assets/logo.png")
+            before = BUILD.source_patch_sha256(root)
+            source = plugin / "server/src/native.rs"
+            source.write_bytes(source.read_bytes() + b"\n")
+            self.assertNotEqual(before, BUILD.source_patch_sha256(root))
+
+    def test_release_delta_rejects_unreviewed_rust_source_changes(self):
+        with self.assertRaisesRegex(ValueError, "unreviewed release source delta"):
+            BUILD.validate_release_delta(["plugins/luna-factory/server/src/native.rs"])
+        BUILD.validate_release_delta(
+            [
+                "plugins/luna-factory/server/src/config.rs",
+                "plugins/luna-factory/container/Containerfile",
+            ]
+        )
 
     def test_compose_keeps_bind_loopback_and_config_read_only(self):
         compose = (CONTAINER_DIR / "compose.yaml").read_text()

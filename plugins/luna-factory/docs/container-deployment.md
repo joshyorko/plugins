@@ -14,7 +14,7 @@ The image uses Rust 1.99.0 and Python 3.13 Trixie images pinned by digest. Both 
 
 ## Build the image
 
-Run these commands from the clean `joshyorko/plugins` checkout at the release commit, with the OCI branch changes applied. Rootless Podman and its Compose provider must be installed.
+Run these commands from a clean `joshyorko/plugins` checkout at the reviewed OCI branch head, which must descend from the pinned release commit. The builder rejects dirty checkouts and unreviewed changes outside this OCI patch. Its build fingerprint covers every Cargo manifest, compiled Rust source file, logo, Containerfile, and health probe consumed by the build. Rootless Podman and its Compose provider must be installed.
 
 Set `RELEASE_DIR` to the private directory containing the released archive, its provenance JSON, and the published `SHA256SUMS` file. The build helper checks the public checksum asset, archive, provenance, internal package checksums, binary version, binary hash, UI hash, skill hash, and source commit before it invokes Podman.
 
@@ -34,6 +34,13 @@ python3 plugins/luna-factory/container/build_image.py \
 ```
 
 The helper rejects a different release commit or artifact. It extracts only regular files beneath the release bundle directory. The build uses the exact Rust and Python image digests in `container/Containerfile` and runs `cargo build --locked` against the pinned source.
+
+The base image references are digest pinned and the build uses `--pull=never`; pull those exact bases once if they are not already present in rootless Podman's image store:
+
+```sh
+podman pull docker.io/library/rust:1.99.0-slim-trixie@sha256:2752b332db73fdbb7dc576f06c82ed1f312005784ef913d7e04a28f5f55dc581
+podman pull docker.io/library/python:3.13-slim-trixie@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+```
 
 The OCI binary is a derivative build, so its hash differs from the official release binary. `image-build.json` records the release archive, release binary, release UI, source patch, and local image ID. Keep that record outside the repository.
 
@@ -65,7 +72,7 @@ podman compose \
 
 An empty `ss` result means no process is listening on port 18788. If the port is in use, choose another free port and create a new private deployment directory.
 
-The service runs as UID and GID 65532. Rootless `keep-id` maps that identity to the invoking user for the two bind mounts. Podman drops all capabilities, enables `no-new-privileges`, makes the image filesystem read-only, limits memory, CPU, and PIDs, and retries failed starts at most three times.
+The service runs as UID and GID 65532. Rootless `keep-id` maps that identity to the invoking user for the two bind mounts. Podman drops all capabilities, enables `no-new-privileges`, makes the image filesystem read-only, limits memory, CPU, and PIDs, and retries process failures at most three times. The MCP health check reports initialization health; Podman's Compose provider does not restart a still-running container solely because that health check fails.
 
 The host publishes only `127.0.0.1:18788`. The config mount is read-only. The state mount holds `runs.sqlite`, `runs.sqlite-wal`, and `runs.sqlite-shm` across container recreation. The private network has no external route.
 
