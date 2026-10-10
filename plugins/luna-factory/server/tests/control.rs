@@ -756,3 +756,71 @@ fn public_projection_bounds_do_not_narrow_authoritative_history() {
     assert_eq!(run.control.as_ref().unwrap().attempts.len(), 1000);
     assert_eq!(run.request.objective.len(), 8000);
 }
+#[test]
+fn receipt_attribution_is_nullable_owned_only_and_migrates_existing_rows() {
+    use luna_factoryd::store::Store;
+    use serde_json::{Value, json};
+    let (_dir, config, request) = store_setup();
+    let mut store = Store::open(&config).unwrap();
+    let mut run = store.admit(&config, &request).unwrap().run;
+    assert_eq!(store.latest_receipt_at(&run.id).unwrap(), None);
+    store
+        .receipt(&run, None, "admission", "No native owner yet")
+        .unwrap();
+    run.thread_id = Some("owner".into());
+    run.owned_threads = vec!["child".into()];
+    store
+        .receipt(&run, Some("owner"), "native_dispatch", "Owner turn")
+        .unwrap();
+    store
+        .receipt(&run, Some("child"), "execution", "Child command")
+        .unwrap();
+    // Attribution cannot name a thread the run does not own, and is bounded.
+    for foreign in ["foreign", "", "bad\nthread"] {
+        assert!(
+            store
+                .receipt(&run, Some(foreign), "execution", "Unowned")
+                .unwrap_err()
+                .to_string()
+                .contains("receipt_thread_not_owned")
+        );
+    }
+    let receipts = store.receipts(&run.id).unwrap();
+    assert_eq!(
+        receipts
+            .iter()
+            .map(|r| r["thread_id"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!("child"), json!("owner"), Value::Null]
+    );
+    assert!(store.latest_receipt_at(&run.id).unwrap().is_some());
+    drop(store);
+
+    // A ledger from before attribution: the column is absent and rows predate it.
+    let connection = rusqlite::Connection::open(&config.database).unwrap();
+    connection
+        .execute_batch("ALTER TABLE receipts DROP COLUMN thread_id;")
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO receipts(run_id,subject,kind,summary,created_at) VALUES (?1,'s','execution','Legacy row',1)",
+            [&run.id],
+        )
+        .unwrap();
+    drop(connection);
+    let store = Store::open(&config).unwrap();
+    let migrated = store.receipts(&run.id).unwrap();
+    assert_eq!(migrated.len(), 4);
+    // Existing rows are never backfilled or inferred.
+    assert!(migrated.iter().all(|r| r["thread_id"].is_null()));
+    drop(store);
+    // Idempotent, and the SQLite schema version older binaries check is unchanged.
+    let store = Store::open(&config).unwrap();
+    assert_eq!(store.receipts(&run.id).unwrap().len(), 4);
+    drop(store);
+    let connection = rusqlite::Connection::open(&config.database).unwrap();
+    let version: u32 = connection
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 2);
+}

@@ -16,6 +16,51 @@ pub struct SourceBinding {
     pub repository_id: String,
     pub item_id: String,
     pub revision: String,
+    /// Importer-supplied display hints. Never proof, authority or identity: duplicate detection
+    /// ignores it. Omitted when absent so earlier proposal fingerprints and snapshots are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<SourceDisplay>,
+}
+pub const DISPLAY_URL_PREFIX: &str = "https://github.com/";
+pub const DISPLAY_URL_MAX: usize = 512;
+/// Largest number a JSON client can represent exactly.
+pub const DISPLAY_NUMBER_MAX: u64 = 9_007_199_254_740_991;
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SourceDisplay {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+impl SourceDisplay {
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            self.number.is_some() || self.url.is_some(),
+            "invalid_graph_source_display"
+        );
+        ensure!(
+            self.number
+                .is_none_or(|number| (1..=DISPLAY_NUMBER_MAX).contains(&number)),
+            "invalid_graph_source_display"
+        );
+        ensure!(
+            self.url.as_deref().is_none_or(valid_display_url),
+            "invalid_graph_source_display"
+        );
+        Ok(())
+    }
+}
+/// A bounded `https://github.com/` path. No query, fragment, userinfo or other host can be
+/// expressed, so the link can only open GitHub. Its content is still unverified display data.
+fn valid_display_url(url: &str) -> bool {
+    url.len() <= DISPLAY_URL_MAX
+        && url.strip_prefix(DISPLAY_URL_PREFIX).is_some_and(|path| {
+            !path.is_empty()
+                && path
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-._~/%".contains(&b))
+        })
 }
 impl SourceBinding {
     fn validate(&self) -> Result<()> {
@@ -30,6 +75,9 @@ impl SourceBinding {
             .all(|s| bounded_id(s)),
             "invalid_graph_source"
         );
+        if let Some(display) = &self.display {
+            display.validate()?;
+        }
         Ok(())
     }
 }

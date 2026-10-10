@@ -38,7 +38,7 @@ pub fn public_run(run: &Run) -> Value {
     {
         state = "BLOCKED";
     }
-    json!({"id":run.id,"repository":run.request.repository,"objective":run.request.objective,
+    let mut view = json!({"id":run.id,"repository":run.request.repository,"objective":run.request.objective,
         "acceptance":run.request.acceptance,"non_goals":run.request.non_goals,"finish":run.request.finish,
         "profile":run.request.profile,"capacity":run.request.capacity,"active_workers":run.active_threads.len(),"owned_workers":run.owned_threads.len(),
         "planning_only":run.planning_only,"state":state,"current_subject":run.current_subject,"owner_thread":run.thread_id,"turn_id":run.turn_id,
@@ -53,7 +53,22 @@ pub fn public_run(run: &Run) -> Value {
             "requested_provider":"inherited","configured_provider":run.configured_provider,
             "observed_model":run.observed_model,"observed_effort":run.observed_effort,
             "observed_provider":null,"observed_model_source":run.observed_model.as_ref().map(|_|"model/rerouted"),
-            "reroutes":run.route_observations}})
+            "reroutes":run.route_observations}});
+    view["created_at"] = json!(run.created_at);
+    // Lifecycle-only lower bound; `public_run_with_activity` adds retained receipt time.
+    view["activity_at"] = json!(run.updated_at);
+    view
+}
+
+/// `public_run` plus retained receipt activity. `activity_at` is the newest of lifecycle
+/// `updated_at` and the newest retained receipt `created_at`. Graph proposals and applications
+/// carry no timestamp in the ledger, so they are not covered; none is invented here.
+pub fn public_run_with_activity(run: &Run, store: &Store) -> Result<Value> {
+    let mut view = public_run(run);
+    if let Some(latest) = store.latest_receipt_at(&run.id)? {
+        view["activity_at"] = json!(run.updated_at.max(latest));
+    }
+    Ok(view)
 }
 
 /// Validate a bounded owner claim, not acceptance proof. The production return
@@ -665,7 +680,7 @@ impl Factory {
         let mut store = self.store.lock().await;
         let mut run = store.get(id)?;
         self.refresh_source(&mut run, &mut store)?;
-        let mut view = public_run(&run);
+        let mut view = public_run_with_activity(&run, &store)?;
         view["receipts"] = json!(store.receipts(id)?);
         Ok(view)
     }
@@ -675,7 +690,11 @@ impl Factory {
         for run in &mut runs {
             self.refresh_source(run, &mut store)?;
         }
-        Ok(json!(runs.iter().map(public_run).collect::<Vec<_>>()))
+        Ok(json!(
+            runs.iter()
+                .map(|run| public_run_with_activity(run, &store))
+                .collect::<Result<Vec<_>>>()?
+        ))
     }
     fn refresh_source(&self, run: &mut Run, store: &mut Store) -> Result<()> {
         if run.graph_repository_stamp.is_some()
@@ -1050,6 +1069,7 @@ impl Factory {
         .await?;
         self.store.lock().await.receipt(
             run,
+            run.thread_id.as_deref(),
             "native_dispatch",
             &format!(
                 "Generation {} dispatch {} persisted before turn/start",
@@ -1378,7 +1398,8 @@ impl Factory {
                 "Observed {} native child identities. Effective child routing remains unverified.",
                 run.owned_threads.len()
             );
-            store.receipt(&run,"native_child_spawn","Native collaboration event recorded child identity; route is requested, not observed.")?;
+            // The spawning thread emitted this event; child identities are separate observations.
+            store.receipt(&run,thread,"native_child_spawn","Native collaboration event recorded child identity; route is requested, not observed.")?;
         }
         if item["type"] == "collabAgentToolCall" {
             if let Some(states) = item["agentsStates"].as_object() {
@@ -1431,6 +1452,7 @@ impl Factory {
         if method == "item/completed" && item["type"] == "commandExecution" {
             store.receipt(
                 &run,
+                thread,
                 "execution",
                 &format!(
                     "Native command completed; exit code {}. Output withheld.",
@@ -1522,13 +1544,14 @@ impl Factory {
         if owner {
             run.observed_model = Some(observation.to_model.clone());
         }
+        let observed_thread = observation.thread_id.clone();
         run.route_observations.push(observation);
         run.set_state(crate::control::RunControl::Cancelling);
         run.blocker = Some("Native execution reported a model reroute. Stop requested; effort and downstream provider remain unverified.".into());
         run.updated_at = now();
         let mut store = self.store.lock().await;
         store.save(&mut run)?;
-        store.receipt(&run, "routing_mismatch", "Native model/rerouted evidence recorded for the exact owned thread and turn; stopping owned execution without changing provider or security policy.")?;
+        store.receipt(&run, Some(observed_thread.as_str()), "routing_mismatch", "Native model/rerouted evidence recorded for the exact owned thread and turn; stopping owned execution without changing provider or security policy.")?;
         drop(store);
         drop(guard);
         self.cancel(id).await?;
@@ -1622,7 +1645,7 @@ impl Factory {
             },
         )
         .await?;
-        self.store.lock().await.receipt(run, if automatic {"automatic_continuation"} else {"native_dispatch"},
+        self.store.lock().await.receipt(run, run.thread_id.as_deref(), if automatic {"automatic_continuation"} else {"native_dispatch"},
             &format!("{} task {}; subject {}; prior attempt {}; next attempt {}; generation {}; intent persisted before turn/start",
                 if repair {"repair observed failure"} else {"continue selected work"},run.control.as_ref().unwrap().selected_task,
                 run.current_subject,old_attempt,run.dispatch_id.as_deref().unwrap(),run.generation))?;
@@ -1760,10 +1783,12 @@ impl Factory {
         let mut continuation = None;
         let failure = native_turn_failure_kind(turn);
         if let Some(kind) = failure {
-            self.store
-                .lock()
-                .await
-                .receipt(&run, "native_turn_failure", kind)?;
+            self.store.lock().await.receipt(
+                &run,
+                run.thread_id.as_deref(),
+                "native_turn_failure",
+                kind,
+            )?;
         }
         let client = self
             .clients
@@ -1947,7 +1972,7 @@ impl Factory {
                     run.blocker = Some("continuation_report_unverified".into());
                 }
             }
-            self.store.lock().await.receipt(&run,"owner_acceptance",&format!("Owner report state {}; {} criterion receipts bound to current subject. Raw evidence retained in native thread.",run.state,report["acceptance"].as_array().map_or(0,Vec::len)))?;
+            self.store.lock().await.receipt(&run,run.thread_id.as_deref(),"owner_acceptance",&format!("Owner report state {}; {} criterion receipts bound to current subject. Raw evidence retained in native thread.",run.state,report["acceptance"].as_array().map_or(0,Vec::len)))?;
             if let Some(receipts) = report["acceptance"].as_array() {
                 for receipt in receipts {
                     let summary = format!(
@@ -1962,6 +1987,7 @@ impl Factory {
                     );
                     self.store.lock().await.receipt(
                         &run,
+                        run.thread_id.as_deref(),
                         "criterion_acceptance",
                         &safe_summary(&summary, 1200),
                     )?;
@@ -2189,7 +2215,7 @@ impl Factory {
                 {
                     let mut store = self.store.lock().await;
                     store.save(run)?;
-                    store.receipt(run, "terminal_stop_requested", &format!("Owned thread {thread}, item {}, process {}: targeted native stop requested; exit unverified", terminal.item_id, terminal.process_id))?;
+                    store.receipt(run, Some(thread.as_str()), "terminal_stop_requested", &format!("Owned thread {thread}, item {}, process {}: targeted native stop requested; exit unverified", terminal.item_id, terminal.process_id))?;
                 }
                 let result = client.terminate_background_terminal(target).await;
                 run.terminal_stop_attempts.insert(

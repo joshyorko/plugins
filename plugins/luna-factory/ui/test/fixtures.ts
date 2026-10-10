@@ -90,7 +90,8 @@ export const fixtureBackends: BackendCatalog = {
 export function fixtureCampaignPlan(): { run: RunView; graph: GraphEnvelope } {
   const run = fixturePlanningRun();
   run.id = "campaign-actions-v2"; run.repository = "actions"; run.objective = "Actions v2: uv packaging and cross-platform CI";
-  run.remaining_gap = null; run.updated_at = 1791140400; run.delta = "Thirteen GitHub issues were imported as planned tasks.";
+  run.remaining_gap = null; run.updated_at = 1791140400; run.created_at = 1791136800; run.activity_at = 1791140400; run.delta = "Thirteen GitHub issues were imported as planned tasks.";
+  run.presentation!.blocker_kind = { kind: "planning_only" };
   const issues: Array<[string, string, string[]]> = [
     ["issue-102", "Add uv lockfile support to the package builder", []],
     ["issue-103", "Extract the shared CI workflow", []],
@@ -110,7 +111,8 @@ export function fixtureCampaignPlan(): { run: RunView; graph: GraphEnvelope } {
   const criteria = [{ id: "A1", description: "Every child issue is closed by a merged, verified change", status: "unproved" as const, reason: "evidence_missing", check_refs: [] }];
   const nodes = [
     { id: "objective", title: run.objective, criterion_ids: ["A1"], dependencies: ["issue-114"], state: "candidate", admission: "candidate", reason: "planning_candidate_no_authority", owner_thread: null, attempt_ids: [], source: null, target_preference: null },
-    ...issues.map(([id, title, dependencies]) => ({ id, title, criterion_ids: ["A1"], dependencies, state: "candidate", admission: "candidate", reason: null, owner_thread: null, attempt_ids: [], source: { provider: "github", repository_id: identity, item_id: `1148934299:I_kwDOsynthetic${id.slice(-3)}`, revision: `sha256:${id.slice(-3).repeat(21)}0` }, target_preference: null })),
+    // Synthetic display hints as an importer would supply them. issue-104 has none, so it keeps the provider-only label.
+    ...issues.map(([id, title, dependencies]) => ({ id, title, criterion_ids: ["A1"], dependencies, state: "candidate", admission: "candidate", reason: null, owner_thread: null, attempt_ids: [], source: { provider: "github", repository_id: identity, item_id: `1148934299:I_kwDOsynthetic${id.slice(-3)}`, revision: `sha256:${id.slice(-3).repeat(21)}0`, ...(id === "issue-104" ? {} : { display: { number: Number(id.slice(-3)), url: `https://github.com/example-org/actions/issues/${id.slice(-3)}` } }) }, target_preference: null })),
   ];
   run.control!.criteria = criteria;
   run.control!.tasks = nodes.map(({ source: _source, target_preference: _target, ...task }) => task);
@@ -127,13 +129,15 @@ export function fixtureSwarmRun(): RunView {
   const base = 1791140400;
   const run = fixtureRun({
     id: "swarm-fixture", repository: "sample-service", objective: "Preserve job progress across restarts", state: "RUNNING", active_workers: 2, owner_thread: "owner-a", turn_id: "turn-a",
-    delta: "The owner reproduced the restart gap. Two observed workers are testing the fix.", remaining_gap: "Owner acceptance of the restart test is still required.", blocker: null, updated_at: base + 2280, claim_held: true,
+    delta: "The owner reproduced the restart gap. Two observed workers are testing the fix.", remaining_gap: "Owner acceptance of the restart test is still required.", blocker: null, updated_at: base + 2280, created_at: base - 120, activity_at: base + 2280, claim_held: true,
+    // Attribution as the server records it: the dispatching or emitting thread. The first receipt
+    // predates attribution (null) and stays on Run receipts; Worker 2 has none, so its lane stays hatched.
     receipts: [
-      { kind: "native_dispatch", summary: "Owner turn dispatched for the bound objective.", subject: "s", created_at: base },
-      { kind: "native_child_spawn", summary: "Observed a native child thread under the owner.", subject: "s", created_at: base + 540 },
-      { kind: "native_child_spawn", summary: "Observed a second native child thread under the owner.", subject: "s", created_at: base + 780 },
-      { kind: "execution", summary: "Restart reproduction test failed as expected before the fix.", subject: "s", created_at: base + 1500 },
-      { kind: "execution", summary: "Restart test passed on the candidate subject.", subject: "s", created_at: base + 2220 },
+      { kind: "native_dispatch", summary: "Owner turn dispatched for the bound objective.", subject: "s", created_at: base, thread_id: null },
+      { kind: "native_child_spawn", summary: "Observed a native child thread under the owner.", subject: "s", created_at: base + 540, thread_id: "owner-a" },
+      { kind: "native_child_spawn", summary: "Observed a second native child thread under the owner.", subject: "s", created_at: base + 780, thread_id: "owner-a" },
+      { kind: "execution", summary: "Restart reproduction test failed as expected before the fix.", subject: "s", created_at: base + 1500, thread_id: "child-1" },
+      { kind: "execution", summary: "Restart test passed on the candidate subject.", subject: "s", created_at: base + 2220, thread_id: "child-1" },
     ],
   });
   run.control!.tasks = [
@@ -144,5 +148,12 @@ export function fixtureSwarmRun(): RunView {
   run.presentation!.result = { kind: "working", label: "Work in progress" };
   run.presentation!.owner = { thread_id: "owner-a", turn_id: "turn-a", liveness: "active" };
   run.presentation!.workers = [{ thread_id: "child-1", liveness: "active" }, { thread_id: "child-2", liveness: "unknown" }];
+  run.presentation!.blocker_kind = { kind: "none" };
   return run;
 }
+
+/** Every blocker category the server derives today, as the server would pair it with an action. */
+export const fixtureBlockerKinds: Array<NonNullable<NonNullable<RunView["presentation"]>["blocker_kind"]>> = [
+  { kind: "budget_exhausted", budget: "time" }, { kind: "budget_exhausted", budget: "repair" }, { kind: "diagnosis_required" },
+  { kind: "native_approval" }, { kind: "effect_outcome_unknown" }, { kind: "liveness_unknown" }, { kind: "planning_only" }, { kind: "none" }, { kind: "unknown" },
+];

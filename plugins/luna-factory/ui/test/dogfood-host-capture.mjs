@@ -16,6 +16,7 @@ const cases = [
   { file: "thread-selected-dark.png", width: 360, height: 760, params: { surface: "thread", theme: "dark", scenario: "planning", graph: "1" } },
   { file: "inline-decision-light.png", width: 640, height: 640, params: { surface: "inline", scenario: "decision" } },
   { file: "thread-blocked-narrow.png", width: 320, height: 700, params: { surface: "thread", scenario: "blocked", graph: "1" } },
+  { file: "campaign-blocked-light.png", width: 1280, height: 860, params: { surface: "global", mode: "fullscreen", scenario: "blocked", graph: "1" } },
   { file: "global-error-light.png", width: 480, height: 640, params: { surface: "global", scenario: "error" } },
   { file: "global-disconnected-mobile.png", width: 360, height: 720, params: { surface: "global", scenario: "planning", platform: "mobile", graph: "1" }, disconnect: true },
   { file: "global-proposal-review.png", width: 480, height: 760, params: { surface: "global", scenario: "planning", graph: "1", proposal: "1" } },
