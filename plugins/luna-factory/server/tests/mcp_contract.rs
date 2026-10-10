@@ -313,3 +313,45 @@ fn server_identity_contains_a_portable_png_icon() {
             .starts_with("data:image/png;base64,iVBORw0KGgo")
     );
 }
+
+#[test]
+fn import_source_display_is_optional_bounded_and_github_only() {
+    let tools = tool_definitions();
+    let propose = tools
+        .iter()
+        .find(|t| t.name == "propose_factory_change")
+        .unwrap();
+    let input = serde_json::to_value(&propose.input_schema).unwrap();
+    let validator = jsonschema::validator_for(&input).unwrap();
+    let request = |display: Option<Value>| {
+        let mut source =
+            json!({"provider":"github","repository_id":"repo","item_id":"1:I_x","revision":"r1"});
+        if let Some(display) = display {
+            source["display"] = display;
+        }
+        json!({"run_id":"run","expected_revision":1,"idempotency_key":"k","change":{"kind":"import_candidates","nodes":[
+            {"id":"issue-69","title":"Issue","criterion_ids":["A1"],"dependencies":[],"source":source}
+        ]}})
+    };
+    for display in [
+        None,
+        Some(json!({"number":69})),
+        Some(json!({"url":"https://github.com/joshyorko/plugins/issues/69"})),
+        Some(json!({"number":69,"url":"https://github.com/joshyorko/plugins/issues/69"})),
+    ] {
+        assert!(validator.is_valid(&request(display.clone())), "{display:?}");
+    }
+    for display in [
+        json!({}),
+        json!({"number":0}),
+        json!({"number":69,"title":"not proof"}),
+        json!({"url":"http://github.com/joshyorko/plugins/issues/69"}),
+        json!({"url":"https://github.com.evil.example/x"}),
+        json!({"url":format!("https://github.com/{}", "a".repeat(512))}),
+    ] {
+        assert!(
+            !validator.is_valid(&request(Some(display.clone()))),
+            "{display}"
+        );
+    }
+}

@@ -169,8 +169,16 @@ pub fn tool_definitions() -> Vec<Tool> {
     let create_schema = serde_json::to_value(&tools[0].input_schema).expect("start schema");
     let node_id = json!({"type":"string","minLength":1,"maxLength":256});
     let deps = json!({"type":"array","maxItems":128,"uniqueItems":true,"items":node_id});
+    // Optional display hints (for example a GitHub issue number and link). They are never
+    // proof, authority or source identity, and do not participate in duplicate detection.
+    let mut display = object(
+        json!({"number":{"type":"integer","minimum":1,"maximum":crate::graph::DISPLAY_NUMBER_MAX},
+            "url":{"type":"string","maxLength":crate::graph::DISPLAY_URL_MAX,"pattern":"^https://github\\.com/[A-Za-z0-9._~%/-]+$"}}),
+        &[],
+    );
+    display["minProperties"] = json!(1);
     let source = object(
-        json!({"provider":node_id,"repository_id":node_id,"item_id":node_id,"revision":node_id}),
+        json!({"provider":node_id,"repository_id":node_id,"item_id":node_id,"revision":node_id,"display":display}),
         &["provider", "repository_id", "item_id", "revision"],
     );
     let candidate = object(

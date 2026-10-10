@@ -121,8 +121,56 @@ async fn read_settings_onboarding_and_graph_responses_match_their_contracts() {
     invoke(&server, "list_factory_runs", json!({})).await;
     invoke(&server, "refresh_factory", json!({"run_id":run_id})).await;
     invoke(&server, "get_factory_graph", json!({"run_id":run_id})).await;
-    let proposal = invoke(&server,"propose_factory_change",json!({"run_id":run_id,"expected_revision":graph["graph"]["revision"],"idempotency_key":"import","change":{"kind":"import_candidates","nodes":[{"id":"candidate","title":"Check contract","criterion_ids":["A1"],"dependencies":["objective"],"source":{"provider":"local","repository_id":graph["graph"]["repository"]["identity"],"item_id":"candidate","revision":"v1"}}]}})).await;
+    let proposal = invoke(&server,"propose_factory_change",json!({"run_id":run_id,"expected_revision":graph["graph"]["revision"],"idempotency_key":"import","change":{"kind":"import_candidates","nodes":[{"id":"candidate","title":"Check contract","criterion_ids":["A1"],"dependencies":["objective"],"source":{"provider":"local","repository_id":graph["graph"]["repository"]["identity"],"item_id":"candidate","revision":"v1","display":{"number":69,"url":"https://github.com/joshyorko/plugins/issues/69"}}}]}})).await;
     let applied = invoke(&server,"apply_factory_change",json!({"run_id":run_id,"change_id":proposal["proposal"]["id"],"expected_revision":proposal["graph"]["revision"]})).await;
+    let displayed = applied["graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|node| node["id"] == "candidate")
+        .unwrap();
+    assert_eq!(
+        applied["graph"]["nodes"][displayed]["source"]["display"]["number"],
+        69
+    );
+    // Additive projection fields are typed; receipts carry nullable attribution.
+    assert!(run["created_at"].is_u64() && run["activity_at"].is_u64());
+    for (pointer, wrong) in [
+        (
+            "/source/display/url",
+            json!("http://github.com/joshyorko/plugins/issues/69"),
+        ),
+        (
+            "/source/display/url",
+            json!("https://example.com/joshyorko/plugins/issues/69"),
+        ),
+        ("/source/display/number", json!(0)),
+        ("/source/display/number", json!("69")),
+        ("/source/display", json!({})),
+    ] {
+        let mut bad = applied.clone();
+        let node = &mut bad["graph"]["nodes"][displayed];
+        *node.pointer_mut(pointer).unwrap() = wrong;
+        assert!(!validator("get_factory_graph").is_valid(&bad), "{pointer}");
+    }
+    let mut receipt = run.clone();
+    receipt["receipts"] =
+        json!([{"subject":"s","kind":"execution","summary":"x","created_at":1,"thread_id":null}]);
+    valid("get_factory_run", &receipt);
+    receipt["receipts"][0]["thread_id"] = json!("owner");
+    valid("get_factory_run", &receipt);
+    receipt["receipts"][0]["thread_id"] = json!("");
+    assert!(!validator("get_factory_run").is_valid(&receipt));
+    receipt["receipts"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("thread_id");
+    assert!(!validator("get_factory_run").is_valid(&receipt));
+    for field in ["created_at", "activity_at"] {
+        let mut bad = run.clone();
+        bad.as_object_mut().unwrap().remove(field);
+        assert!(!validator("get_factory_run").is_valid(&bad), "{field}");
+    }
     // Mutation tools return this same public run shape; planning cannot dispatch them.
     for name in [
         "start_factory",

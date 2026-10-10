@@ -448,7 +448,24 @@ impl Store {
           CREATE TABLE IF NOT EXISTS repository_registrations (id TEXT PRIMARY KEY, alias TEXT NOT NULL UNIQUE, payload TEXT NOT NULL);")?;
         let mut store = Self { connection };
         store.migrate_control()?;
+        store.migrate_receipt_attribution()?;
         Ok(store)
+    }
+    /// Additive and idempotent. Existing receipts stay unattributed (NULL); nothing is backfilled
+    /// or inferred. `user_version` is unchanged because older binaries name their receipt columns
+    /// explicitly and ignore this nullable column.
+    fn migrate_receipt_attribution(&mut self) -> Result<()> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let present = tx
+            .prepare("SELECT 1 FROM pragma_table_info('receipts') WHERE name='thread_id'")?
+            .exists([])?;
+        if !present {
+            tx.execute_batch("ALTER TABLE receipts ADD COLUMN thread_id TEXT;")?;
+        }
+        tx.commit()?;
+        Ok(())
     }
     fn migrate_control(&mut self) -> Result<()> {
         let version: u32 = self
@@ -1047,21 +1064,45 @@ impl Store {
         self.persist(run, None)?;
         Ok(())
     }
-    pub fn receipt(&mut self, run: &Run, kind: &str, summary: &str) -> Result<()> {
+    /// `thread_id` is the native thread whose observed event or dispatch produced this receipt,
+    /// when the caller knows it at receipt time. It must already be the run's owner or an owned
+    /// child. Unknown attribution is `None`; callers never infer it.
+    pub fn receipt(
+        &mut self,
+        run: &Run,
+        thread_id: Option<&str>,
+        kind: &str,
+        summary: &str,
+    ) -> Result<()> {
         ensure!(
             kind.len() <= 64 && summary.len() <= 2000,
             "receipt_too_large"
         );
+        ensure!(
+            thread_id.is_none_or(|thread| crate::control::bounded_id(thread)
+                && (run.thread_id.as_deref() == Some(thread)
+                    || run.owned_threads.iter().any(|owned| owned == thread))),
+            "receipt_thread_not_owned"
+        );
         self.connection.execute(
-            "INSERT INTO receipts(run_id,subject,kind,summary,created_at) VALUES (?1,?2,?3,?4,?5)",
-            params![run.id, run.current_subject, kind, summary, now() as i64],
+            "INSERT INTO receipts(run_id,subject,kind,summary,created_at,thread_id) VALUES (?1,?2,?3,?4,?5,?6)",
+            params![run.id, run.current_subject, kind, summary, now() as i64, thread_id],
         )?;
         self.connection.execute("DELETE FROM receipts WHERE run_id=?1 AND sequence NOT IN (SELECT sequence FROM receipts WHERE run_id=?1 ORDER BY sequence DESC LIMIT 100)",[&run.id])?;
         Ok(())
     }
     pub fn receipts(&self, run_id: &str) -> Result<Vec<serde_json::Value>> {
-        let mut stmt = self.connection.prepare("SELECT subject,kind,summary,created_at FROM receipts WHERE run_id=?1 ORDER BY sequence DESC LIMIT 20")?;
-        Ok(stmt.query_map([run_id],|r|Ok(serde_json::json!({"subject":r.get::<_,String>(0)?,"kind":r.get::<_,String>(1)?,"summary":r.get::<_,String>(2)?,"created_at":r.get::<_,i64>(3)?})))?.collect::<rusqlite::Result<Vec<_>>>()?)
+        let mut stmt = self.connection.prepare("SELECT subject,kind,summary,created_at,thread_id FROM receipts WHERE run_id=?1 ORDER BY sequence DESC LIMIT 20")?;
+        Ok(stmt.query_map([run_id],|r|Ok(serde_json::json!({"subject":r.get::<_,String>(0)?,"kind":r.get::<_,String>(1)?,"summary":r.get::<_,String>(2)?,"created_at":r.get::<_,i64>(3)?,"thread_id":r.get::<_,Option<String>>(4)?})))?.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+    /// Newest retained receipt time, across all retained receipts rather than the projected 20.
+    pub fn latest_receipt_at(&self, run_id: &str) -> Result<Option<u64>> {
+        let latest: Option<i64> = self.connection.query_row(
+            "SELECT MAX(created_at) FROM receipts WHERE run_id=?1",
+            [run_id],
+            |r| r.get(0),
+        )?;
+        Ok(latest.and_then(|value| u64::try_from(value).ok()))
     }
     pub fn reclaim(&mut self, run: &mut Run) -> Result<()> {
         ensure!(!run.planning_only, "planning_graph_execution_denied");

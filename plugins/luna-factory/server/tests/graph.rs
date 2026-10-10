@@ -928,3 +928,164 @@ fn final_factory_drop_releases_lease_even_during_an_inherited_pre_exec_window() 
         restarted.err()
     );
 }
+
+fn displayed(
+    graph: &serde_json::Value,
+    id: &str,
+    item: &str,
+    display: serde_json::Value,
+) -> serde_json::Value {
+    let mut candidate = node(graph, id, vec![]);
+    candidate["source"]["item_id"] = json!(item);
+    candidate["source"]["display"] = display;
+    candidate
+}
+#[tokio::test]
+async fn source_display_is_bounded_projected_and_never_identity_or_proof() {
+    let (_temp, config, request) = setup();
+    let factory = Factory::new(config.clone()).unwrap();
+    let created = factory.create_graph(request).await.unwrap();
+    let id = created["graph"]["run_id"].as_str().unwrap().to_owned();
+    let url = "https://github.com/joshyorko/plugins/issues/69";
+    let nodes = json!([
+        displayed(
+            &created,
+            "issue-69",
+            "repo:69",
+            json!({"number":69,"url":url})
+        ),
+        displayed(&created, "number-only", "repo:70", json!({"number":70})),
+        node(&created, "plain", vec![]),
+    ]);
+    let proposed = factory
+        .propose_graph_change(proposal(
+            &created,
+            "display-import",
+            json!({"kind":"import_candidates","nodes":nodes}),
+        ))
+        .await
+        .unwrap();
+    // Absent display is omitted, so older import payloads keep their exact fingerprints.
+    let saved = &proposed["proposal"]["change"]["nodes"];
+    assert!(saved[2]["source"].get("display").is_none());
+    assert_eq!(
+        saved[0]["source"]["display"],
+        json!({"number":69,"url":url})
+    );
+    let applied = factory
+        .apply_graph_change(ApplyChange {
+            run_id: id.clone(),
+            change_id: proposed["proposal"]["id"].as_str().unwrap().into(),
+            expected_revision: proposed["graph"]["revision"].as_u64().unwrap(),
+        })
+        .await
+        .unwrap();
+    let find = |node: &str| {
+        applied["graph"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|candidate| candidate["id"] == node)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(
+        find("issue-69")["source"]["display"],
+        json!({"number":69,"url":url})
+    );
+    assert_eq!(
+        find("number-only")["source"]["display"],
+        json!({"number":70})
+    );
+    assert!(find("plain")["source"].get("display").is_none());
+    // Display data confers no state, proof, claim or execution.
+    for node in ["issue-69", "number-only", "plain"] {
+        assert_eq!(find(node)["state"], "candidate");
+        assert_eq!(find(node)["admission"], "candidate");
+    }
+    assert!(applied["graph"]["attempts"].as_array().unwrap().is_empty());
+    assert_eq!(applied["graph"]["criteria"][0]["status"], "unproved");
+    assert_eq!(applied["graph"]["claim"]["held"], false);
+
+    // Identity ignores display: the same provider/repository/item is still a duplicate.
+    for (key, display) in [
+        (
+            "dup-new-display",
+            json!({"number":71,"url":"https://github.com/joshyorko/plugins/issues/71"}),
+        ),
+        ("dup-no-display", serde_json::Value::Null),
+    ] {
+        let mut duplicate = displayed(&applied, "renamed", "repo:69", display.clone());
+        if display.is_null() {
+            duplicate["source"]
+                .as_object_mut()
+                .unwrap()
+                .remove("display");
+        }
+        let error = factory
+            .propose_graph_change(proposal(
+                &applied,
+                key,
+                json!({"kind":"import_candidates","nodes":[duplicate]}),
+            ))
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("duplicate_graph_source"),
+            "{key}: {error}"
+        );
+    }
+
+    // Bounded and https://github.com/ only. Rejections write no proposal, event or revision.
+    let long = format!("https://github.com/{}", "a".repeat(512));
+    for (index, display) in [
+        json!({}),
+        json!({"number":0}),
+        json!({"number":9_007_199_254_740_992_u64}),
+        json!({"url":"http://github.com/joshyorko/plugins/issues/69"}),
+        json!({"url":"https://github.com.evil.example/joshyorko/plugins/issues/69"}),
+        json!({"url":"https://evil.example/https://github.com/x"}),
+        json!({"url":"https://github.com/"}),
+        json!({"url":"https://github.com/joshyorko/plugins/issues/69?x=1"}),
+        json!({"url":"https://github.com/joshyorko/plugins/issues/69#frag"}),
+        json!({"url":"https://github.com/joshyorko/plugins issues"}),
+        json!({"url":"https://github.com/joshyorko/plugins/issues/69\n"}),
+        json!({"url":"javascript:alert(1)"}),
+        json!({"url":long}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let candidate = displayed(
+            &applied,
+            &format!("bad-{index}"),
+            &format!("bad:{index}"),
+            display.clone(),
+        );
+        let error = factory
+            .propose_graph_change(proposal(
+                &applied,
+                &format!("bad-display-{index}"),
+                json!({"kind":"import_candidates","nodes":[candidate]}),
+            ))
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("invalid_graph_source_display"),
+            "{display}: {error}"
+        );
+    }
+    // Unknown display fields fail closed at the typed command boundary.
+    let mut unknown = displayed(
+        &applied,
+        "bad-field",
+        "bad:field",
+        json!({"number":1,"title":"proof"}),
+    );
+    unknown["source"]["display"]["title"] = json!("proof");
+    assert!(
+        serde_json::from_value::<ProposeChange>(json!({"run_id":id,"expected_revision":applied["graph"]["revision"],"idempotency_key":"unknown-display","change":{"kind":"import_candidates","nodes":[unknown]}}))
+            .is_err()
+    );
+    assert_eq!(factory.graph(&id).await.unwrap()["graph"], applied["graph"]);
+}
