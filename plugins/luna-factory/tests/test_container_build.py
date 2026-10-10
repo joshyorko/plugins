@@ -169,6 +169,7 @@ class ContainerBuildTests(unittest.TestCase):
 
     def test_compose_keeps_bind_loopback_and_config_read_only(self):
         compose = (CONTAINER_DIR / "compose.yaml").read_text()
+        self.assertNotIn("container_name:", compose)
         self.assertIn('"127.0.0.1:${LUNA_HOST_PORT:?', compose)
         self.assertIn("source: ${LUNA_CONFIG_DIR:?Set", compose)
         self.assertIn("read_only: true", compose)

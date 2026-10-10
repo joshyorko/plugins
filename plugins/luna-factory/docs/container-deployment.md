@@ -41,6 +41,8 @@ The helper rejects a different release commit or artifact. It extracts only regu
 
 The OCI binary and workbench are derivative builds, so their hashes differ from the official release components. `image-build.json` records both UI hashes, the source UI input hash, complete build-input hash, clean build HEAD, and immutable image reference. The private Compose `.env` is initialized with that digest reference, not a mutable tag. Keep the record outside the repository.
 
+Compose container names are scoped to the project. For a parallel preview, use a new private deployment root and a unique `--project-name` such as `luna-factory-v021-preview`; pass the same project name to every `config`, `up`, `stop`, and `down` command. This keeps the preview separate from the existing `luna-factory-oci-v021` service.
+
 Check the image ID and the private paths before starting the service.
 
 ```sh

@@ -4,7 +4,6 @@ services:
   luna-factory:
     image: ${LUNA_FACTORY_IMAGE:?Set LUNA_FACTORY_IMAGE to the locally built pinned image}
     pull_policy: never
-    container_name: luna-factory-oci-v021
     user: "65532:65532"
     userns_mode: "keep-id:uid=65532,gid=65532"
     init: true
