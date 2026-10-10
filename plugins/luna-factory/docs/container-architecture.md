@@ -17,7 +17,7 @@ Codex CLI is the local program and configuration owner. Codex app-server is its 
 - `stdio` starts an app-server child that Luna Factory owns.
 - `existing_daemon` connects to an existing Unix socket using WebSocket framing. It does not stop or own the daemon.
 
-See `server/src/native.rs` and [Native transport verification](native-transport-verification.md). The CLI reports `codex app-server` as experimental in the installed 0.162.1 help.
+See `server/src/native.rs` and [Native transport verification](native-transport-verification.md). Official [Codex app-server documentation](https://learn.chatgpt.com/docs/app-server) says the `app-server` command and WebSocket transport are experimental and unsupported for production workloads; it recommends the Codex SDK for automated jobs. The current native CLI's own help also labels `app-server` experimental.
 
 ## Keep the default container planning-only
 
@@ -33,10 +33,10 @@ There are two possible runner shapes.
 
 | Option | Benefit | Cost |
 | --- | --- | --- |
-| Put the pinned CLI beside `luna-factoryd` and use owned `stdio` | Fewest services. Luna Factory already owns and supervises this app-server path. | One image release couples the CLI and Factory. The container needs its own authorized `CODEX_HOME`, and the combined process tree needs stop and descendant checks. |
-| Run a pinned Codex runner sidecar and share one private Unix socket | Separate CLI updates and credentials from the Factory service. Luna Factory already supports explicit `native_socket` connections. The host Codex daemon is not required when the sidecar owns its app-server. | Adds socket permissions, sidecar health and shutdown coordination, plus an account-auth volume. The workspace must be mounted into both services at the same path. |
+| Put the pinned CLI beside `luna-factoryd` and use owned `stdio` | Fewest services. Luna Factory already owns and supervises this app-server path. | Couples CLI and Factory releases; needs a dedicated authorized `CODEX_HOME`, complete child/descendant termination checks, and an operator approval path. Official app-server docs still mark the command experimental and unsupported for production. |
+| Run a pinned Codex runner sidecar and share one private Unix socket | Separates CLI updates and credentials from the Factory service; the host Codex daemon is not required. | Adds socket permissions, health and shutdown coordination, plus an account-auth volume. Unix/WebSocket app-server transport is experimental and unsupported for production. Both services need the same per-run workspace path and accessible Git common-dir metadata. |
 
-I recommend the sidecar only as a future opt-in `runner` profile. It keeps Codex auth and updates out of the default Luna image. The profile must pin the Codex CLI version and image digest, create a new private auth volume, and use a per-run worktree mount. Do not mount the host `.codex` directory or copy host tokens.
+Keep both runner shapes disabled. For a separately authorized experimental dogfood profile, owned `stdio` is the smaller first experiment; do not present it as production-supported while official docs retain that status. If a future product-supported remote runner is required, reassess the SDK and supported transport before choosing a sidecar. Any profile must pin the CLI version and image digest, create a new private auth volume, mount only a per-run worktree plus the metadata required to resolve its Git common directory, and never mount the host `.codex` directory or copy host tokens.
 
 ## Decisions required before enabling a runner
 
@@ -44,15 +44,15 @@ I recommend the sidecar only as a future opt-in `runner` profile. It keeps Codex
 
 **Licensing and distribution.** The OpenAI Codex repository reports Apache-2.0. A distributed CLI image still needs the matching license and notice files, plus a review of the exact binary's distribution and account terms. Keep the image private until that review is complete.
 
-**Approvals and callbacks.** Luna Factory's native transport treats approval callbacks as events and does not answer them automatically. The runner profile needs an operator-facing approval path. Do not enable unattended approvals to make a canary pass.
+**Approvals and callbacks.** Luna Factory's current native transport broadcasts approval callbacks; it has no headless response owner or operator UI that correlates and answers them. A runner profile needs that real approval path. Do not auto-approve or enable unattended execution to make a canary pass.
 
-**Workspaces.** Mount only a dedicated worktree for each admitted run. Use the same absolute path in the Factory and runner containers. Do not mount all of `/home`, the plugins checkout, or the preserved production ledger.
+**Workspaces.** Mount only a dedicated worktree for each admitted run and use the same absolute path in both services. A linked worktree's `.git` file can point to a common Git directory outside that worktree; mount only the required common-dir metadata safely as well. Do not mount all of `/home`, the plugins checkout, or the preserved production ledger.
 
 **Rate limits.** Codex work remains subject to the authorized ChatGPT account's model access and rate limits. The runner must report denials and limits as blockers. Do not substitute an API key, private Cloud endpoint, or Codex Tasks API.
 
 **Version compatibility.** Pin the Codex CLI version, source, and image digest. Generate or inspect app-server schemas from that exact installed version. The host's current CLI is 0.162.1, but that alone does not qualify a future container image or its callbacks.
 
-**Termination.** The owned `stdio` path can stop its child when the connection closes. A sidecar introduces a second process owner. Before releasing any repository claim, prove that the owner, app-server, and all worker descendants stopped. Keep unknown activity blocked.
+**Termination.** The current owned `stdio` path waits for or kills its immediate app-server child; that is not proof that all descendants stopped. A sidecar adds another process owner. Before releasing a repository claim, use and verify a cgroup/container process boundary that proves the owner, app-server, and every worker descendant stopped. Keep unknown activity blocked.
 
 ## Do not treat app-server as a remote task API
 

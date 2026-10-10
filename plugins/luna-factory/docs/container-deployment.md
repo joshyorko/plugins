@@ -21,33 +21,29 @@ Set `RELEASE_DIR` to the private directory containing the released archive, its 
 ```sh
 RELEASE_DIR=/absolute/path/to/luna-factory-v0.2.1-release
 DEPLOY_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/luna-factory-oci/v021-canary"
-IMAGE_TAG=$(python3 plugins/luna-factory/container/build_image.py --print-image-tag)
-
+umask 077
+BUILD_RECORD=$(mktemp "${TMPDIR:-/tmp}/luna-factory-oci-build.XXXXXX")
+podman pull docker.io/library/rust:1.99.0-slim-trixie@sha256:2752b332db73fdbb7dc576f06c82ed1f312005784ef913d7e04a28f5f55dc581
+podman pull docker.io/library/python:3.13-slim-trixie@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+python3 plugins/luna-factory/container/build_image.py \
+  --release-dir "$RELEASE_DIR" > "$BUILD_RECORD"
+IMAGE_REF=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image_ref"])' "$BUILD_RECORD")
 python3 plugins/luna-factory/container/init_private.py \
   --root "$DEPLOY_ROOT" \
   --host-port 18788 \
-  --image "$IMAGE_TAG"
-
-umask 077
-python3 plugins/luna-factory/container/build_image.py \
-  --release-dir "$RELEASE_DIR" > "$DEPLOY_ROOT/image-build.json"
+  --image "$IMAGE_REF"
+install -m 0600 "$BUILD_RECORD" "$DEPLOY_ROOT/image-build.json"
+IMAGE_REF=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image_ref"])' "$DEPLOY_ROOT/image-build.json")
 ```
 
 The helper rejects a different release commit or artifact. It extracts only regular files beneath the release bundle directory. The build uses the exact Rust and Python image digests in `container/Containerfile` and runs `cargo build --locked` against the pinned source.
 
-The base image references are digest pinned and the build uses `--pull=never`; pull those exact bases once if they are not already present in rootless Podman's image store:
-
-```sh
-podman pull docker.io/library/rust:1.99.0-slim-trixie@sha256:2752b332db73fdbb7dc576f06c82ed1f312005784ef913d7e04a28f5f55dc581
-podman pull docker.io/library/python:3.13-slim-trixie@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
-```
-
-The OCI binary is a derivative build, so its hash differs from the official release binary. `image-build.json` records the release archive, release binary, release UI, source patch, and local image ID. Keep that record outside the repository.
+The OCI binary is a derivative build, so its hash differs from the official release binary. `image-build.json` records the release archive, release binary, release UI, complete build-input hash, clean build HEAD, and immutable image reference. The private Compose `.env` is initialized with that digest reference, not a mutable tag. Keep the record outside the repository.
 
 Check the image ID and the private paths before starting the service.
 
 ```sh
-podman image inspect --format '{{.Id}}' "$IMAGE_TAG"
+podman image inspect --format '{{.Id}}' "$IMAGE_REF"
 python3 -m json.tool "$DEPLOY_ROOT/config/operator.json" >/dev/null
 stat -c '%a %n' "$DEPLOY_ROOT" "$DEPLOY_ROOT/config" "$DEPLOY_ROOT/config/operator.json" "$DEPLOY_ROOT/state"
 ```
@@ -74,6 +70,8 @@ An empty `ss` result means no process is listening on port 18788. If the port is
 
 The service runs as UID and GID 65532. Rootless `keep-id` maps that identity to the invoking user for the two bind mounts. Podman drops all capabilities, enables `no-new-privileges`, makes the image filesystem read-only, limits memory, CPU, and PIDs, and retries process failures at most three times. The MCP health check reports initialization health; Podman's Compose provider does not restart a still-running container solely because that health check fails.
 
+Compose controls restart after process failure while the container engine is running. It does not create a boot-time user service; start this deployment explicitly after reboot or add a separately reviewed user Quadlet/systemd unit. The host's independent 18787 service remains outside this Compose project.
+
 The host publishes only `127.0.0.1:18788`. The config mount is read-only. The state mount holds `runs.sqlite`, `runs.sqlite-wal`, and `runs.sqlite-shm` across container recreation. The private network has no external route.
 
 ## Run and repeat the planning-only check
@@ -96,7 +94,48 @@ python3 plugins/luna-factory/container/acceptance_canary.py \
   --url http://127.0.0.1:18788/mcp --mode verify
 ```
 
-The `verify` phase requires the same `oci-canary` setting after recreation. It repeats MCP discovery and the UI hash check. The canary tool-call allowlist rejects execution, lifecycle, CAS, and unknown tool names. It does not call `start_factory`, `resume_factory_run`, `cancel_factory_run`, `steer_factory_run`, or any CAS tool.
+The `verify` phase requires the same `oci-canary` setting after recreation. It repeats MCP discovery and the UI hash check. The settings canary rejects execution and CAS tool calls.
+
+## Optional disposable planning-graph canary
+
+The default deployment has no repository aliases or repository mounts. To exercise graph creation and revision-fenced planning, create a private throwaway Git repository and use the separate read-only Compose override. Do not point it at another project or worktree.
+
+```sh
+CANARY_REPO_DIR="$DEPLOY_ROOT/repository"
+mkdir -m 0700 "$CANARY_REPO_DIR"
+git -C "$CANARY_REPO_DIR" init --initial-branch main
+printf '%s\n' 'Disposable Luna OCI planning canary.' > "$CANARY_REPO_DIR/README.md"
+git -C "$CANARY_REPO_DIR" add README.md
+git -C "$CANARY_REPO_DIR" -c user.name='Luna OCI Canary' -c user.email='luna-oci-canary@localhost' commit -m 'Initialize disposable planning canary'
+export LUNA_CANARY_REPO_DIR="$CANARY_REPO_DIR"
+python3 - "$DEPLOY_ROOT/config/operator.json" "$DEPLOY_ROOT/config/operator.planning-canary.json" <<'PY'
+import json, sys
+source, destination = sys.argv[1:]
+config = json.load(open(source, encoding='utf-8'))
+config['repositories'] = {'canary': {'root': '/opt/luna-canary/repo', 'max_finish': 'local_candidate'}}
+with open(destination, 'x', encoding='utf-8') as output:
+    json.dump(config, output, indent=2)
+    output.write('\n')
+PY
+chmod 0600 "$DEPLOY_ROOT/config/operator.planning-canary.json"
+```
+
+The override exposes only that repository as a read-only bind mount. The graph canary allowlist permits graph create/read, proposal/apply, list, and capability reads. It checks identical request/proposal replay, an old-revision rejection, dependency context, native-local target preference, zero claims/inference/workers/CAS, and the bundled UI resource. The target is planning metadata only; the canary never starts it.
+
+```sh
+podman compose --env-file "$DEPLOY_ROOT/.env" \
+  --file plugins/luna-factory/container/compose.yaml \
+  --file plugins/luna-factory/container/compose.planning-canary.yaml \
+  config --quiet
+podman compose --env-file "$DEPLOY_ROOT/.env" \
+  --file plugins/luna-factory/container/compose.yaml \
+  --file plugins/luna-factory/container/compose.planning-canary.yaml \
+  up --detach --force-recreate --wait --wait-timeout 60
+python3 plugins/luna-factory/container/planning_graph_canary.py \
+  --mode prepare --receipt "$DEPLOY_ROOT/planning-graph-receipt.json"
+```
+
+After `prepare`, the disposable ledger contains one `planning_only` graph record and no claims. Recreate only this service with the same two Compose files, then run the canary with `--mode verify` and the same receipt path. It requires the same graph ID, revision, node dependency, and target preference after recreation.
 
 Check SQLite through a read-only connection after the canary.
 

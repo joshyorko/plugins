@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stateless MCP initialize probe; it performs no Factory tool calls."""
+"""Bounded MCP initialize health probe; it performs no Factory tool calls."""
 
 import json
 import os

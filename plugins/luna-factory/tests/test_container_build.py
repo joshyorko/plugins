@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import socket
 import shutil
+import sys
 from pathlib import Path
 
 
@@ -20,6 +21,10 @@ INIT_SPEC.loader.exec_module(INIT)
 CANARY_SPEC = importlib.util.spec_from_file_location("luna_factory_container_canary", CONTAINER_DIR / "acceptance_canary.py")
 CANARY = importlib.util.module_from_spec(CANARY_SPEC)
 CANARY_SPEC.loader.exec_module(CANARY)
+sys.modules["acceptance_canary"] = CANARY
+GRAPH_CANARY_SPEC = importlib.util.spec_from_file_location("luna_factory_planning_graph_canary", CONTAINER_DIR / "planning_graph_canary.py")
+GRAPH_CANARY = importlib.util.module_from_spec(GRAPH_CANARY_SPEC)
+GRAPH_CANARY_SPEC.loader.exec_module(GRAPH_CANARY)
 
 
 def provenance():
@@ -150,6 +155,19 @@ class ContainerBuildTests(unittest.TestCase):
         for name in ("start_factory", "resume_factory_run", "cancel_factory_run", "inspect_factory_cas"):
             with self.assertRaisesRegex(RuntimeError, "policy rejected"):
                 client.call(name)
+
+    def test_planning_graph_canary_uses_only_planning_tools(self):
+        self.assertTrue({"create_factory_graph", "get_factory_graph", "propose_factory_change", "apply_factory_change"}.issubset(CANARY.ALLOWED_TOOL_CALLS))
+        client = CANARY.McpClient("http://127.0.0.1:1/mcp")
+        for name in ("start_factory", "resume_factory_run", "cancel_factory_run", "steer_factory_run", "inspect_factory_cas"):
+            with self.assertRaisesRegex(RuntimeError, "policy rejected"):
+                client.call(name)
+
+    def test_planning_canary_compose_mounts_only_disposable_repository_read_only(self):
+        compose = (CONTAINER_DIR / "compose.planning-canary.yaml").read_text()
+        self.assertIn("LUNA_CANARY_REPO_DIR", compose)
+        self.assertIn("target: /opt/luna-canary/repo", compose)
+        self.assertIn("read_only: true", compose)
 
 
 if __name__ == "__main__":

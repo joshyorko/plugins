@@ -24,6 +24,10 @@ ALLOWED_TOOL_CALLS = {
     "list_factory_runs",
     "read_factory_settings",
     "update_factory_settings",
+    "create_factory_graph",
+    "get_factory_graph",
+    "propose_factory_change",
+    "apply_factory_change",
 }
 FORBIDDEN_TOOL_CALLS = {
     "start_factory",
