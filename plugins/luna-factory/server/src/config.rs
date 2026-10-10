@@ -26,6 +26,9 @@ pub struct Config {
     pub discovery_roots: BTreeMap<String, Repository>,
     pub profiles: BTreeMap<String, Profile>,
     pub limits: Limits,
+    /// Optional read-only GitHub App. Never serialized or projected to tools.
+    #[serde(default, skip_serializing)]
+    pub github_app: Option<crate::github::GithubAppConfig>,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -99,6 +102,9 @@ impl Config {
                 ensure!(valid_published_origin(origin), "invalid_published_origin");
             }
             None => ensure!(self.listen.ip().is_loopback(), "loopback_only"),
+        }
+        if let Some(github_app) = &self.github_app {
+            github_app.validate()?;
         }
         ensure!(self.cas_targets.len() <= 8, "too_many_cas_targets");
         for (alias, target) in &self.cas_targets {
