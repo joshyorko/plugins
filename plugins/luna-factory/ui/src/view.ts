@@ -31,7 +31,8 @@ const reasonCopy = (reason: string | null): string => {
     diagnosis_required: "Two attempts made no progress; a diagnosis is required.", read_only_native_reconciliation: "Observe existing native work without starting or stopping it.",
     inspect_native_evidence: "Inspect retained native evidence.", native_approval_requires_native_ui: "This approval can only be answered in native Codex.",
   };
-  return messages[reason] ?? "The server has not established a safe action.";
+  // Unmapped codes are never shown raw; prose reasons from the server are already plain language.
+  return messages[reason] ?? (/\s/.test(reason) ? `${reason.replace(/[.!?]?$/, ".")}` : "The server reported this action without further detail.");
 };
 const deliverableLabel = (kind: "local_candidate" | "push" | "pr_ready"): string => ({ local_candidate: "Local candidate", push: "Pushed branch", pr_ready: "PR ready" })[kind];
 const disabled = (value: boolean): string => value ? " disabled" : "";
@@ -110,14 +111,14 @@ function findElementById(root: HTMLElement, id: string): HTMLElement | undefined
 /** A tiny wave thumbnail: one dot per persisted task, by wave and state. */
 function miniMap(run: RunView): string {
   const tasks = run.control?.tasks ?? [];
-  if (!tasks.length) return "";
+  if (tasks.length < 2) return "";
   const layout = layoutWaves(tasks);
   const byId = new Map(tasks.map(task => [task.id, task]));
-  const columns = layout.waves.length;
+  const columns = Math.min(8, layout.waves.length);
   const rows = Math.min(6, Math.max(...layout.waves.map(wave => wave.length)));
-  const width = Math.max(28, columns * 16 + 8);
-  const height = rows * 10 + 8;
-  const dots = layout.waves.flatMap((wave, x) => wave.slice(0, 6).map((id, y) => `<circle cx="${8 + x * 16}" cy="${8 + y * 10}" r="3.4" class="mini tone-${taskTone(byId.get(id)?.state ?? "")}"/>`)).join("");
+  const width = Math.max(28, columns * 12 + 6);
+  const height = rows * 9 + 6;
+  const dots = layout.waves.slice(0, 8).flatMap((wave, x) => wave.slice(0, 6).map((id, y) => `<circle cx="${6 + x * 12}" cy="${6 + y * 9}" r="3" class="mini tone-${taskTone(byId.get(id)?.state ?? "")}"/>`)).join("");
   return `<svg class="mini-map" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-hidden="true" focusable="false">${dots}</svg>`;
 }
 
@@ -129,7 +130,8 @@ function renderHome(state: ViewState, canStart: boolean, options: WorkbenchOptio
     { key: "history", title: "History", tiers: ["finished", "stopped", "unverified"], empty: "" },
   ];
   const counts = new Map(groups.map(group => [group.key, state.runs.filter(run => group.tiers.includes(runTier(run))).length]));
-  const summary = groups.filter(group => counts.get(group.key)).map(group => `${counts.get(group.key)} ${group.key === "needs" ? "need you" : group.title.toLowerCase()}`).join(" · ");
+  const short: Record<string, [string, string]> = { needs: ["needs you", "need you"], live: ["in progress", "in progress"], planned: ["planned", "planned"], history: ["in history", "in history"] };
+  const summary = groups.filter(group => counts.get(group.key)).map(group => { const count = counts.get(group.key) ?? 0; return `${count} ${short[group.key]![count === 1 ? 0 : 1]}`; }).join(" · ");
   const row = (run: RunView): string => {
     const tier = runTier(run);
     const changes = options.since?.changes(run);
@@ -167,7 +169,7 @@ function renderCampaign(run: RunView, state: ViewState, options: WorkbenchOption
       <p class="statusline">${statusMark(tier, statusLabel(run))}${proofLine(run)}<span class="fresh">${escape(freshness(run.updated_at, options.now))}</span></p>
       <div class="story">${changes?.lines.length ? `<p class="story-kicker">Since you opened Luna Factory at ${escape(clock(changes.since))}</p><ul>${changes.lines.map(line => `<li>${escape(line)}</li>`).join("")}</ul>` : `<p class="story-now">${escape(attention ? run.delta || "No new change was reported." : nowSentence(run))}</p>${baseline ? `<p class="story-kicker">No new server changes since ${escape(clock(baseline))}.</p>` : ""}`}${run.remaining_gap && tier !== "planned" ? `<p class="story-gap"><span>Still needed</span>${escape(run.remaining_gap)}</p>` : ""}</div>
     </section>
-    <section class="decision-panel tier-${attention ? "needs" : tier}${attention ? " needs-you" : ""}" aria-labelledby="decision-title"><div class="eyebrow">${escape(eyebrow)}</div><h2 id="decision-title">${escape(headline)}</h2><p id="action-reason">${escape(reasonCopy(presentation ? action.reason : null))}${presentation ? " The server rechecks this at the action boundary." : " Refresh to load the server's action and proof view."}</p><div class="run-controls">${actionButton(action, true, busy)}${secondary.length ? `<details id="other-actions" class="other-actions"><summary>Other available actions</summary><div class="run-controls">${secondary.map(item => actionButton(item, false, busy)).join("")}</div></details>` : ""}</div></section>
+    <section class="decision-panel tier-${attention ? "needs" : tier}${attention ? " needs-you" : " compact"}" aria-labelledby="decision-title"><div class="eyebrow">${escape(eyebrow)}</div><h2 id="decision-title">${escape(headline)}</h2><p id="action-reason">${escape(reasonCopy(presentation ? action.reason : null))}${presentation ? " The server rechecks this at the action boundary." : " Refresh to load the server's action and proof view."}</p><div class="run-controls">${actionButton(action, true, busy)}${secondary.length ? `<details id="other-actions" class="other-actions"><summary>Other available actions</summary><div class="run-controls">${secondary.map(item => actionButton(item, false, busy)).join("")}</div></details>` : ""}</div></section>
     ${renderProposalReview(state)}
     ${renderMission(state, run, task => renderFollowUpActions(run, options, task), options.canvasWidth)}
     ${renderEvidence(run, state)}`;

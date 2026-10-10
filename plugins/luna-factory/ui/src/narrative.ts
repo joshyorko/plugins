@@ -31,15 +31,18 @@ export function nowSentence(run: RunView): string {
   return run.blocker || run.delta || run.remaining_gap || "No change has been reported yet.";
 }
 
-export function clock(seconds: number): string {
-  return new Date(seconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+/** Time of day for today; otherwise the date too, so old events never read as recent. */
+export function clock(seconds: number, now = Date.now() / 1000): string {
+  const date = new Date(seconds * 1000);
+  const sameDay = date.toDateString() === new Date(now * 1000).toDateString();
+  return sameDay ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 export function freshness(seconds: number | undefined, now = Date.now() / 1000): string {
   if (seconds === undefined) return "Update time not reported";
   const age = Math.max(0, Math.round(now - seconds));
   if (age < 60) return "Updated just now";
   if (age < 3600) return `Updated ${Math.round(age / 60)} min ago`;
-  return `Updated ${clock(seconds)}`;
+  return `Updated ${clock(seconds, now)}`;
 }
 
 interface Baseline { at: number; updated: number }
@@ -59,8 +62,8 @@ export class SinceTracker {
   changes(run: RunView): { since: number; lines: string[] } | null {
     const base = this.seen.get(run.id);
     if (!base) return null;
-    // Server time when first seen; receipts recorded after it are new to this session.
-    const threshold = base.updated || base.at;
+    // Receipts can be newer than updated_at, so only events after this session began count as new.
+    const threshold = Math.max(base.updated, base.at);
     const receipts = run.receipts.filter(receipt => receipt.created_at > threshold).sort((a, b) => b.created_at - a.created_at).slice(0, 3).map(receipt => `${clock(receipt.created_at)} · ${receipt.summary}`);
     const updated = (run.updated_at ?? 0) > base.updated;
     if (!receipts.length && !updated) return null;

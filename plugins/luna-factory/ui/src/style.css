@@ -156,6 +156,7 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .row-now { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .row-side { display: grid; justify-items: end; gap: 4px; }
 .row-fresh { color: var(--faint); font-size: 11px; }
+.mini-map { max-width: 100%; height: auto; }
 .mini-map .mini { fill: currentColor; }
 .mini-map .mini.tone-candidate, .mini-map .mini.tone-unknown { fill: none; stroke: var(--faint); stroke-width: 1.2; }
 .empty { text-align: center; padding: 56px 18px; color: var(--muted); }
@@ -182,6 +183,11 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .decision-panel p { color: var(--muted); font-size: 13px; margin: 0; }
 .decision-panel.needs-you { border-color: color-mix(in srgb, var(--needs) 45%, transparent); background: var(--needs-surface); }
 .decision-panel.needs-you .eyebrow { color: var(--needs); }
+.decision-panel.compact { grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; align-items: center; padding: 10px 14px; }
+.decision-panel.compact .eyebrow, .decision-panel.compact h2, .decision-panel.compact p { grid-column: 1; }
+.decision-panel.compact h2 { font-size: 14px; }
+.decision-panel.compact p { font-size: 12px; }
+.decision-panel.compact .run-controls { grid-column: 2; grid-row: 1 / span 3; margin: 0; justify-content: flex-end; }
 .run-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
 .other-actions summary { color: var(--muted); font-size: 12px; cursor: pointer; padding: 6px 4px; }
 .other-actions .run-controls { margin-top: 4px; }
@@ -203,8 +209,8 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .segmented button { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--muted); padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 560; }
 .segmented button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
 .mission-main > .notice { margin: 10px 12px 0; }
-.crew { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-.crew.empty p { margin: 0; color: var(--muted); font-size: 13px; }
+.crew { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.crew.empty p { margin: 0; color: var(--muted); font-size: 13px; text-align: left; }
 .orbit .orbit-path { fill: none; stroke: var(--line-strong); stroke-dasharray: 2 3; }
 .orbit .orbit-moon { fill: var(--luna); }
 .orbit .orbit-moon.absent { fill: none; stroke: var(--faint); stroke-dasharray: 2 2; }
@@ -393,7 +399,9 @@ h1, h2, h3, h4, p { margin-top: 0; }
 @container (max-width: 640px) {
   .campaign-head h1 { font-size: 21px; }
   .campaign-row { grid-template-columns: 44px minmax(0, 1fr); }
-  .row-side { grid-column: 2; justify-items: start; grid-auto-flow: column; justify-content: start; gap: 10px; flex-wrap: wrap; }
+  .row-side { grid-column: 2; display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 4px 12px; }
+  .decision-panel.compact { grid-template-columns: minmax(0, 1fr); }
+  .decision-panel.compact .run-controls { grid-column: 1; grid-row: auto; justify-content: flex-start; margin-top: 6px; }
   .map-scroll { overflow: visible; background-image: none; }
   .map-canvas { width: auto; height: auto; padding: 8px 12px 12px; }
   .map-edges { display: none; }

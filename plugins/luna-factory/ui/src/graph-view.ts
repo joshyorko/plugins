@@ -51,7 +51,7 @@ function renderCrew(agents: Agent[], state: ViewState, run: RunView): string {
     const why = run.planning_only ? "No agents yet. Execution hasn't started on this plan." : "The server reports no agent identities for this run.";
     return `<div class="crew empty" aria-label="Agents">${orbit([])}<p>${esc(why)}</p></div>`;
   }
-  return `<div class="crew" aria-label="Agents">${orbit(agents)}<ul class="crew-list">${agents.map(agent => `<li><button type="button" class="crew-agent${state.selectedAgent === agent.thread ? " selected" : ""}" id="agent-${esc(agent.ordinal)}" data-action="select-agent" data-thread-id="${esc(agent.thread)}" aria-pressed="${state.selectedAgent === agent.thread}">${agentToken(agent, 22)}<span><strong>${esc(agent.label)}</strong><small>${agent.role === "coordinator" ? "Coordinator" : "Worker"} · ${esc(livenessLabel[agent.liveness])}${agent.taskId ? ` · ${esc(taskTitle(state, run, agent.taskId))}` : ""}</small></span></button></li>`).join("")}</ul></div>`;
+  return `<div class="crew" aria-label="Agents">${orbit(agents)}<ul class="crew-list">${agents.map(agent => `<li><button type="button" class="crew-agent${state.selectedAgent === agent.thread ? " selected" : ""}" id="agent-${esc(agent.ordinal)}" data-action="select-agent" data-thread-id="${esc(agent.thread)}" aria-pressed="${state.selectedAgent === agent.thread}">${agentToken(agent, 22)}<span><strong>${esc(agent.label)}</strong><small>${agent.role === "coordinator" ? "Coordinator" : "Worker"} · ${esc(livenessLabel[agent.liveness])}${agent.taskId ? ` · ${esc(clip(taskTitle(state, run, agent.taskId), 36))}` : ""}</small></span></button></li>`).join("")}</ul></div>`;
 }
 
 /** A small orbit diagram: one satellite per reported worker. Liveness shows in the rim only. */
@@ -65,6 +65,7 @@ function orbit(agents: Agent[]): string {
   return `<svg class="orbit" width="56" height="56" viewBox="0 0 56 56" aria-hidden="true" focusable="false"><circle cx="28" cy="28" r="21" class="orbit-path"/><path d="M31.5 17.5a11 11 0 1 0 6.1 17.6 8.8 8.8 0 0 1-6.1-17.6Z" class="orbit-moon${coordinator ? ` live-${coordinator.liveness}` : " absent"}"/>${satellites}</svg>`;
 }
 
+const clip = (value: string, length: number) => value.length > length ? `${value.slice(0, length - 1)}…` : value;
 function taskTitle(state: ViewState, run: RunView, id: string): string {
   return missionTasks(state, run).tasks.find(task => task.id === id)?.title ?? id;
 }
@@ -94,7 +95,7 @@ function renderMap(tasks: MapTask[], layout: WaveLayout, agents: Agent[], state:
       const missing = layout.missing.get(id)?.length ?? 0;
       return `<li><button type="button" id="node-${esc(id)}" class="map-node tone-${tone}${id === selected ? " selected" : ""}${chain.has(id) ? " chain" : ""}${layout.prerequisitesMet.has(id) ? " met" : ""}${selected && !neighbors.has(id) ? " dim" : ""}" style="--x:${position.x}px;--y:${position.y + 24}px" data-action="graph-node" data-node-id="${esc(id)}" aria-pressed="${id === selected}" aria-describedby="node-state-${esc(id)}">
         <span class="node-top">${taskGlyph(tone)}<span class="node-title">${esc(task.title || id)}</span></span>
-        <span class="node-meta" id="node-state-${esc(id)}">${esc(taskToneLabel[tone])}${task.source ? ` · ${esc(sourceLabel(task.source))}` : ""}${missing ? ` · ${missing} unknown prerequisite${missing === 1 ? "" : "s"}` : ""}</span>
+        <span class="node-meta" id="node-state-${esc(id)}">${id === "objective" ? "Objective · " : ""}${esc(taskToneLabel[tone])}${missing ? ` · ${missing} unknown prerequisite${missing === 1 ? "" : "s"}` : ""}</span>
         <span class="node-after">${prerequisites.length ? `After ${esc(prerequisites.join(", "))}` : "No prerequisites"}</span>
         ${owner ? `<span class="dock" title="${esc(owner.label)} · ${esc(livenessLabel[owner.liveness])}">${agentToken(owner, 20)}<span class="sr-only">Owned by ${esc(owner.label)}</span></span>` : ""}
       </button></li>`;
@@ -106,8 +107,10 @@ function renderMap(tasks: MapTask[], layout: WaveLayout, agents: Agent[], state:
   </div></div>${layout.cyclic ? '<p class="notice">The server reported a dependency loop. Waves are approximate until it is resolved.</p>' : ""}`;
 }
 
+const providers: Record<string, string> = { github: "GitHub", local: "Local", fixture: "Fixture" };
+/** Provider only; opaque item identities stay in the inspector's source detail. */
 export function sourceLabel(source: NonNullable<MapTask["source"]>): string {
-  return /^\d+$/.test(source.item_id) ? `${source.provider} #${source.item_id}` : `${source.provider} ${source.item_id}`;
+  return providers[source.provider] ?? source.provider;
 }
 
 function renderInspector(state: ViewState, run: RunView, tasks: MapTask[], graph: FactoryGraph | null, layout: WaveLayout, agents: Agent[], followUps: (task?: { id: string; title: string }) => string): string {
@@ -131,7 +134,7 @@ function renderInspector(state: ViewState, run: RunView, tasks: MapTask[], graph
     <div class="eyebrow">Task · wave ${wave}${selected.source ? ` · ${esc(sourceLabel(selected.source))}` : ""}</div>
     <h3>${esc(selected.title || selected.id)}</h3>
     <p class="inspector-state">${taskGlyph(tone)}<span>${esc(taskToneLabel[tone])}${selected.admission ? ` · admission ${esc(selected.admission.toLowerCase())}` : ""}</span></p>
-    <dl class="route-list"><dt>Owner</dt><dd>${owner ? `${esc(owner.label)} · ${esc(livenessLabel[owner.liveness])}` : selected.owner_thread ? "An agent the server no longer lists" : "No agent assigned"}</dd><dt>Reason</dt><dd>${esc(reasonText(selected.reason))}</dd>${"target_preference" in selected ? `<dt>Planning note</dt><dd>${esc(selected.target_preference ?? "No target preference")}</dd>` : ""}</dl>
+    <dl class="route-list"><dt>Owner</dt><dd>${owner ? `${esc(owner.label)} · ${esc(livenessLabel[owner.liveness])}` : selected.owner_thread ? "An agent the server no longer lists" : "No agent assigned"}</dd><dt>Reason</dt><dd>${esc(reasonText(selected.reason))}</dd>${selected.source ? `<dt>Source</dt><dd>${esc(sourceLabel(selected.source))}<small class="mono">${esc(selected.source.item_id)}</small></dd>` : ""}${"target_preference" in selected ? `<dt>Planning note</dt><dd>${esc(selected.target_preference ?? "No target preference")}</dd>` : ""}</dl>
     <h4>Waits on</h4>${list(selected.dependencies, "No prerequisites.")}
     <h4>Unblocks</h4>${list(unblocks, "Nothing in this plan waits on it.")}
     <h4>Proof</h4>${proof ? `<ul class="graph-proof">${proof}</ul>` : '<p class="small muted">No criterion bindings.</p>'}
