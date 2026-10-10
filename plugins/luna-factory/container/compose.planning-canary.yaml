@@ -1,0 +1,16 @@
+services:
+  luna-factory:
+    command:
+      - serve
+      - --config
+      - /run/luna-config/operator.planning-canary.json
+      - --ui
+      - /opt/luna-factory/ui/dist/index.html
+    volumes:
+      - type: bind
+        source: ${LUNA_CANARY_REPO_DIR:?Set LUNA_CANARY_REPO_DIR to the disposable canary repository}
+        target: /opt/luna-canary/repo
+        read_only: true
+        bind:
+          create_host_path: false
+          selinux: Z

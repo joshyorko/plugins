@@ -14,7 +14,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { HostBridge } from "../src/bridge";
 import { WorkbenchController } from "../src/controller";
-import { graphEnvelopeSchema } from "../src/domain";
+import { classifyRun, graphEnvelopeSchema } from "../src/domain";
 import { renderWorkbench } from "../src/view";
 
 it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through model tools and the workbench with zero native dispatch", async () => {
@@ -29,10 +29,11 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
   let daemon: ChildProcess | undefined;
   const app = new App({ name: "Factory integration", version: "test" }, {}, { autoResize: false });
   const host = new AppBridge(null, { name: "Synthetic host, not ChatGPT acceptance", version: "test" }, {
-    serverTools: {}, updateModelContext: { structuredContent: {} }, experimental: { "openai/modelContext": {} },
+    serverTools: {}, updateModelContext: { structuredContent: {} }, message: { text: {} }, experimental: { "openai/modelContext": {}, "openai/message": {} },
   });
   const contexts: Record<string, unknown>[] = [];
   const calls: string[] = [];
+  const messages: unknown[] = [];
   const root = document.createElement("div"); document.body.append(root);
   try {
     const source = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
@@ -55,7 +56,7 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
       const response = await fetch(endpoint, { method: "POST", headers: {
         "content-type": "application/json", accept: "application/json, text/event-stream",
         "mcp-protocol-version": "2026-07-28", "mcp-method": method,
-        ...(typeof params.name === "string" ? { "mcp-name": params.name } : {}),
+        ...(typeof params.name === "string" ? { "mcp-name": params.name } : typeof params.uri === "string" ? { "mcp-name": params.uri } : {}),
       }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: { ...params, _meta: {
         "io.modelcontextprotocol/protocolVersion": "2026-07-28",
         "io.modelcontextprotocol/clientInfo": { name: "graph-e2e", version: "test" },
@@ -94,6 +95,15 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
       finish: "local_candidate", profile: "default", capacity: 1, repair_attempts: 0, wall_seconds: 300, idempotency_key: "real-issue-plan",
     }));
     const runId = created.graph.run_id;
+    const noop = await call("propose_factory_change", { run_id: runId, expected_revision: created.graph.revision, idempotency_key: "empty-prerequisites", change: { kind: "set_dependencies", node_id: "objective", dependencies: [] } });
+    expect(noop.isError).toBe(true);
+    expect(JSON.stringify(noop.content)).toContain("graph_change_noop");
+    expect(graphEnvelopeSchema.parse(await model("get_factory_graph", { run_id: runId })).graph).toEqual(created.graph);
+    const resources = await rpc("resources/list", {}) as { resources: { uri: string; mimeType?: string }[] };
+    const uiResource = resources.resources.find(resource => resource.mimeType === "text/html;profile=mcp-app");
+    if (!uiResource) throw new Error("Bundled UI resource missing");
+    const resource = await rpc("resources/read", { uri: uiResource.uri }) as { contents: { text?: string }[] };
+    expect(resource.contents[0]?.text).toContain("0.2.1");
     const proposal = graphEnvelopeSchema.parse(await model("propose_factory_change", {
       run_id: runId, expected_revision: created.graph.revision, idempotency_key: "import-issue-61", change: { kind: "import_candidates", nodes: [{
         id: "issue-61", title: issue.title, criterion_ids: ["A1"], dependencies: [],
@@ -113,7 +123,8 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
       contexts.push(params.structuredContent ?? {});
       return { _meta: { "openai/modelContext": { updateId: `e2e-${contexts.length}` } } };
     };
-    const bridge = new HostBridge(app, (id, node) => { void controller.restoreContext(id, node); });
+    host.onmessage = async params => { messages.push(params); return {}; };
+    const bridge = new HostBridge(app, (id, node, revision) => { void controller.restoreContext(id, node, revision); });
     const controller = new WorkbenchController(bridge, () => renderWorkbench(root, controller.state, null, false));
     app.ontoolresult = result => controller.receiveInitial(result);
     const [appTransport, hostTransport] = InMemoryTransport.createLinkedPair();
@@ -122,6 +133,8 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
     await host.sendToolResult(await call("open_factory", {}));
     await controller.select(runId); await controller.loadGraph();
     expect(controller.state.error).toBeNull();
+    expect(controller.selected && classifyRun(controller.selected)).toBe("recent");
+    expect(root.querySelector(".decision-panel .eyebrow")?.textContent).toBe("Plan navigation");
     for (const title of titleCases) {
       expect(controller.state.graph?.nodes.find(node => node.id === title.id)?.title).toBe(title.public);
       expect(controller.selected?.control?.tasks.find(node => node.id === title.id)?.title).toBe(title.public);
@@ -135,7 +148,7 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
     expect(root.textContent).toContain(issue.title);
     const before = controller.state.graph?.revision;
     expect(await controller.proposeChange({ kind: "set_target", node_id: "issue-61", target_id: "native-local" }), controller.state.error ?? "proposal").toBe(true);
-    expect(await controller.applyChange(), controller.state.error ?? "apply").toBe(true);
+    expect(await controller.applyChange(true), controller.state.error ?? "apply").toBe(true);
     let fromModel = graphEnvelopeSchema.parse(await model("get_factory_graph", { run_id: runId })).graph;
     expect(fromModel.revision).toBeGreaterThan(before ?? 0);
     expect(controller.state.graph).toEqual(fromModel);
@@ -156,11 +169,33 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
     fromModel = graphEnvelopeSchema.parse(await model("apply_factory_change", {
       run_id: runId, expected_revision: modelChange.graph.revision, change_id: modelChange.proposal?.id,
     })).graph;
-    await controller.refresh(); await controller.loadGraph();
+    await controller.refresh();
+    expect(() => controller.currentFollowUpPrompt("choose", "issue-61")).toThrow("Refresh");
+    await controller.loadGraph();
     expect(controller.state.graph).toEqual(fromModel);
     expect(controller.state.graph?.nodes.find(node => node.id === "issue-61")?.dependencies).toEqual(["objective"]);
     expect(controller.selected?.control?.revision).toBe(fromModel.revision);
     await vi.waitFor(() => expect(contexts.at(-1)).toMatchObject({ node_id: "issue-61", graph_revision: fromModel.revision }));
+    expect(messages).toEqual([]);
+    await bridge.sendFollowUp(controller.currentFollowUpPrompt("choose", "issue-61"));
+    await bridge.sendFollowUp(controller.currentFollowUpPrompt("summary"));
+    expect(messages).toHaveLength(2);
+    expect(JSON.stringify(messages[0])).toContain(`Revision: ${fromModel.revision}`);
+    expect(JSON.stringify(messages[0])).toContain("Task ID: issue-61");
+    // Stop/recreate only this disposable fixture daemon; preserve the private SQLite + WAL state.
+    daemon.kill("SIGTERM"); await once(daemon, "exit");
+    controller.setDisconnected("Disposable fixture daemon stopped");
+    expect(await controller.proposeChange({ kind: "set_dependencies", node_id: "objective", dependencies: [] })).toBe(false);
+    await vi.waitFor(() => expect(contexts.at(-1)).toEqual({}));
+    daemon = spawn(resolve(process.env.LUNA_FACTORY_BINARY ?? "../server/target/debug/luna-factoryd"), ["serve", "--config", config, "--ui", resolve("dist/index.html")], { stdio: ["ignore", "pipe", "pipe"] });
+    await vi.waitFor(async () => expect(await rpc("server/discover", {})).toBeTruthy(), { timeout: 10_000, interval: 50 });
+    controller.setConnected(true);
+    expect(() => controller.currentFollowUpPrompt("summary")).toThrow("Refresh");
+    await controller.refresh(); await controller.loadGraph();
+    expect(controller.state.graph).toEqual(fromModel);
+    expect(controller.state.selectedNodeId).toBe("issue-61");
+    expect(controller.selected?.control?.revision).toBe(fromModel.revision);
+    expect(controller.currentFollowUpPrompt("choose", "issue-61")).toContain(`Revision: ${fromModel.revision}`);
     expect(calls.some(name => ["start_factory", "resume_factory_run", "steer_factory_run", "cancel_factory_run"].includes(name))).toBe(false);
     if (process.env.LUNA_GRAPH_EVIDENCE) await writeFile(process.env.LUNA_GRAPH_EVIDENCE, JSON.stringify({
       proof: "actual Rust/SQLite/HTTP + production UI controller + synthetic AppBridge; not live ChatGPT acceptance",

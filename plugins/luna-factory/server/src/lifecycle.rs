@@ -5,7 +5,12 @@ use crate::{
 };
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::{Mutex, broadcast};
 
 /// Missing, unloaded, errored or active threads are not stopped-execution proof.
@@ -308,7 +313,12 @@ pub struct Factory {
     // Mutations serialize; status reads use only SQLite and never this lock/native client.
     mutation: Arc<Mutex<()>>,
     monitors: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
+    pending_repository_forms: Arc<Mutex<HashMap<String, PendingRepositoryForm>>>,
     _lease: Arc<ServiceLease>,
+}
+struct PendingRepositoryForm {
+    candidate_ids: BTreeSet<String>,
+    expires_at: Instant,
 }
 impl Factory {
     /// Opt-in read-only CAS observation. Receipt identity is never execution proof.
@@ -390,8 +400,85 @@ impl Factory {
             clients: Arc::new(Mutex::new(HashMap::new())),
             mutation: Arc::new(Mutex::new(())),
             monitors: Arc::new(Mutex::new(HashMap::new())),
+            pending_repository_forms: Arc::new(Mutex::new(HashMap::new())),
             _lease: Arc::new(lease),
         })
+    }
+    pub async fn issue_repository_form_state(&self, candidates: &Value) -> Result<String> {
+        let values = candidates
+            .as_array()
+            .context("repository_candidates_unavailable")?;
+        ensure!(
+            !values.is_empty() && values.len() <= 20,
+            "repository_form_unavailable"
+        );
+        let candidate_ids = values
+            .iter()
+            .map(|candidate| {
+                candidate["id"]
+                    .as_str()
+                    .context("repository_candidate_invalid")
+                    .map(str::to_owned)
+            })
+            .collect::<Result<BTreeSet<_>>>()?;
+        ensure!(
+            candidate_ids.len() == values.len(),
+            "repository_candidate_invalid"
+        );
+        let state = crate::extensions::new_repository_form_state();
+        let now = Instant::now();
+        let mut pending = self.pending_repository_forms.lock().await;
+        pending.retain(|_, request| request.expires_at > now);
+        if pending.len() >= 128
+            && let Some(oldest) = pending
+                .iter()
+                .min_by_key(|(_, request)| request.expires_at)
+                .map(|(state, _)| state.clone())
+        {
+            pending.remove(&oldest);
+        }
+        pending.insert(
+            state.clone(),
+            PendingRepositoryForm {
+                candidate_ids,
+                expires_at: now + Duration::from_secs(300),
+            },
+        );
+        Ok(state)
+    }
+    pub async fn consume_repository_form_state(
+        &self,
+        state: &str,
+        current_candidates: &Value,
+    ) -> Option<Value> {
+        let mut pending = self.pending_repository_forms.lock().await;
+        let request = pending.remove(state)?;
+        if request.expires_at <= Instant::now() {
+            return None;
+        }
+        let candidates = current_candidates.as_array()?;
+        let current_ids = candidates
+            .iter()
+            .filter_map(|candidate| candidate["id"].as_str())
+            .collect::<BTreeSet<_>>();
+        if !request
+            .candidate_ids
+            .iter()
+            .all(|id| current_ids.contains(id.as_str()))
+        {
+            return None;
+        }
+        Some(Value::Array(
+            candidates
+                .iter()
+                .filter(|candidate| {
+                    request
+                        .candidate_ids
+                        .contains(candidate["id"].as_str().unwrap_or_default())
+                })
+                .cloned()
+                .collect(),
+        ))
     }
     /// Creates only ledger metadata; never connects to native Codex or acquires a claim.
     pub async fn create_graph(&self, request: StartRequest) -> Result<Value> {
@@ -497,6 +584,7 @@ impl Factory {
             request.expected_revision == control.revision,
             "stale_control_revision"
         );
+        crate::graph::ensure_meaningful(control, &request.change)?;
         let proposal = crate::graph::Proposal {
             id: uuid::Uuid::new_v4().to_string(),
             idempotency_key: request.idempotency_key,
@@ -545,6 +633,16 @@ impl Factory {
             );
             return Ok(crate::graph::envelope(&run, Some(&proposal)));
         }
+        let control = run.control.as_ref().context("control_missing")?;
+        ensure!(
+            request.expected_revision == control.revision,
+            "stale_control_revision"
+        );
+        ensure!(
+            proposal.base_revision.checked_add(1) == Some(control.revision),
+            "stale_graph_proposal"
+        );
+        crate::graph::ensure_meaningful(control, &proposal.change)?;
         let event = crate::control::EventEnvelope {
             id: format!("graph-apply:{}", proposal.id),
             expected_revision: request.expected_revision,
@@ -806,6 +904,7 @@ impl Factory {
             "repository_onboarding":{"enabled":!self.config.discovery_roots.is_empty(),"approval":"local_operator"},
             "profiles":self.config.profiles.iter().map(|(alias,profile)|json!({"alias":alias,"effort":profile.effort,"supported":profile.codex_profile.is_none()})).collect::<Vec<_>>(),
             "limits":self.config.limits,"observed_routing":"unverified","status_inference_calls":0,
+            "execution":{"eligible":false,"reason":"authentication_entitlement_and_adapter_qualification_unverified"},
             "routing_telemetry":{"model":"turn-bound model/rerouted mismatch notifications only","effort":"unavailable","provider":"configuration only; downstream execution and billing unverified"},
             "control_policy":{"wire_schema":1,"sqlite_schema":2,"managed_admission":"structural","native_child_policy":"cooperative_unverified","semantic_acceptance":"owner_judgment","independent_checks":["file_sha256"],"native_output_completeness":"unverified","native_environment":"unverified","delivery_certification":"unsupported"},
             "live_proof":"Live owner/worker, native ChatGPT and tunnel acceptance must be recorded on the operator runtime."}),

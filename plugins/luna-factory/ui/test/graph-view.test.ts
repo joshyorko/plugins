@@ -20,7 +20,7 @@ describe("interactive task graph", () => {
     expect(root.querySelector('[aria-label="Selected task inspector"]')?.textContent).toContain("Complete the objective");
     expect(root.querySelector('label[for="dependencies"]')).not.toBeNull();
     expect(root.querySelector<HTMLButtonElement>('button[value="dependencies"]')?.disabled).toBe(false);
-    expect(root.querySelector<HTMLOptionElement>('option[value="codex-cloud"]')?.disabled).toBe(true);
+    expect(root.querySelector('option[value="codex-cloud"]')).toBeNull();
     expect(root.textContent).toContain("does not authorize execution or verify subscription access");
   });
   it("keeps the view but disables proposal/apply controls when stale", async () => {
@@ -44,6 +44,8 @@ describe("interactive task graph", () => {
     controller.state.proposal = { id: "p", idempotency_key: "k", fingerprint: "hash", actor: "local_operator", base_revision: 6, subject: "subject-123", status: "proposed", applied_revision: null, change: { kind: "set_target", node_id: "task-owner", target_id: "native-local" } };
     render();
     expect(root.querySelector('[aria-label="Review graph change"]')?.textContent).toContain("task-owner: prefer native-local");
+    expect(root.querySelector<HTMLButtonElement>('[data-action="apply-change"]')?.disabled).toBe(true);
+    root.querySelector<HTMLInputElement>("#confirm-graph-change")!.checked = true; render();
     expect(root.querySelector<HTMLButtonElement>('[data-action="apply-change"]')?.disabled).toBe(false);
     controller.state.graph!.revision = 8; render();
     expect(root.querySelector<HTMLButtonElement>('[data-action="apply-change"]')?.disabled).toBe(true);

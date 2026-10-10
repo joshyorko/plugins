@@ -43,9 +43,9 @@ pub fn project(run: &Run, control: &Control, timestamp: u64) -> Value {
         );
         return json!({"revision":control.revision,"primary_action":refresh,"actions":[refresh],
             "criteria":{"proven":0,"failed":0,"unproved":control.criteria.len(),"mandatory":control.criteria.len()},
-            "result":{"kind":"unverified","label":"Planning only; execution has not been authorized"},
-            "owner":{"thread_id":null,"turn_id":null,"liveness":"unknown"},"workers":[],
-            "budget":{"time_remaining_seconds":run.deadline_at.saturating_sub(timestamp),"repair_attempts_remaining":run.request.repair_attempts,"repairs_used":0},
+            "result":{"kind":"unverified","label":"Planning only; execution has not started"},
+            "owner":{"thread_id":null,"turn_id":null,"liveness":"idle"},"workers":[],
+            "budget":{"time_remaining_seconds":null,"repair_attempts_remaining":run.request.repair_attempts,"repairs_used":0},
             "claim":{"held":false,"status":match run.observed_claim {crate::store::ObservedClaim::Foreign=>"foreign",crate::store::ObservedClaim::Unknown=>"unknown",_=>"released"}},
             "deliverable":{"kind":"local_candidate","status":"unproved","subject":control.current_subject,"reference":null}});
     }

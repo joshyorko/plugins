@@ -52,6 +52,16 @@ fn reference(name: &str) -> Value {
 
 fn definitions() -> Map<String, Value> {
     let mut defs = Map::new();
+    defs.insert(
+        "resource_link".into(),
+        optional(
+            object(json!({
+                "type":{"const":"resource_link"},"uri":text(2048),"name":text(180),
+                "title":text(240),"description":text(240),"mimeType":{"const":"application/json"}
+            })),
+            &["title"],
+        ),
+    );
     defs.insert("criterion".into(),object(json!({
         "id":id(),"description":text(1000),"status":enumeration(&["proven","failed","unproved"]),
         "reason":nullable(string()),"check_refs":array(id(),32)
@@ -87,7 +97,7 @@ fn definitions() -> Map<String, Value> {
         "result":object(json!({"kind":enumeration(&["finished_verified","working","needs_input","stopped_unresolved","unverified"]),"label":string()})),
         "owner":object(json!({"thread_id":nullable(id()),"turn_id":nullable(id()),"liveness":liveness})),
         "workers":array(object(json!({"thread_id":id(),"liveness":liveness})),64),
-        "budget":object(json!({"time_remaining_seconds":count(),"repair_attempts_remaining":count(),"repairs_used":count()})),
+        "budget":object(json!({"time_remaining_seconds":nullable(count()),"repair_attempts_remaining":count(),"repairs_used":count()})),
         "claim":reference("claim"),
         "deliverable":object(json!({"kind":enumeration(&["local_candidate","push","pr_ready"]),"status":enumeration(&["verified","unproved"]),"subject":id(),"reference":nullable(string())}))
     })));
@@ -132,6 +142,7 @@ fn definitions() -> Map<String, Value> {
         "profiles":{"type":"array","items":object(json!({"alias":text(64),"effort":string(),"supported":boolean()}))},
         "limits":object(json!({"capacity":{"type":"integer","minimum":1,"maximum":8},"repair_attempts":{"type":"integer","minimum":0,"maximum":10},"wall_seconds":{"type":"integer","minimum":30,"maximum":86400}})),
         "observed_routing":{"const":"unverified"},"status_inference_calls":{"const":0},
+        "execution":object(json!({"eligible":{"const":false},"reason":string()})),
         "routing_telemetry":object(json!({"model":string(),"effort":string(),"provider":string()})),
         "control_policy":object(json!({"wire_schema":{"const":1},"sqlite_schema":{"const":2},"managed_admission":string(),"native_child_policy":string(),"semantic_acceptance":string(),"independent_checks":array(string(),32),"native_output_completeness":string(),"native_environment":string(),"delivery_certification":string()})),
         "live_proof":string()
@@ -179,6 +190,7 @@ pub fn output_schema(tool_name: &str) -> Value {
         | "resume_factory_run"
         | "reconcile_factory_run" => definitions["run"].clone(),
         "list_factory_runs" => object(json!({"runs":array(reference("run"),100)})),
+        "search_factory_mentions" => object(json!({"items":array(reference("resource_link"),12)})),
         "get_factory_capabilities" => definitions["capabilities"].clone(),
         "open_factory" | "open_factory_panel" | "refresh_factory" => object(
             json!({"runs":array(reference("run"),100),"selected_run":nullable(reference("run")),"capabilities":reference("capabilities"),"settings":reference("settings_values")}),

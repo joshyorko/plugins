@@ -83,6 +83,10 @@ class ReleaseArchiveTests(unittest.TestCase):
             tar.extractall(extracted, filter="data")
         staged, = extracted.iterdir()
         subprocess.run(["sha256sum", "--check", "SHA256SUMS"], cwd=staged, check=True, capture_output=True)
+        self.assertTrue((staged / "skills/setup/SKILL.md").is_file())
+        receipt = json.loads((staged / "runtime-receipt.json").read_text())
+        self.assertIn("skills/setup/SKILL.md", receipt["files"])
+        self.assertIn("skills/setup/SKILL.md", (staged / "SHA256SUMS").read_text())
         self.assertEqual(subprocess.check_output([staged / "bin/luna-factoryd", "--version"], text=True).strip(), "luna-factoryd 0.2.1")
         self.assertEqual((staged / "bin/luna-factoryd").stat().st_mode & 0o777, 0o755)
 

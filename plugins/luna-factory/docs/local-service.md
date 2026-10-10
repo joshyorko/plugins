@@ -181,3 +181,7 @@ Keep the daemon on loopback. The tunnel client is a separate process with separa
 credentials and lifecycle; no tunnel, app ID, or authentication setup is performed
 by staging or by the example unit. Test the installed package through the actual
 intended host before claiming the installation/activation acceptance gate passed.
+
+The OCI derivative has a separate opt-in `published_origin` setting. Use it only
+inside the documented private rootless Podman network, with the host port bound
+to loopback. See [Container deployment](container-deployment.md).

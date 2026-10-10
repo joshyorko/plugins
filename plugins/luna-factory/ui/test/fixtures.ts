@@ -52,6 +52,26 @@ export const fixtureWorkbench: Workbench = {
   settings: { capacity: 2, profile: "luna", finish: "local_candidate" },
 };
 
+/** Disposable reproduction of the reported planning state, never the live canary. */
+export function fixturePlanningRun(): RunView {
+  const run = fixtureRun({ id: "dogfood-plan", repository: "canary", objective: "Persist a disposable planning graph", planning_only: true, state: "QUIESCENT", pending_decision: null, owner_thread: null, turn_id: null, active_workers: 0, claim_held: false, deadline_at: 1, receipts: [], blocker: null, remaining_gap: "Evidence has not been collected", finish: "local_candidate" });
+  if (!run.control || !run.presentation) throw new Error("Missing fixture projection");
+  run.control.revision = 6;
+  run.control.criteria = [{ id: "A1", description: run.objective, status: "unproved", reason: "evidence_missing", check_refs: [] }];
+  run.control.tasks = [{ id: "objective", title: run.objective, criterion_ids: ["A1"], dependencies: [], state: "candidate", admission: "candidate", reason: "planning_candidate_no_authority", owner_thread: null, attempt_ids: [] }];
+  run.control.attempts = [];
+  run.presentation.revision = 6;
+  run.presentation.primary_action = { kind: "refresh", label: "Refresh planning graph", reason: "planning_only", tool: "refresh_factory", allowed: true };
+  run.presentation.actions = [run.presentation.primary_action];
+  run.presentation.result = { kind: "unverified", label: "Planning only; execution has not been authorized" };
+  run.presentation.criteria = { proven: 0, failed: 0, unproved: 1, mandatory: 1 };
+  run.presentation.owner = { thread_id: null, turn_id: null, liveness: "unknown" };
+  run.presentation.workers = [];
+  run.presentation.budget.time_remaining_seconds = 0;
+  run.presentation.claim = { held: false, status: "released" };
+  return run;
+}
+
 export function fixtureGraph(revision = 7): GraphEnvelope {
   const run = fixtureRun();
   return { graph: { run_id: run.id, revision, repository: { alias: run.repository, identity: "opaque-repository", base_head: "abc", subject: run.current_subject }, planning_only: true, nodes: run.control!.tasks.map(task => ({ ...task, state: "CANDIDATE", admission: "candidate", owner_thread: null, attempt_ids: [], source: null, target_preference: null })), criteria: run.control!.criteria, attempts: [], claim: { held: false, status: "released" }, changes: [] }, proposal: null };

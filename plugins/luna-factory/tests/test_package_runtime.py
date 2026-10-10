@@ -22,7 +22,8 @@ METADATA = (
     "docs/package.md", "docs/local-service.md", "docs/repository-onboarding.md",
     "docs/control-adoption.md", "docs/control-plan.md", "docs/control-wire.md",
     "docs/dogfood-recovery.md",
-    "docs/integration-readiness.md", "docs/stack-ci-evidence.json",
+    "docs/integration-readiness.md", "docs/container-architecture.md",
+    "docs/container-deployment.md", "docs/stack-ci-evidence.json",
     "docs/rollback-verification.json", "docs/cas-verification.md",
     "docs/cas-verification-results.txt", "docs/cas-runtime-evidence.json",
     "docs/graph-backend-evidence.md", "docs/continuation-verification.md",
@@ -35,6 +36,7 @@ SKILL_FILES = (
     "references/routing-and-evidence.md", "references/runtime-compatibility.md",
     "scripts/audit_runtime.py", "tests/test_audit_runtime.py",
 )
+ONBOARDING_FILE = "skills/setup/SKILL.md"
 
 
 class PackageRuntimeTests(unittest.TestCase):
@@ -49,6 +51,7 @@ class PackageRuntimeTests(unittest.TestCase):
             self.write(name, source.read_bytes() if source.exists() else "Local service runbook\n")
         for name in SKILL_FILES:
             self.write("skills/luna-factory/" + name, (PLUGIN / "skills/luna-factory" / name).read_text())
+        self.write(ONBOARDING_FILE, (PLUGIN / ONBOARDING_FILE).read_bytes())
         for name in ("server/Cargo.toml", "server/Cargo.lock", "ui/package.json", "ui/package-lock.json",
                      "ui/index.html", "ui/tsconfig.json", "ui/vite.config.ts", "ui/tooling/singlefile.ts"):
             self.write(name, (PLUGIN / name).read_text())
@@ -95,7 +98,7 @@ class PackageRuntimeTests(unittest.TestCase):
     def test_stages_one_complete_plugin_with_deterministic_receipt_and_checksums(self):
         result = self.run_package()
         self.assertEqual(result.returncode, 0, result.stderr)
-        expected = set(METADATA) | {"skills/luna-factory/" + p for p in SKILL_FILES}
+        expected = set(METADATA) | {"skills/luna-factory/" + p for p in SKILL_FILES} | {ONBOARDING_FILE}
         expected |= {"bin/luna-factoryd", "ui/dist/index.html", "runtime-receipt.json", "SHA256SUMS"}
         actual = {p.relative_to(self.output).as_posix() for p in self.output.rglob("*") if p.is_file()}
         self.assertEqual(actual, expected)
@@ -105,6 +108,7 @@ class PackageRuntimeTests(unittest.TestCase):
         self.assertEqual(set(receipt["files"]), expected - {"runtime-receipt.json", "SHA256SUMS"})
         self.assertIn("server/src/main.rs", receipt["build_inputs"]["runtime"])
         self.assertIn("ui/src/main.ts", receipt["build_inputs"]["ui"])
+        self.assertEqual(receipt["files"][ONBOARDING_FILE]["sha256"], hashlib.sha256((self.output / ONBOARDING_FILE).read_bytes()).hexdigest())
         self.assertNotIn(str(self.base), (self.output / "runtime-receipt.json").read_text())
         sums = (self.output / "SHA256SUMS").read_text().splitlines()
         self.assertEqual({line.split("  ")[1] for line in sums}, expected - {"SHA256SUMS"})
@@ -125,6 +129,75 @@ class PackageRuntimeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((second / "SHA256SUMS").read_bytes(), (self.output / "SHA256SUMS").read_bytes())
         self.assertEqual((second / "runtime-receipt.json").read_bytes(), (self.output / "runtime-receipt.json").read_bytes())
+
+    def test_onboarding_skill_is_optional_when_both_manifests_omit_it(self):
+        portable = json.loads((self.plugin / "plugin.json").read_text())
+        portable["extensions"]["com.openai"].pop("onboardingSkill")
+        self.write("plugin.json", json.dumps(portable))
+        compatibility = json.loads((self.plugin / ".codex-plugin/plugin.json").read_text())
+        compatibility["extensions"]["com.openai"].pop("onboardingSkill")
+        self.write(".codex-plugin/plugin.json", json.dumps(compatibility))
+        shutil.rmtree(self.plugin / "skills/setup")
+
+        result = self.run_package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.output / ONBOARDING_FILE).exists())
+        receipt = json.loads((self.output / "runtime-receipt.json").read_text())
+        self.assertNotIn(ONBOARDING_FILE, receipt["files"])
+
+    def test_onboarding_skill_path_is_exact_and_package_relative(self):
+        for path in ("../outside/SKILL.md", "/tmp/SKILL.md", "./skills/luna-factory/SKILL.md"):
+            with self.subTest(path=path):
+                for name in ("plugin.json", ".codex-plugin/plugin.json"):
+                    document = json.loads((self.plugin / name).read_text())
+                    document["extensions"]["com.openai"]["onboardingSkill"] = path
+                    self.write(name, json.dumps(document))
+                self.assert_rejected("onboardingSkill")
+                # Restore both source manifests for the next rejected input.
+                for name in ("plugin.json", ".codex-plugin/plugin.json"):
+                    shutil.copyfile(PLUGIN / name, self.plugin / name)
+
+    def test_onboarding_skill_must_exist_and_match_codex_compatibility_manifest(self):
+        (self.plugin / ONBOARDING_FILE).unlink()
+        self.assert_rejected("onboarding skill")
+        shutil.copyfile(PLUGIN / ONBOARDING_FILE, self.plugin / ONBOARDING_FILE)
+
+        compatibility = json.loads((self.plugin / ".codex-plugin/plugin.json").read_text())
+        compatibility["extensions"]["com.openai"]["onboardingSkill"] = "./skills/setup/README.md"
+        self.write(".codex-plugin/plugin.json", json.dumps(compatibility))
+        self.assert_rejected("onboardingSkill differs")
+
+    def test_onboarding_skill_identity_and_secret_content_are_rejected(self):
+        source = PLUGIN / ONBOARDING_FILE
+        content = source.read_text()
+        self.write(ONBOARDING_FILE, content.replace("name: setup", "name: luna-factory", 1))
+        self.assert_rejected("onboarding skill identity")
+        self.write(ONBOARDING_FILE, content + "\nOPENAI_API_KEY=sk-proj-fake-test-secret-value\n")
+        self.assert_rejected("secret-like content")
+
+    def test_private_openai_app_mapping_is_rejected(self):
+        for name in ("plugin.json", ".codex-plugin/plugin.json"):
+            with self.subTest(manifest=name):
+                document = json.loads((self.plugin / name).read_text())
+                document["extensions"]["com.openai"]["appId"] = "fake-private-app-id"
+                self.write(name, json.dumps(document))
+                self.assert_rejected("private app mapping")
+                shutil.copyfile(PLUGIN / name, self.plugin / name)
+
+    def test_onboarding_skill_symlink_and_extra_files_are_rejected(self):
+        outside = self.base / "outside-skill.md"
+        outside.write_text((self.plugin / ONBOARDING_FILE).read_text())
+        skill = self.plugin / ONBOARDING_FILE
+        skill.unlink()
+        try:
+            skill.symlink_to(outside)
+        except OSError as error:
+            self.skipTest(f"symlink fixture unavailable: {error}")
+        self.assert_rejected("symlink is not allowed")
+        skill.unlink()
+        shutil.copyfile(PLUGIN / ONBOARDING_FILE, skill)
+        (self.plugin / "skills/setup/extra.md").write_text("not an authorized package input")
+        self.assert_rejected("onboarding skill inventory")
 
     def test_staged_operator_runbooks_have_resolvable_local_links(self):
         result = self.run_package()

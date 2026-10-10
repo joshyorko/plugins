@@ -3,6 +3,7 @@ use crate::{
     mcp::{APP_URI, app_resource, capabilities, tool_definitions},
     store::StartRequest,
 };
+use anyhow::Context;
 use axum::{
     Router,
     extract::{Request, State},
@@ -14,7 +15,7 @@ use base64::Engine;
 use rmcp::{
     ErrorData, RoleServer, ServerHandler,
     model::*,
-    service::RequestContext,
+    service::{PeerRequestOptions, RequestContext},
     transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     },
@@ -49,6 +50,18 @@ struct List {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct MentionSearch {
+    query: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RepositoryRequestInput {
+    candidate_id: Option<String>,
+    alias: Option<String>,
+    max_finish: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Resume {
     run_id: String,
     #[serde(default)]
@@ -79,6 +92,207 @@ fn parse<T: serde::de::DeserializeOwned>(value: Value) -> anyhow::Result<T> {
     Ok(serde_json::from_value(value)?)
 }
 impl McpServer {
+    async fn call_repository_request(
+        &self,
+        arguments: Value,
+        input_responses: Option<InputResponses>,
+        request_state: Option<String>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let input: RepositoryRequestInput = serde_json::from_value(arguments).map_err(|_| {
+            ErrorData::invalid_params("Repository request fields are invalid", None)
+        })?;
+        if input_responses.is_none()
+            && request_state.is_none()
+            && let (Some(candidate_id), Some(alias), Some(max_finish)) =
+                (input.candidate_id, input.alias, input.max_finish)
+        {
+            return self
+                .record_repository_request(crate::repositories::RegistrationRequest {
+                    candidate_id,
+                    alias,
+                    max_finish,
+                })
+                .await;
+        }
+
+        let discovery =
+            self.factory.discover_repositories().await.map_err(|_| {
+                ErrorData::invalid_params("Repository discovery is unavailable", None)
+            })?;
+        let candidates = discovery
+            .get("candidates")
+            .cloned()
+            .unwrap_or_else(|| json!([]));
+        if candidates.as_array().is_none_or(Vec::is_empty) {
+            return Err(ErrorData::invalid_params(
+                "No discovered repositories are available. Configure an operator-approved discovery root first.",
+                None,
+            ));
+        }
+
+        let form_result = if let Some(responses) = input_responses {
+            let state = request_state.as_deref().unwrap_or_default();
+            if !crate::extensions::is_repository_form_state(state)
+                || responses.len() != 1
+                || !responses.contains_key("repository")
+            {
+                return Err(ErrorData::invalid_params(
+                    "This repository form response is stale or does not match the active request.",
+                    None,
+                ));
+            }
+            let form_candidates = self
+                .factory
+                .consume_repository_form_state(state, &candidates)
+                .await
+                .ok_or_else(|| {
+                    ErrorData::invalid_params(
+                        "This repository form response is stale or belongs to another request.",
+                        None,
+                    )
+                })?;
+            let result = &responses["repository"];
+            Some(
+                crate::extensions::parse_repository_form_result(result, &form_candidates).map_err(
+                    |_| {
+                        ErrorData::invalid_params(
+                            "Repository form response is invalid or stale",
+                            None,
+                        )
+                    },
+                )?,
+            )
+        } else if request_state.is_some() {
+            return Err(ErrorData::invalid_params(
+                "This repository form response is stale or incomplete.",
+                None,
+            ));
+        } else {
+            None
+        };
+
+        let decision = if let Some(result) = form_result {
+            result
+        } else {
+            let capabilities = context.client_capabilities().unwrap_or_default();
+            let protocol = context
+                .protocol_version()
+                .map(|version| version.to_string())
+                .unwrap_or_default();
+            if !crate::extensions::supports_openai_form(
+                &protocol,
+                &serde_json::to_value(&capabilities).unwrap_or_default(),
+            ) {
+                if protocol.as_str() < "2026-07-28"
+                    && capabilities
+                        .elicitation
+                        .as_ref()
+                        .is_some_and(|cap| cap.form.is_some())
+                    && capabilities.extensions.as_ref().is_some_and(|items| {
+                        items
+                            .get("openai/elicitation")
+                            .and_then(|value| value.get("form"))
+                            .is_some()
+                    })
+                {
+                    let params = crate::extensions::legacy_repository_form_params(&candidates)
+                        .map_err(|_| {
+                            ErrorData::invalid_params("Repository form is unavailable", None)
+                        })?;
+                    let request = ServerRequest::CustomRequest(CustomRequest::new(
+                        crate::extensions::OPENAI_LEGACY_FORM_METHOD,
+                        Some(params),
+                    ));
+                    let response = context
+                        .peer
+                        .send_request_with_option(
+                            request,
+                            PeerRequestOptions::with_timeout(std::time::Duration::from_secs(300)),
+                        )
+                        .await
+                        .map_err(|_| {
+                            ErrorData::invalid_request("Repository form was unavailable", None)
+                        })?;
+                    let response = response.await_response().await.map_err(|_| {
+                        ErrorData::invalid_request("Repository form response was unavailable", None)
+                    })?;
+                    let response = match response {
+                        ClientResult::CustomResult(result) => result.0,
+                        ClientResult::ElicitResult(result) => {
+                            serde_json::to_value(result).unwrap_or(Value::Null)
+                        }
+                        _ => {
+                            return Err(ErrorData::invalid_request(
+                                "Repository form response was unavailable",
+                                None,
+                            ));
+                        }
+                    };
+                    crate::extensions::parse_repository_form_result(&response, &candidates)
+                        .map_err(|_| {
+                            ErrorData::invalid_params(
+                                "Repository form response is invalid or stale",
+                                None,
+                            )
+                        })?
+                } else {
+                    return Ok(CallToolResult::error(vec![ContentBlock::text(
+                        "Open Luna Factory and use the accessible Add repository form. This host does not support the repository form request; no access request was created.",
+                    )]).into());
+                }
+            } else {
+                let state = self
+                    .factory
+                    .issue_repository_form_state(&candidates)
+                    .await
+                    .map_err(|_| {
+                        ErrorData::invalid_params("Repository form is unavailable", None)
+                    })?;
+                let result =
+                    crate::extensions::make_repository_form(&candidates, &state).map_err(|_| {
+                        ErrorData::invalid_params("Repository form is unavailable", None)
+                    })?;
+                return Ok(CallToolResponse::InputRequired(result));
+            }
+        };
+
+        let registration = match decision {
+            crate::extensions::FormDecision::Accepted(request) => request,
+            crate::extensions::FormDecision::Declined => {
+                return Ok(CallToolResult::error(vec![ContentBlock::text(
+                    "Repository selection was declined. No request was created.",
+                )])
+                .into());
+            }
+            crate::extensions::FormDecision::Cancelled => {
+                return Ok(CallToolResult::error(vec![ContentBlock::text(
+                    "Repository selection was cancelled. No request was created.",
+                )])
+                .into());
+            }
+        };
+        self.record_repository_request(registration).await
+    }
+
+    async fn record_repository_request(
+        &self,
+        request: crate::repositories::RegistrationRequest,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let value = self
+            .factory
+            .request_repository(request)
+            .await
+            .map_err(|_| {
+                ErrorData::invalid_params("Repository request could not be recorded", None)
+            })?;
+        let mut result = CallToolResult::structured(value);
+        result.content = vec![ContentBlock::text(
+            "Access was requested. A local operator must approve the repository before Factory can use it.",
+        )];
+        Ok(result.into())
+    }
+
     pub async fn invoke(&self, name: &str, args: Value) -> anyhow::Result<Value> {
         match name {
             "start_factory" => self.factory.start(parse::<StartRequest>(args)?).await,
@@ -99,6 +313,12 @@ impl McpServer {
                 Ok(json!({"runs":self.factory.list(parse::<List>(args)?.limit).await?}))
             }
             "get_factory_run" => self.factory.get(&parse::<RunId>(args)?.run_id).await,
+            "search_factory_mentions" => {
+                let query = parse::<MentionSearch>(args)?.query;
+                let runs = self.factory.list(50).await?;
+                let runs = runs.as_array().context("mention_run_list_unavailable")?;
+                crate::mentions::search_items(runs, &query)
+            }
             "get_factory_capabilities" => {
                 ensure_empty(&args)?;
                 self.factory.capabilities().await
@@ -197,13 +417,23 @@ impl ServerHandler for McpServer {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         let args = Value::Object(request.arguments.unwrap_or_default());
         if serde_json::to_vec(&args).map_or(true, |v| v.len() > 65536) {
             return Ok(
                 CallToolResult::error(vec![ContentBlock::text("Request exceeds 64 KiB.")]).into(),
             );
+        }
+        if request.name == "request_factory_repository" {
+            return self
+                .call_repository_request(
+                    args,
+                    request.input_responses,
+                    request.request_state,
+                    context,
+                )
+                .await;
         }
         let result = match self.invoke(&request.name, args).await {
             Ok(value) => {
@@ -251,20 +481,65 @@ impl ServerHandler for McpServer {
         request: ReadResourceRequestParams,
         _: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        if request.uri != APP_URI {
-            return Err(ErrorData::invalid_params("Unknown resource", None));
+        if request.uri == APP_URI {
+            return Ok(app_resource(&self.html).into());
         }
-        Ok(app_resource(&self.html).into())
+        let mention = crate::mentions::parse_mention_uri(&request.uri)
+            .map_err(|_| ErrorData::invalid_params("Mention URI is invalid", None))?;
+        let run = self
+            .factory
+            .get(&mention.run_id)
+            .await
+            .map_err(|_| ErrorData::invalid_params("Mentioned run is unavailable", None))?;
+        let payload = crate::mentions::resource_payload(&run, &mention).map_err(|error| {
+            let message = match error.to_string().as_str() {
+                "stale_mention_revision" => {
+                    "This mention is stale. Search again for current state."
+                }
+                "mention_task_unavailable" => "This task is no longer available in the run.",
+                _ => "Mentioned run state is unavailable.",
+            };
+            ErrorData::invalid_params(message, None)
+        })?;
+        let result: ReadResourceResult = serde_json::from_value(json!({
+            "resultType":"complete","ttlMs":0,"cacheScope":"private",
+            "contents":[{"uri":request.uri,"mimeType":"application/json","text":payload.to_string()}]
+        }))
+        .map_err(|_| ErrorData::internal_error("Mention resource could not be serialized", None))?;
+        Ok(result.into())
     }
 }
 
-pub fn allowed_http(host: Option<&str>, origin: Option<&str>, listen: &str) -> bool {
+pub fn allowed_http(
+    host: Option<&str>,
+    origin: Option<&str>,
+    listen: &str,
+    published_origin: Option<&str>,
+) -> bool {
     let Some(host) = host else {
         return false;
     };
     let Ok(address) = listen.parse::<std::net::SocketAddr>() else {
         return false;
     };
+    if let Some(published_origin) = published_origin {
+        if !address.ip().is_unspecified()
+            || !crate::config::valid_published_origin(published_origin)
+        {
+            return false;
+        }
+        let Ok(uri) = published_origin.parse::<axum::http::Uri>() else {
+            return false;
+        };
+        let Some(authority) = uri.authority() else {
+            return false;
+        };
+        return host == authority.as_str()
+            && origin.is_none_or(|request_origin| request_origin == published_origin);
+    }
+    if !address.ip().is_loopback() {
+        return false;
+    }
     let localhost = format!("localhost:{}", address.port());
     if host != listen && host != localhost {
         return false;
@@ -273,13 +548,17 @@ pub fn allowed_http(host: Option<&str>, origin: Option<&str>, listen: &str) -> b
         origin == format!("http://{listen}") || origin == format!("http://{localhost}")
     })
 }
-async fn guard(State(listen): State<String>, request: Request, next: Next) -> Response {
+async fn guard(
+    State((listen, published_origin)): State<(String, Option<String>)>,
+    request: Request,
+    next: Next,
+) -> Response {
     let host = request.headers().get("host").and_then(|v| v.to_str().ok());
     let origin = request
         .headers()
         .get("origin")
         .and_then(|v| v.to_str().ok());
-    if !allowed_http(host, origin, &listen) {
+    if !allowed_http(host, origin, &listen, published_origin.as_deref()) {
         return Response::builder()
             .status(StatusCode::FORBIDDEN)
             .body(axum::body::Body::from("Host or Origin rejected"))
@@ -289,6 +568,7 @@ async fn guard(State(listen): State<String>, request: Request, next: Next) -> Re
 }
 pub fn router(factory: Factory, html: String, cancel: CancellationToken) -> Router {
     let listen = factory.config.listen.to_string();
+    let published_origin = factory.config.published_origin.clone();
     let html = Arc::new(html);
     let service = StreamableHttpService::new(
         move || {
@@ -305,5 +585,8 @@ pub fn router(factory: Factory, html: String, cancel: CancellationToken) -> Rout
     Router::new()
         .nest_service("/mcp", service)
         .layer(tower_http::limit::RequestBodyLimitLayer::new(65536))
-        .layer(middleware::from_fn_with_state(listen, guard))
+        .layer(middleware::from_fn_with_state(
+            (listen, published_origin),
+            guard,
+        ))
 }

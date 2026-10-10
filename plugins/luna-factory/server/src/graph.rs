@@ -235,6 +235,33 @@ pub fn apply_change(control: &mut Control, change: &GraphChange) -> Result<()> {
     validate_dependencies(control)?;
     Ok(())
 }
+/// New command boundary only. Historical journal events must remain readable.
+pub fn ensure_meaningful(control: &Control, change: &GraphChange) -> Result<()> {
+    match change {
+        GraphChange::SetDependencies {
+            node_id,
+            dependencies,
+        } => {
+            editable(control, node_id)?;
+            let requested: BTreeSet<_> = dependencies.iter().collect();
+            ensure!(
+                dependencies.len() <= 128 && requested.len() == dependencies.len(),
+                "invalid_graph_dependencies"
+            );
+            let current: BTreeSet<_> = control.tasks[node_id].dependencies.iter().collect();
+            ensure!(requested != current, "graph_change_noop");
+        }
+        GraphChange::SetTarget { node_id, target_id } => {
+            editable(control, node_id)?;
+            ensure!(
+                control.target_preferences.get(node_id) != Some(target_id),
+                "graph_change_noop"
+            );
+        }
+        GraphChange::ImportCandidates { .. } => {}
+    }
+    Ok(())
+}
 pub fn validate_metadata(control: &Control) -> Result<()> {
     ensure!(
         control.graph_sources.len() <= 128

@@ -152,6 +152,23 @@ Neither proposal nor apply changes budgets, generations, acceptance or native
 identities. A planning run cannot later be converted into an executable run by
 changing preference or calling Resume.
 
+New `set_dependencies` and `set_target` commands reject unchanged values with
+`graph_change_noop`. Dependency order is not meaningful; reordering the same set
+is also unchanged. This rejection creates no proposal, event, or revision.
+Rejected keys are not reserved in the durable journal, as with other validation
+errors; replay protection binds successful recorded commands.
+Revision/source checks and idempotency conflicts still run at their existing
+boundaries. A matching saved request replays its recorded proposal; a matching
+applied change replays its recorded result without another event. Previously
+recorded no-op events remain readable and replayable. An unapplied historical
+no-op proposal can be inspected but a new application is rejected unchanged.
+Nothing rewrites or removes historical lineage.
+
+The workbench separates task selection, proposal saving, and application. Task
+selection only changes app context. A proposal is a durable review draft; applying
+it requires explicit UI confirmation of that proposal and current revision. The
+server retains final authority and rechecks eligibility at both mutation boundaries.
+
 ### Settings and app context
 
 The canonical settings update is now `{set:{...changedFields}}`; flat arguments

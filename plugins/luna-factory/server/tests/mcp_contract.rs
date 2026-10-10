@@ -19,7 +19,7 @@ fn every_structured_tool_declares_an_object_output_contract() {
 #[test]
 fn graph_catalog_requires_revision_and_is_callable_by_both_audiences() {
     let tools = tool_definitions();
-    assert_eq!(tools.len(), 21);
+    assert_eq!(tools.len(), 22);
     for name in [
         "create_factory_graph",
         "get_factory_graph",
@@ -59,6 +59,65 @@ fn graph_catalog_requires_revision_and_is_callable_by_both_audiences() {
     assert!(validator.is_valid(&json!({"set":{"capacity":1}})));
     assert!(!validator.is_valid(&json!({"capacity":1})));
     assert!(!validator.is_valid(&json!({"set":{}})));
+    let workbench = app_resource("<!doctype html>");
+    let resource = serde_json::to_value(workbench).unwrap();
+    assert_eq!(
+        resource["contents"][0]["_meta"]["openai/ui"]["availableDisplayModes"],
+        json!(["inline", "fullscreen"])
+    );
+    assert_eq!(
+        resource["contents"][0]["_meta"]["openai/ui"]["preferredDisplayMode"],
+        "inline"
+    );
+}
+
+#[test]
+fn composer_mentions_use_read_only_app_visible_search_and_current_capability() {
+    let server_capabilities = serde_json::to_value(capabilities()).unwrap();
+    assert_eq!(
+        server_capabilities["extensions"]["openai/mentions"]["searchTool"],
+        "search_factory_mentions"
+    );
+
+    let tool = tool_definitions()
+        .into_iter()
+        .find(|tool| tool.name == "search_factory_mentions")
+        .expect("composer mention search is registered");
+    let value = serde_json::to_value(tool).unwrap();
+    assert_eq!(value["annotations"]["readOnlyHint"], true);
+    assert_eq!(value["_meta"]["ui"]["visibility"], json!(["app"]));
+    assert_eq!(
+        value["_meta"]["openai/extensions"]["mentions/search"],
+        json!({})
+    );
+    assert_eq!(value["inputSchema"]["required"], json!(["query"]));
+    assert_eq!(
+        value["inputSchema"]["properties"]["query"]["type"],
+        "string"
+    );
+    assert_eq!(
+        value["outputSchema"]["properties"]["items"]["type"],
+        "array"
+    );
+    assert_eq!(
+        value["outputSchema"]["properties"]["items"]["items"]["$ref"],
+        "#/$defs/resource_link"
+    );
+}
+
+#[test]
+fn repository_request_tool_is_app_visible_for_html_fallback_and_allows_host_elicitation() {
+    let tool = tool_definitions()
+        .into_iter()
+        .find(|tool| tool.name == "request_factory_repository")
+        .expect("repository request tool is registered");
+    let value = serde_json::to_value(tool).unwrap();
+    assert_eq!(
+        value["_meta"]["ui"]["resourceUri"],
+        "ui://luna-factory/workbench.html"
+    );
+    assert_eq!(value["_meta"]["ui"]["visibility"], json!(["app"]));
+    assert_eq!(value["inputSchema"]["required"], json!([]));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

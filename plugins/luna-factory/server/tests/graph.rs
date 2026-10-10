@@ -60,6 +60,80 @@ fn node(graph: &serde_json::Value, id: &str, dependencies: Vec<&str>) -> serde_j
     json!({"id":id,"title":"Candidate work","criterion_ids":["A1"],"dependencies":dependencies,
        "source":{"provider":"local","repository_id":graph["graph"]["repository"]["identity"],"item_id":id,"revision":"v1"}})
 }
+
+#[tokio::test]
+async fn no_op_changes_reject_without_revision_or_journal_writes() {
+    let (_temp, config, request) = setup();
+    let factory = Factory::new(config.clone()).unwrap();
+    let created = factory.create_graph(request).await.unwrap();
+    let id = created["graph"]["run_id"].as_str().unwrap();
+    let empty = proposal(
+        &created,
+        "empty-prerequisites",
+        json!({"kind":"set_dependencies","node_id":"objective","dependencies":[]}),
+    );
+    let error = factory
+        .propose_graph_change(empty.clone())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("graph_change_noop"));
+    assert!(factory.propose_graph_change(empty).await.is_err());
+    assert_eq!(factory.graph(id).await.unwrap(), created);
+    let view = factory.get(id).await.unwrap();
+    assert_eq!(view["presentation"]["result"]["kind"], "unverified");
+    assert_eq!(view["planning_only"], true);
+    assert_eq!(
+        view["presentation"]["budget"]["time_remaining_seconds"],
+        serde_json::Value::Null
+    );
+
+    let imported = factory.propose_graph_change(proposal(&created, "import", json!({"kind":"import_candidates","nodes":[node(&created,"a",vec![]),node(&created,"b",vec![]),node(&created,"c",vec!["a","b"])]}))).await.unwrap();
+    let apply = ApplyChange {
+        run_id: id.into(),
+        change_id: imported["proposal"]["id"].as_str().unwrap().into(),
+        expected_revision: 1,
+    };
+    let applied = factory.apply_graph_change(apply.clone()).await.unwrap();
+    assert_eq!(factory.apply_graph_change(apply).await.unwrap(), applied);
+    for (key, change) in [
+        (
+            "same-order",
+            json!({"kind":"set_dependencies","node_id":"c","dependencies":["a","b"]}),
+        ),
+        (
+            "reordered",
+            json!({"kind":"set_dependencies","node_id":"c","dependencies":["b","a"]}),
+        ),
+    ] {
+        let error = factory
+            .propose_graph_change(proposal(&applied, key, change))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("graph_change_noop"));
+    }
+    assert_eq!(factory.graph(id).await.unwrap()["graph"], applied["graph"]);
+    let mut stale = proposal(
+        &applied,
+        "stale",
+        json!({"kind":"set_dependencies","node_id":"objective","dependencies":[]}),
+    );
+    stale.expected_revision = 0;
+    assert!(
+        factory
+            .propose_graph_change(stale)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("stale_control_revision")
+    );
+    let raw = Store::open(&config).unwrap().get(id).unwrap();
+    assert_eq!(raw.control.as_ref().unwrap().graph_changes.len(), 1);
+    assert!(
+        raw.thread_id.is_none()
+            && !raw.claim_held
+            && raw.control.as_ref().unwrap().attempts.is_empty()
+    );
+}
 #[tokio::test]
 async fn planning_roundtrip_replay_conflicts_and_no_execution() {
     let (_temp, config, request) = setup();
@@ -119,6 +193,117 @@ async fn planning_roundtrip_replay_conflicts_and_no_execution() {
         restarted.graph(id).await.unwrap()["graph"],
         applied["graph"]
     );
+}
+
+#[tokio::test]
+async fn historical_noop_journal_remains_readable_but_new_apply_is_rejected() {
+    use luna_factoryd::control::{Event, EventEnvelope};
+    let (_temp, config, request) = setup();
+    let factory = Factory::new(config.clone()).unwrap();
+    let created = factory.create_graph(request).await.unwrap();
+    let id = created["graph"]["run_id"].as_str().unwrap();
+    let request = proposal(
+        &created,
+        "legacy-noop",
+        json!({"kind":"set_dependencies","node_id":"objective","dependencies":[]}),
+    );
+    let legacy = luna_factoryd::graph::Proposal {
+        id: "legacy-noop".into(),
+        idempotency_key: request.idempotency_key.clone(),
+        fingerprint: luna_factoryd::graph::fingerprint(&request).unwrap(),
+        actor: "local_operator".into(),
+        base_revision: 0,
+        subject: created["graph"]["repository"]["subject"]
+            .as_str()
+            .unwrap()
+            .into(),
+        change: request.change.clone(),
+        status: "proposed".into(),
+        applied_revision: None,
+    };
+    // Simulate a pre-fix event through the unchanged durable reducer, only in this disposable DB.
+    let mut store = Store::open(&config).unwrap();
+    let mut run = store.get(id).unwrap();
+    store
+        .apply_event(
+            &mut run,
+            &EventEnvelope {
+                id: "legacy-propose".into(),
+                expected_revision: 0,
+                event: Event::GraphProposed { proposal: legacy },
+            },
+        )
+        .unwrap();
+    drop(store);
+    drop(factory);
+    let factory = Factory::new(config.clone()).unwrap();
+    assert_eq!(factory.graph(id).await.unwrap()["graph"]["revision"], 1);
+    let apply = ApplyChange {
+        run_id: id.into(),
+        change_id: "legacy-noop".into(),
+        expected_revision: 1,
+    };
+    assert!(
+        factory
+            .apply_graph_change(apply.clone())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("graph_change_noop")
+    );
+    assert_eq!(factory.graph(id).await.unwrap()["graph"]["revision"], 1);
+    let mut store = Store::open(&config).unwrap();
+    let mut run = store.get(id).unwrap();
+    store
+        .apply_event(
+            &mut run,
+            &EventEnvelope {
+                id: "legacy-apply".into(),
+                expected_revision: 1,
+                event: Event::GraphApplied {
+                    change_id: "legacy-noop".into(),
+                },
+            },
+        )
+        .unwrap();
+    drop(store);
+    drop(factory);
+    let factory = Factory::new(config).unwrap();
+    let replay = factory.apply_graph_change(apply).await.unwrap();
+    assert_eq!(replay["graph"]["revision"], 2);
+    assert_eq!(replay["proposal"]["status"], "applied");
+}
+
+#[tokio::test]
+async fn unchanged_target_note_does_not_write_and_successful_requests_still_replay() {
+    let (_temp, config, request) = setup();
+    let factory = Factory::new(config).unwrap();
+    let created = factory.create_graph(request).await.unwrap();
+    let change = json!({"kind":"set_target","node_id":"objective","target_id":"native-local"});
+    let command = proposal(&created, "target-note", change.clone());
+    let proposed = factory.propose_graph_change(command.clone()).await.unwrap();
+    let id = created["graph"]["run_id"].as_str().unwrap();
+    let apply = ApplyChange {
+        run_id: id.into(),
+        change_id: proposed["proposal"]["id"].as_str().unwrap().into(),
+        expected_revision: 1,
+    };
+    let applied = factory.apply_graph_change(apply.clone()).await.unwrap();
+    assert!(
+        factory
+            .propose_graph_change(proposal(&applied, "unchanged-target", change))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("graph_change_noop")
+    );
+    assert_eq!(factory.graph(id).await.unwrap()["graph"], applied["graph"]);
+    assert_eq!(
+        factory.propose_graph_change(command).await.unwrap(),
+        applied
+    );
+    assert_eq!(factory.apply_graph_change(apply).await.unwrap(), applied);
+    assert!(applied["graph"]["attempts"].as_array().unwrap().is_empty());
 }
 #[tokio::test]
 async fn candidates_reject_foreign_sources_missing_dependencies_cycles_and_stale_revisions() {
@@ -271,7 +456,7 @@ async fn source_movement_and_intervening_proposals_fence_apply() {
         .propose_graph_change(proposal(
             &first,
             "second",
-            json!({"kind":"set_dependencies","node_id":"objective","dependencies":[]}),
+            json!({"kind":"import_candidates","nodes":[node(&first,"intervening",vec![])]}),
         ))
         .await
         .unwrap();

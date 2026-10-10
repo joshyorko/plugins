@@ -78,7 +78,7 @@ async fn invoke(server: &McpServer, name: &str, args: Value) -> Value {
 #[test]
 fn every_tool_has_a_concrete_valid_schema() {
     let tools = tool_definitions();
-    assert_eq!(tools.len(), 21);
+    assert_eq!(tools.len(), 22);
     for tool in tools {
         let schema = serde_json::to_value(tool.output_schema.as_ref().unwrap()).unwrap();
         assert!(

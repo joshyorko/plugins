@@ -69,6 +69,10 @@ retain the matching previous binary/UI/configuration and consistent ledger backu
 
 The default endpoint is `http://127.0.0.1:8787/mcp`. Start the daemon yourself using the operator configuration. The MCP manifest describes a connection, not a service supervisor.
 
+The published manifests retain that loopback default. The separate OCI
+derivative uses `published_origin` only when an isolated container port maps to
+an exact loopback host authority. See [Container deployment](container-deployment.md).
+
 Portable `mcp.json` uses the published Agent Plugins 1.0.0 shape:
 
 ```json

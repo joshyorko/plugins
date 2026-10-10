@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boundedContext, classifyRun, parseRunLink, parseToolResult, startRequest } from "../src/domain";
+import { boundedContext, classifyRun, parseFactoryLink, parseRunLink, parseToolResult, startRequest } from "../src/domain";
 import { fixtureRun, fixtureWorkbench } from "./fixtures";
 
 describe("the server boundary", () => {
@@ -51,9 +51,9 @@ describe("the server boundary", () => {
 });
 
 describe("operator attention", () => {
-  it("keeps blocked and quiescent outcomes in Needs me", () => {
-    expect(classifyRun(fixtureRun({ state: "BLOCKED" }))).toBe("needs");
-    expect(classifyRun(fixtureRun({ state: "QUIESCENT" }))).toBe("needs");
+  it("keeps nondecision blockers and quiescent plans in history", () => {
+    expect(classifyRun(fixtureRun({ state: "BLOCKED" }))).toBe("recent");
+    expect(classifyRun(fixtureRun({ state: "QUIESCENT" }))).toBe("recent");
     expect(classifyRun(fixtureRun({ state: "RUNNING" }))).toBe("active");
     expect(classifyRun(fixtureRun({ state: "CONVERGED" }))).toBe("recent");
   });
@@ -61,11 +61,11 @@ describe("operator attention", () => {
     const stopped = fixtureRun({ state: "CONVERGED" });
     if (!stopped.presentation) throw new Error("Missing fixture presentation");
     stopped.presentation.result = { kind: "stopped_unresolved", label: "Stopped with work unresolved" };
-    expect(classifyRun(stopped)).toBe("needs");
+    expect(classifyRun(stopped)).toBe("recent");
     const legacy = fixtureRun({ state: "CONVERGED" });
     delete legacy.control;
     delete legacy.presentation;
-    expect(classifyRun(legacy)).toBe("needs");
+    expect(classifyRun(legacy)).toBe("recent");
   });
   it("does not export stale CONVERGED as model context", () => {
     const run = fixtureRun({ state: "CONVERGED" });
@@ -83,15 +83,21 @@ describe("exact run links", () => {
     expect(parseRunLink("/runs/run-123")).toBe("run-123");
     expect(parseRunLink("/runs/run-123?view=evidence")).toBe("run-123");
   });
+  it("restores exact tasks only with a revision fence", () => {
+    expect(parseFactoryLink("/runs/run-123?task=issue-61&revision=7")).toEqual({ runId: "run-123", taskId: "issue-61", revision: 7 });
+    for (const link of ["/runs/run-123?task=issue-61", "/runs/run-123?revision=7", "/runs/run-123?task=issue-61&revision=7&task=issue-62", "/runs/run-123?task=issue-61&revision=9007199254740992", "/runs/run-123?task=issue-61&revision=bad", "/runs/run-123?unknown=1"]) {
+      expect(parseFactoryLink(link)).toBeNull();
+    }
+  });
   it.each(["//evil.test/runs/a", "https://evil.test/runs/a", "/runs/a/b", "/runs/a#b", "/runs/%2e%2e", "/runs/a%2Fb", "/runs/", "/runs/aaa%00", "/runs/a/", "/runs/%ZZ"])("rejects invalid or ambiguous route %s", (url) => {
     expect(parseRunLink(url)).toBeNull();
   });
 });
 
 describe("bounded Model-App Context", () => {
-  it("shares only the eight permitted fields with hard text bounds", () => {
+  it("shares only revision-fenced permitted fields with hard text bounds", () => {
     const context = boundedContext(fixtureRun({ objective: "x".repeat(8000), delta: "private receipt", blocker: "b".repeat(2000) }));
-    expect(Object.keys(context)).toEqual(["run_id", "repository", "objective", "state", "current_subject", "remaining_mandatory_gap", "blocker", "finish"]);
+    expect(Object.keys(context)).toEqual(["run_id", "revision", "repository", "objective", "state", "current_subject", "remaining_mandatory_gap", "blocker", "finish"]);
     expect(JSON.stringify(context).length).toBeLessThan(3500);
     expect(JSON.stringify(context)).not.toContain("private receipt");
     expect(context.objective.length).toBeLessThanOrEqual(1200);
