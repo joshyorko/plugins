@@ -58,8 +58,26 @@ export const capabilitiesSchema = z.object({
   limits: z.object({ capacity: z.number().int().min(1).max(8), repair_attempts: z.number().int().min(0).max(10), wall_seconds: z.number().int().min(30).max(86400) }),
   repository_onboarding: z.object({ enabled: z.boolean(), approval: z.literal("local_operator") }).optional(),
   execution: z.object({ eligible: z.boolean(), reason: z.string().max(2000) }).optional(),
+  /** Present only on servers that provide read_factory_agent_timeline. */
+  agent_timeline: z.object({ source: z.literal("codex-action-server"), enabled: z.boolean(), detail: z.string().max(300) }).optional(),
 });
 export type Capabilities = z.infer<typeof capabilitiesSchema>;
+export const observedKinds = ["assigned", "command", "file_change", "commit", "pr_opened", "check_result", "subagent_spawned", "message", "waiting", "error"] as const;
+const threadId = z.string().min(1).max(256);
+/** "Observed in Codex" for one agent. Display data only: never proof, attention or plan state. */
+export const agentTimelineSchema = z.object({
+  schema_version: z.literal(1), run_id: runId, thread_id: threadId,
+  observed: z.boolean(), status: z.enum(["observed", "unavailable"]), source: z.literal("codex-action-server"),
+  reason: z.string().max(64).nullable(), detail: z.string().max(300).nullable(),
+  events: z.array(z.object({ at: timestamp, kind: z.enum(observedKinds), summary: z.string().max(160), thread_id: threadId })).max(100),
+  children: z.array(z.object({ parent_thread: threadId, receiver_thread: threadId })).max(64),
+  omitted: z.number().int().nonnegative(), next_cursor: z.string().max(1024).nullable(),
+  freshness: z.object({ observed_at: timestamp, age_seconds: z.number().int().nonnegative(), cache: z.enum(["miss", "hit", "revalidated"]), native_updated_at: timestamp.nullable(), thread_status: z.enum(["active", "idle", "not_loaded", "system_error", "unknown"]) }).nullable(),
+  binding_verified: z.literal(false), execution_eligible: z.literal(false),
+}).refine(value => value.observed === (value.status === "observed") && value.events.every(event => event.thread_id === value.thread_id), "Inconsistent agent timeline");
+export type AgentTimeline = z.infer<typeof agentTimelineSchema>;
+/** A timeline the UI could not read; rendered as unavailable, never as an empty observation. */
+export type AgentTimelineView = AgentTimeline | { status: "error" };
 const repositoryName = z.string().min(1).max(256).refine(value => !/^[A-Za-z]:/.test(value) && !/[\x00-\x1f\x7f]/.test(value) && value.split(/[\\/]/).every(part => part !== "" && part !== "." && part !== ".."), "Expected a relative repository name");
 export const repositoryCandidateSchema = z.object({
   id: z.string().regex(/^[a-f0-9]{64}$/), name: repositoryName,

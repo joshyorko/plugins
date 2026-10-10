@@ -124,7 +124,7 @@ function renderInspector(state: ViewState, run: RunView, tasks: MapTask[], graph
   const byId = new Map(tasks.map(task => [task.id, task]));
   const criteria = graph?.criteria ?? run.control?.criteria ?? [];
   const attempts = graph?.attempts ?? run.control?.attempts ?? [];
-  const agentSection = agent ? `<section class="inspector-agent" aria-label="Selected agent">${agentToken(agent, 30)}<div><div class="eyebrow">${agent.role === "coordinator" ? "Coordinator" : "Worker"}</div><h3>${esc(agent.label)}</h3><p>${esc(livenessLabel[agent.liveness])}${agent.taskId ? ` · owns ${esc(byId.get(agent.taskId)?.title ?? agent.taskId)}` : " · no task binding reported"}</p><p class="small muted">${attempts.filter(attempt => attempt.thread_id === agent.thread).length} recorded attempts. A per-agent timeline isn't available from this server yet.</p></div></section>` : "";
+  const agentSection = agent ? `<section class="inspector-agent" aria-label="Selected agent">${agentToken(agent, 30)}<div><div class="eyebrow">${agent.role === "coordinator" ? "Coordinator" : "Worker"}</div><h3>${esc(agent.label)}</h3><p>${esc(livenessLabel[agent.liveness])}${agent.taskId ? ` · owns ${esc(byId.get(agent.taskId)?.title ?? agent.taskId)}` : " · no task binding reported"}</p><p class="small muted">${attempts.filter(attempt => attempt.thread_id === agent.thread).length} recorded attempts. ${esc(timelineNote(state, agent.thread))}</p></div></section>` : "";
   if (!selected) return `<aside class="graph-inspector inspector" aria-label="Selected task inspector">${agentSection}<p class="muted">Select a task to see why it's in its wave, what it unblocks, and its proof.</p>${followUps()}</aside>`;
   const tone = taskTone(selected.state);
   const owner = agents.find(item => item.thread === selected.owner_thread);
@@ -187,4 +187,12 @@ function changeDescription(change: GraphChange, graph: FactoryGraph): string {
   if (change.kind === "set_target") return `${change.node_id}: prefer ${change.target_id}.`;
   if (change.kind === "set_dependencies") return `${change.node_id}: current prerequisites ${graph.nodes.find(node => node.id === change.node_id)?.dependencies.join(", ") || "none"}; proposed prerequisites ${change.dependencies.join(", ") || "none"}.`;
   return `${change.nodes.length} candidates: ${change.nodes.map(node => node.title).join(", ")}.`;
+}
+/** Where this agent's activity can be seen. Observations are never attempts or proof. */
+function timelineNote(state: ViewState, thread: string): string {
+  const capability = state.capabilities?.agent_timeline;
+  if (!capability) return "A per-agent timeline isn't available from this server yet.";
+  if (!capability.enabled) return capability.detail;
+  const view = state.timelineRunId === state.selectedId ? state.timelines[thread] : undefined;
+  return view?.status === "observed" ? `Lanes shows ${view.events.length} events observed in Codex. They are not Factory proof.` : "Open Lanes to read what Codex observed for this agent.";
 }

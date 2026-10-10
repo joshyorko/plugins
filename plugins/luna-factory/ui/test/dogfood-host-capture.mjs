@@ -64,6 +64,12 @@ try {
       if (item.lanes) {
         await frame.locator('[data-action="view-mode"][data-mode="lanes"]').click();
         await frame.locator(`.lanes [data-thread-id="${item.agent}"][aria-pressed="true"]`).waitFor();
+        // Synthetic "Observed in Codex" fixtures: two observed lanes and one server-reported unavailable lane.
+        await frame.locator(".observed-events").waitFor();
+        await frame.locator(".lane-track.unavailable").waitFor();
+        assert.equal(await frame.locator(".lane-track.observed").count(), 2, "Observed lanes did not render");
+        const reads = await page.evaluate(() => window.lunaDogfoodHost.calls.filter(name => name === "read_factory_agent_timeline").length);
+        assert(reads <= 3, `Timeline reads were not bounded to the roster: ${reads}`);
       }
       if (item.width >= 1000) await frame.evaluate(() => window.scrollTo(0, 0));
       if (item.disconnect) {
@@ -74,7 +80,7 @@ try {
       if (item.params.proposal) await frame.locator('[aria-label="Review graph change"]').scrollIntoViewIfNeeded();
       if (item.params.font) assert(await frame.locator(".graph-inspector .route-list dd").first().evaluate(element => parseFloat(getComputedStyle(element).fontSize)) >= 18, "Host font size was ignored");
       const host = await page.evaluate(() => ({ calls: window.lunaDogfoodHost.calls, messages: window.lunaDogfoodHost.messages.length }));
-      assert(host.calls.every(name => ["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory"].includes(name)), "Visual capture attempted mutation or execution");
+      assert(host.calls.every(name => ["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory", "read_factory_agent_timeline"].includes(name)), "Visual capture attempted mutation or execution");
       assert.equal(host.messages, 0, "Message sent without a user click");
       const layout = await frame.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth, overflowingControls: Array.from(document.querySelectorAll("button,input,select,textarea")).filter(element => { const bounds = element.getBoundingClientRect(); return bounds.width > 0 && (bounds.left < -1 || bounds.right > innerWidth + 1); }).length }));
       assert(layout.scrollWidth <= layout.width + 1, `Horizontal overflow in ${item.file}: ${JSON.stringify(layout)}`);

@@ -1,5 +1,6 @@
 import { allowedFinishes, boundedContext, buildFollowUpPrompt, finishSchema, parseToolResult, repositoryDiscoverySchema, repositoryRegistrationSchema, runId, settingsSchema, structuredResult, type Capabilities, type FollowUpKind, type RepositoryDiscovery, type RunView, type Settings, type ToolData } from "./domain";
 import { backendCatalogSchema, graphChangeSchema, graphEnvelopeSchema, type BackendCatalog, type FactoryGraph, type GraphChange, type GraphEnvelope } from "./domain";
+import { agentTimelineSchema, type AgentTimelineView } from "./domain";
 import { roster } from "./agents";
 
 export interface Bridge {
@@ -19,9 +20,14 @@ export interface ViewState {
   proposal: GraphEnvelope["proposal"]; backends: BackendCatalog | null;
   /** View-only selection shared by Map, Lanes and the inspector. Never mutates the plan. */
   viewMode: "map" | "lanes"; selectedAgent: string | null;
+  /** "Observed in Codex" per agent thread of `timelineRunId`. Display only: never proof, attention or plan state. */
+  timelines: Record<string, AgentTimelineView>; timelineRunId: string | null;
 }
+/** Each agent's observed timeline is read at most once per interval, a few agents at a time. */
+export const TIMELINE_INTERVAL_MS = 25_000;
+export const MAX_TIMELINE_AGENTS = 8;
 export class WorkbenchController {
-  readonly state: ViewState = { runs: [], capabilities: null, settings: {}, connectionStatus: "connecting", selectedId: null, initialized: false, connected: false, refreshing: false, pending: null, error: null, notice: null, contextError: null, discovery: null, discovering: false, graph: null, graphLoading: false, graphStale: false, selectedNodeId: null, proposal: null, backends: null, viewMode: "map", selectedAgent: null };
+  readonly state: ViewState = { runs: [], capabilities: null, settings: {}, connectionStatus: "connecting", selectedId: null, initialized: false, connected: false, refreshing: false, pending: null, error: null, notice: null, contextError: null, discovery: null, discovering: false, graph: null, graphLoading: false, graphStale: false, selectedNodeId: null, proposal: null, backends: null, viewMode: "map", selectedAgent: null, timelines: {}, timelineRunId: null };
   private initialSeen = false;
   private readVersion = 0;
   private contextVersion = 0;
@@ -32,11 +38,14 @@ export class WorkbenchController {
   private contextRestoreEpoch: number | null = null;
   private changeRetry: { fingerprint: string; key: string } | null = null;
   private readonly detailsLoaded = new Set<string>();
+  private timelineVersion = 0;
+  private timelineLoading = false;
+  private readonly timelineReadAt = new Map<string, number>();
   constructor(private readonly bridge: Bridge, private readonly changed: () => void) {}
   get selected(): RunView | undefined { return this.state.runs.find(run => run.id === this.state.selectedId); }
   setConnected(connected: boolean): void { this.state.connected = connected; this.state.connectionStatus = connected ? "connected" : "connecting"; this.lastContext = ""; this.syncContext(); this.changed(); }
   setDisconnected(message: string): void {
-    ++this.readVersion; ++this.graphVersion;
+    ++this.readVersion; ++this.graphVersion; ++this.timelineVersion; this.timelineLoading = false;
     this.state.connected = false; this.state.connectionStatus = "disconnected"; this.state.error = message;
     this.state.refreshing = false; this.state.graphLoading = false; this.state.graphStale = this.state.graph !== null;
     this.detailsLoaded.clear(); this.lastContext = ""; this.syncContext(); this.changed();
@@ -90,6 +99,7 @@ export class WorkbenchController {
       ++this.graphVersion;
       this.state.graph = null; this.state.proposal = null; this.state.selectedNodeId = null; this.state.graphLoading = false;
       this.state.graphStale = false; this.state.backends = null; this.changeRetry = null; this.state.selectedAgent = null;
+      ++this.timelineVersion; this.timelineLoading = false; this.state.timelines = {}; this.state.timelineRunId = null;
     }
     this.state.selectedId = id;
     this.state.error = null;
@@ -98,7 +108,7 @@ export class WorkbenchController {
     this.state.refreshing = false;
     this.changed();
     this.syncContext();
-    if (id === null || this.detailsLoaded.has(id) || this.state.pending) return;
+    if (id === null || this.detailsLoaded.has(id) || this.state.pending) { void this.loadTimelines(); return; }
     this.state.refreshing = true;
     this.changed();
     try {
@@ -108,7 +118,7 @@ export class WorkbenchController {
       this.apply(data);
       this.syncContext();
     } catch (error) { if (version === this.readVersion) this.state.error = errorMessage(error); }
-    finally { if (version === this.readVersion) { this.state.refreshing = false; this.syncContext(); this.changed(); } }
+    finally { if (version === this.readVersion) { this.state.refreshing = false; this.syncContext(); this.changed(); void this.loadTimelines(); } }
   }
   async refresh(): Promise<void> {
     if (this.state.pending) return;
@@ -293,6 +303,37 @@ export class WorkbenchController {
   setViewMode(mode: "map" | "lanes"): void {
     if (this.state.viewMode === mode) return;
     this.state.viewMode = mode; this.changed();
+    void this.loadTimelines();
+  }
+  /**
+   * App-only reads of what Codex observed for each rostered agent, while Lanes is visible.
+   * Bounded: one read at a time, at most MAX_TIMELINE_AGENTS agents, each at most once per
+   * TIMELINE_INTERVAL_MS. Results are kept apart from runs and the graph, so they can never
+   * change attention, proof, the Map or the ChatGPT context.
+   */
+  async loadTimelines(): Promise<void> {
+    const run = this.selected;
+    if (!this.state.connected || this.state.viewMode !== "lanes" || !run || this.timelineLoading || !this.state.capabilities?.agent_timeline?.enabled) return;
+    if (this.state.timelineRunId !== run.id) { this.state.timelines = {}; this.state.timelineRunId = run.id; }
+    const now = Date.now();
+    const key = (thread: string) => `${run.id}\u0000${thread}`;
+    const due = roster(run, this.state.graph).slice(0, MAX_TIMELINE_AGENTS).filter(agent => now - (this.timelineReadAt.get(key(agent.thread)) ?? Number.NEGATIVE_INFINITY) >= TIMELINE_INTERVAL_MS);
+    if (!due.length) return;
+    const version = ++this.timelineVersion;
+    this.timelineLoading = true;
+    try {
+      for (const agent of due) {
+        this.timelineReadAt.set(key(agent.thread), now);
+        let view: AgentTimelineView = { status: "error" };
+        try {
+          const parsed = agentTimelineSchema.safeParse(structuredResult(await this.bridge.call("read_factory_agent_timeline", { run_id: run.id, thread_id: agent.thread })));
+          if (parsed.success && parsed.data.run_id === run.id && parsed.data.thread_id === agent.thread) view = parsed.data;
+        } catch { /* Shown as an unavailable observation; the run view is unaffected. */ }
+        if (version !== this.timelineVersion || this.state.selectedId !== run.id) return;
+        this.state.timelines = { ...this.state.timelines, [agent.thread]: view };
+        this.changed();
+      }
+    } finally { if (version === this.timelineVersion) this.timelineLoading = false; }
   }
   /** Selecting an agent also selects its persisted task, so one context reaches ChatGPT. */
   selectAgent(thread: string | null): void {
@@ -302,6 +343,7 @@ export class WorkbenchController {
     const task = roster(this.selected, this.state.graph).find(agent => agent.thread === thread)?.taskId;
     if (task && this.state.graph?.nodes.some(node => node.id === task)) this.state.selectedNodeId = task;
     this.changed(); this.syncContext();
+    void this.loadTimelines();
   }
   private acceptGraph(envelope: GraphEnvelope): void {
     const graph = envelope.graph;
