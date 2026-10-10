@@ -21,7 +21,7 @@ const output = join(ui, "test/live-visual-snapshots");
 const snapshotPath = resolve(ui, "../tests/fixtures/github/issue-graph-67.json");
 const snapshotBytes = await readFile(snapshotPath, "utf8");
 const snapshot = JSON.parse(snapshotBytes);
-const readOnly = new Set(["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory", "open_factory_panel"]);
+const readOnly = new Set(["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory", "open_factory_panel", "read_factory_delivery", "inspect_factory_issue_graph"]);
 
 const directory = await mkdtemp(join(tmpdir(), "luna-live-plan-"));
 const probe = createNetServer(); probe.listen(0, "127.0.0.1"); await once(probe, "listening");
