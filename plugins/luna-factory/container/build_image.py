@@ -57,6 +57,7 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/docs/control-wire.md",
     "plugins/luna-factory/docs/dogfood-findings.md",
     "plugins/luna-factory/docs/mission-control.md",
+    "plugins/luna-factory/server/src/campaign.rs",
     "plugins/luna-factory/server/src/config.rs",
     "plugins/luna-factory/server/src/lib.rs",
     "plugins/luna-factory/server/src/lifecycle.rs",
@@ -70,6 +71,7 @@ ALLOWED_RELEASE_DELTA = {
     # #69/#70: receipt attribution, run timing, source display and typed blocker projection.
     "plugins/luna-factory/server/src/main.rs",
     "plugins/luna-factory/server/src/store.rs",
+    "plugins/luna-factory/server/tests/campaign.rs",
     "plugins/luna-factory/server/tests/http_security.rs",
     "plugins/luna-factory/server/tests/http_integration.rs",
     "plugins/luna-factory/server/tests/mcp_contract.rs",
