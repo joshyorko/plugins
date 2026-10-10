@@ -225,7 +225,7 @@ if (fixturePreview) {
     applyHostContext();
     // Single-run tool results render immediately; only fetch missing workbench controls.
     if (!controller.state.initialized || !controller.state.capabilities) void controller.refresh().then(readSelectedPlan);
-    else readSelectedPlan();
+    else { readSelectedPlan(); void controller.loadCampaigns(); }
   }).catch(() => controller.setDisconnected("Could not connect to the MCP Apps host. Reopen Luna Factory from the host to reconnect."));
   // Read-only status polling. It never starts a model, and pauses while hidden or editing.
   const refreshTimer = window.setInterval(() => {

@@ -6,7 +6,8 @@ import { WorkbenchController, type Bridge } from "../src/controller";
 import { renderLanes } from "../src/lanes";
 import { nowSentence, runTier, SinceTracker, statusLabel } from "../src/narrative";
 import { renderWorkbench } from "../src/view";
-import { fixtureBackends, fixtureCampaignPlan, fixturePlanningRun, fixtureRun, fixtureSwarmRun, fixtureWorkbench } from "./fixtures";
+import { fixtureBackends, fixtureCampaign, fixtureCampaignPlan, fixturePlanningRun, fixtureRun, fixtureSwarmRun, fixtureWorkbench } from "./fixtures";
+import { campaignListSchema } from "../src/domain";
 
 const node = (id: string, dependencies: string[] = [], state = "candidate") => ({ id, title: id, dependencies, state, owner_thread: null });
 
@@ -177,5 +178,115 @@ describe("motion and message copy", () => {
     expect(root.textContent).toContain("Available once the current read finishes");
     renderWorkbench(root, controller.state, null, false, { surface: "inline", canSendFollowUps: false, canExpand: true });
     expect(root.textContent).toContain("unavailable in this host");
+  });
+});
+
+describe("campaign grouping", () => {
+  const decision = () => fixtureRun({ id: "d1", state: "NEEDS_INPUT", pending_decision: { id: "d", question: "Pick?" } });
+  const home = () => ({ ...fixtureWorkbench, runs: [decision(), fixtureSwarmRun(), fixtureCampaignPlan().run, fixtureRun({ id: "b1", state: "BLOCKED" })] });
+  function homeController(list: () => unknown) {
+    const call = vi.fn<Bridge["call"]>().mockImplementation(async tool => tool === "list_factory_campaigns" ? list() : tool === "refresh_factory" ? { structuredContent: home() } : { isError: true, content: [{ type: "text", text: "unexpected" }] });
+    const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
+    controller.setConnected(true);
+    controller.receiveInitial({ structuredContent: home() });
+    return { controller, call };
+  }
+  const heading = (root: HTMLElement, group: string) => Array.from(root.querySelector(`.group-${group} h2`)?.childNodes ?? []).filter(child => child.nodeType === Node.TEXT_NODE).map(child => child.textContent).join("");
+  it("nests the plan under its campaign row and keeps unlinked runs in their tiers", async () => {
+    const { controller, call } = homeController(() => ({ structuredContent: { campaigns: [fixtureCampaign()] } }));
+    await controller.refresh();
+    expect(call).toHaveBeenCalledWith("list_factory_campaigns", { limit: 100 });
+    expect(controller.state.error).toBeNull();
+    const root = document.createElement("div");
+    renderWorkbench(root, controller.state, null, false);
+    const entity = root.querySelector(".group-campaigns .campaign-entity");
+    expect(heading(root, "campaigns")).toBe("Parent campaigns");
+    // Opening the campaign opens its planning run's Campaign Map.
+    const row = entity?.querySelector<HTMLAnchorElement>(".campaign-parent-row");
+    expect(row?.dataset.runId).toBe("campaign-actions-v2");
+    expect(row?.getAttribute("href")).toBe("/runs/campaign-actions-v2");
+    expect(row?.textContent).toContain("GitHub #101 · reported by GitHub");
+    expect(row?.textContent).toContain("14 planned tasks · Execution hasn't started.");
+    expect(row?.textContent).toContain("Planned · not started");
+    const children = Array.from(entity?.querySelectorAll<HTMLElement>(".campaign-children > li") ?? []);
+    expect(children.map(child => child.querySelector(".child-kind")?.textContent ?? child.textContent)).toEqual(["Plan", "No execution runs yet"]);
+    expect(children[0]?.querySelector<HTMLAnchorElement>("a")?.dataset.runId).toBe("campaign-actions-v2");
+    // The linked plan leaves the unlinked tiers; everything else keeps its current grouping.
+    expect(root.querySelector(".group-planned")).toBeNull();
+    expect(root.querySelectorAll('[data-run-id="campaign-actions-v2"]')).toHaveLength(2);
+    expect(root.querySelector(".group-needs")?.textContent).toContain("Pick?");
+    expect(root.querySelector(".group-live [data-run-id='swarm-fixture']")).not.toBeNull();
+    expect(root.querySelector(".group-history [data-run-id='b1']")).not.toBeNull();
+    expect(root.querySelector(".home-head p")?.textContent).toBe("1 campaign · 1 needs you · 1 in progress · 1 in history");
+    // Campaign data never creates attention or proof.
+    expect(entity?.querySelector(".tier-needs")).toBeNull();
+    expect(entity?.textContent).not.toContain("proven ·");
+    const order = Array.from(root.querySelectorAll(".home-group")).map(section => section.className.replace("home-group group-", ""));
+    expect(order).toEqual(["needs", "campaigns", "live", "history"]);
+  });
+  it("never hides a real decision inside a campaign", async () => {
+    const linked = fixtureCampaign({ run_ids: ["d1"], runs: [{ id: "d1", state: "NEEDS_INPUT", updated_at: 1791141000 }] });
+    const { controller } = homeController(() => ({ structuredContent: { campaigns: [linked] } }));
+    await controller.refresh();
+    const root = document.createElement("div");
+    renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector(".group-needs [data-run-id='d1']")).not.toBeNull();
+    expect(root.querySelector(".group-campaigns .campaign-child.tier-needs[data-run-id='d1']")).not.toBeNull();
+    expect(root.querySelector(".group-campaigns .campaign-parent-row")?.textContent).toContain("1 linked run.");
+  });
+  it("keeps the current grouping when the server has no campaign tool", async () => {
+    const { controller } = homeController(() => ({ isError: true, content: [{ type: "text", text: "unknown_tool" }] }));
+    await controller.refresh();
+    expect(controller.state.campaigns).toBeNull();
+    expect(controller.state.error).toBeNull();
+    const root = document.createElement("div");
+    renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector(".group-campaigns")).toBeNull();
+    expect(root.querySelector(".group-planned [data-run-id='campaign-actions-v2']")).not.toBeNull();
+    expect(root.querySelector(".home-head p")?.textContent).toBe("1 needs you · 1 in progress · 1 planned · 1 in history");
+  });
+  it("keeps the last valid grouping, marked stale, after a failed or inconsistent read", async () => {
+    let next: unknown = { structuredContent: { campaigns: [fixtureCampaign()] } };
+    const { controller } = homeController(() => next);
+    await controller.refresh();
+    for (const bad of [
+      { isError: true, content: [{ type: "text", text: "read failed" }] },
+      { structuredContent: { campaigns: [fixtureCampaign({ planning: { ...fixtureCampaign().planning, run_id: "other-run" } })] } },
+      { structuredContent: { campaigns: [{ ...fixtureCampaign(), promotion: { allowed: true, reason: "forged" } }] } },
+      { structuredContent: { campaigns: [fixtureCampaign({ run_ids: ["campaign-actions-v2"] })] } },
+    ]) {
+      next = bad;
+      await controller.refresh();
+      expect(controller.state.campaigns?.map(campaign => campaign.id)).toEqual(["campaign-entity-101"]);
+      expect(controller.state.campaignsStale).toBe(true);
+      expect(controller.state.error).toBeNull();
+    }
+    const root = document.createElement("div");
+    renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector(".group-campaigns [role='status']")?.textContent).toContain("last valid read");
+    next = { structuredContent: { campaigns: [fixtureCampaign()] } };
+    await controller.refresh();
+    expect(controller.state.campaignsStale).toBe(false);
+    controller.setDisconnected("Host disconnected");
+    expect(controller.state.campaignsStale).toBe(true);
+  });
+  it("labels the campaign parent on its Campaign Map without exposing internal identities", async () => {
+    const { controller } = await campaignController();
+    controller.state.campaigns = [fixtureCampaign()];
+    const root = document.createElement("div");
+    renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector(".campaign-head .eyebrow")?.textContent).toContain("GitHub #101 · reported by GitHub");
+    const primary = root.cloneNode(true) as HTMLElement;
+    primary.querySelector("#evidence-audit")?.remove();
+    primary.querySelector(".planning-editor")?.remove();
+    primary.querySelector(".inspector .route-list")?.remove();
+    for (const internal of ["Revision", "claim", "1148934299", "I_kwDOsynthetic101", "sha256:"]) expect(primary.textContent).not.toContain(internal);
+  });
+  it("accepts the server projection shape and rejects contradictory counts", () => {
+    expect(campaignListSchema.safeParse({ campaigns: [fixtureCampaign()] }).success).toBe(true);
+    const counts = fixtureCampaign();
+    counts.planning.tasks.total += 1;
+    expect(campaignListSchema.safeParse({ campaigns: [counts] }).success).toBe(false);
+    expect(campaignListSchema.safeParse({ campaigns: [{ ...fixtureCampaign(), planning: { ...fixtureCampaign().planning, planning_only: false } }] }).success).toBe(false);
   });
 });

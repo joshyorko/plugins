@@ -1,4 +1,4 @@
-import { allowedFinishes, finishLabels, needsOperatorDecision, runPath, type FollowUpKind, type FollowUpTask, type RunView } from "./domain";
+import { allowedFinishes, campaignStatusLabel, finishLabels, needsOperatorDecision, parentLabel, runPath, type CampaignView, type FollowUpKind, type FollowUpTask, type RunView } from "./domain";
 import type { ViewState } from "./controller";
 import { renderMission, renderProposalReview, renderTargets, missionTasks } from "./graph-view";
 import { layoutWaves } from "./campaign-map";
@@ -131,9 +131,13 @@ function renderHome(state: ViewState, canStart: boolean, options: WorkbenchOptio
     { key: "planned", title: "Planned · not started", tiers: ["planned"], empty: "" },
     { key: "history", title: "History", tiers: ["finished", "stopped", "unverified"], empty: "" },
   ];
-  const counts = new Map(groups.map(group => [group.key, state.runs.filter(run => group.tiers.includes(runTier(run))).length]));
+  const campaigns = state.campaigns ?? [];
+  const linked = new Set(campaigns.flatMap(campaign => [campaign.planning_run_id, ...campaign.run_ids]));
+  // Linked runs move under their campaign, except that a real decision is never hidden there.
+  const members = (group: (typeof groups)[number]) => state.runs.filter(run => group.tiers.includes(runTier(run)) && (group.key === "needs" || !linked.has(run.id)));
+  const counts = new Map(groups.map(group => [group.key, members(group).length]));
   const short: Record<string, [string, string]> = { needs: ["needs you", "need you"], live: ["in progress", "in progress"], planned: ["planned", "planned"], history: ["in history", "in history"] };
-  const summary = groups.filter(group => counts.get(group.key)).map(group => { const count = counts.get(group.key) ?? 0; return `${count} ${short[group.key]![count === 1 ? 0 : 1]}`; }).join(" · ");
+  const summary = [...(campaigns.length ? [`${campaigns.length} ${campaigns.length === 1 ? "campaign" : "campaigns"}`] : []), ...groups.filter(group => counts.get(group.key)).map(group => { const count = counts.get(group.key) ?? 0; return `${count} ${short[group.key]![count === 1 ? 0 : 1]}`; })].join(" · ");
   const row = (run: RunView): string => {
     const tier = runTier(run);
     const changes = options.since?.changes(run);
@@ -144,13 +148,36 @@ function renderHome(state: ViewState, canStart: boolean, options: WorkbenchOptio
     </a></li>`;
   };
   const sections = groups.map(group => {
-    const runs = state.runs.filter(run => group.tiers.includes(runTier(run)));
-    if (!runs.length && !group.empty) return "";
-    return `<section class="home-group group-${group.key}" aria-labelledby="group-${group.key}"><h2 id="group-${group.key}">${group.key === "needs" ? icon("alert", 14) : ""}${group.title}<span>${runs.length}</span></h2>${runs.length ? `<ul class="campaign-list">${runs.map(row).join("")}</ul>` : `<p class="group-empty">${group.empty}</p>`}</section>`;
+    const runs = members(group);
+    const section = !runs.length && !group.empty ? "" : `<section class="home-group group-${group.key}" aria-labelledby="group-${group.key}"><h2 id="group-${group.key}">${group.key === "needs" ? icon("alert", 14) : ""}${group.title}<span>${runs.length}</span></h2>${runs.length ? `<ul class="campaign-list">${runs.map(row).join("")}</ul>` : `<p class="group-empty">${group.empty}</p>`}</section>`;
+    return group.key === "needs" ? section + renderCampaignGroup(state, campaigns, options) : section;
   }).join("");
   return `<section class="home-head"><h1>Campaigns</h1><p>${escape(summary || "No runs yet")}</p><p class="home-hint">${icon("chat")}Ask ChatGPT to plan work with Luna Factory. Plans appear here before anything runs.</p></section>
     ${!state.capabilities?.repositories.length ? `<div class="notice repository-empty"><div><strong>No repositories configured</strong><p>Choose a local repository offered by your operator, then request access.</p></div>${button("repositories", "Add repository", { icon: "plus", disabled: !state.connected || Boolean(state.pending) })}</div>` : ""}
-    ${state.runs.length ? sections : `<section class="empty empty-sky">${lunaMark(40)}<h2>No runs yet</h2><p>Ask ChatGPT to plan an objective with Luna Factory, or plan one manually.<br>Every run keeps its progress and evidence here.</p>${button("start", "Plan work manually", { primary: true, icon: "plus", disabled: !canStart }).replace('id="action-start"', 'id="action-start-empty"')}</section>`}`;
+    ${state.runs.length || campaigns.length ? sections : `<section class="empty empty-sky">${lunaMark(40)}<h2>No runs yet</h2><p>Ask ChatGPT to plan an objective with Luna Factory, or plan one manually.<br>Every run keeps its progress and evidence here.</p>${button("start", "Plan work manually", { primary: true, icon: "plus", disabled: !canStart }).replace('id="action-start"', 'id="action-start-empty"')}</section>`}`;
+}
+
+const campaignTier = (status: CampaignView["status"]): Tier => ({ planned: "planned", promoted: "unverified", finished: "finished", stopped: "stopped" } satisfies Record<CampaignView["status"], Tier>)[status];
+const plannedTasks = (count: number): string => count === 1 ? "1 planned task" : `${count} planned tasks`;
+/** Campaign row, then its planning plan, then any linked runs. Every value is a named campaign or run field. */
+function renderCampaignGroup(state: ViewState, campaigns: CampaignView[], options: WorkbenchOptions): string {
+  if (!campaigns.length) return "";
+  const child = (id: string, kind: string, run: RunView | undefined, fallback: string): string => {
+    const tier = run ? runTier(run) : "unverified";
+    return `<li><a id="campaign-child-${escape(id)}" class="campaign-child tier-${tier}" href="${runPath(id)}" data-run-id="${escape(id)}"><span class="child-kind">${escape(kind)}</span><span class="child-main"><strong>${escape(run ? run.objective : fallback)}</strong>${run ? `<span class="row-now">${escape(nowSentence(run))}</span>` : ""}</span><span class="row-side">${run ? `${statusMark(tier, statusLabel(run))}${proofLine(run)}` : '<span class="row-fresh">Open to read its current state</span>'}</span></a></li>`;
+  };
+  const items = campaigns.map(campaign => {
+    const plan = state.runs.find(run => run.id === campaign.planning_run_id);
+    const tier = campaignTier(campaign.status);
+    const execution = campaign.run_ids.length ? `${campaign.run_ids.length} linked ${campaign.run_ids.length === 1 ? "run" : "runs"}` : campaign.status === "planned" ? "Execution hasn't started" : "No linked runs reported";
+    const runs = campaign.run_ids.map(id => child(id, "Run", state.runs.find(run => run.id === id), "Linked run")).join("");
+    return `<li class="campaign-entity"><a id="campaign-entity-${escape(campaign.id)}" class="campaign-row campaign-parent-row tier-${tier}" href="${runPath(campaign.planning_run_id)}" data-run-id="${escape(campaign.planning_run_id)}">
+      <span class="row-sky">${plan ? miniMap(plan) || phaseGlyph(0, 0, 22) : phaseGlyph(0, 0, 22)}</span>
+      <span class="row-main"><span class="row-repo">${escape(campaign.repository)} · ${escape(parentLabel(campaign))}</span><strong>${escape(campaign.title)}</strong><span class="row-now">${escape(`${plannedTasks(campaign.planning.tasks.total)} · ${execution}.`)}</span></span>
+      <span class="row-side">${statusMark(tier, campaignStatusLabel(campaign.status))}<span class="row-fresh">${escape(freshness(campaign.updated_at, options.now))}</span></span>
+    </a><ul class="campaign-children" aria-label="Plan and runs">${child(campaign.planning_run_id, "Plan", plan, `Planning graph · ${plannedTasks(campaign.planning.tasks.total)}`)}${runs || '<li class="campaign-child-empty">No execution runs yet</li>'}</ul></li>`;
+  }).join("");
+  return `<section class="home-group group-campaigns" aria-labelledby="group-campaigns"><h2 id="group-campaigns">Parent campaigns<span>${campaigns.length}</span></h2>${state.campaignsStale ? '<p class="group-empty" role="status">Campaign grouping could not be refreshed. Showing the last valid read.</p>' : ""}<ul class="campaign-list">${items}</ul></section>`;
 }
 
 function renderCampaign(run: RunView, state: ViewState, options: WorkbenchOptions): string {
@@ -165,8 +192,9 @@ function renderCampaign(run: RunView, state: ViewState, options: WorkbenchOption
   const baseline = options.since?.baseline(run.id);
   const eyebrow = attention ? "Needs you" : run.planning_only ? "Plan navigation" : run.blocker ? "Execution blocker" : "Next safe action";
   const headline = attention ? run.pending_decision?.question || action.label : run.planning_only ? action.label : run.blocker || action.label;
+  const campaign = state.campaigns?.find(item => item.planning_run_id === run.id || item.run_ids.includes(run.id));
   return `<section class="campaign-head">
-      <div class="eyebrow">${escape(run.repository)} · ${escape(finishLabels[run.finish])}</div>
+      <div class="eyebrow">${escape(run.repository)} · ${escape(finishLabels[run.finish])}${campaign ? ` · <span class="campaign-parent">${escape(parentLabel(campaign))}</span>` : ""}</div>
       <h1>${escape(run.objective)}</h1>
       <p class="statusline">${statusMark(tier, statusLabel(run))}${proofLine(run)}<span class="fresh">${escape(freshness(run.updated_at, options.now))}</span></p>
       <div class="story">${changes?.lines.length ? `<p class="story-kicker">Since you opened Luna Factory at ${escape(clock(changes.since))}</p><ul>${changes.lines.map(line => `<li>${escape(line)}</li>`).join("")}</ul>` : `<p class="story-now">${escape(attention ? run.delta || "No new change was reported." : nowSentence(run))}</p>${baseline ? `<p class="story-kicker">No new server changes since ${escape(clock(baseline))}.</p>` : ""}`}${run.remaining_gap && tier !== "planned" ? `<p class="story-gap"><span>Still needed</span>${escape(run.remaining_gap)}</p>` : ""}</div>

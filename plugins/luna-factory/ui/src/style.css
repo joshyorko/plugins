@@ -156,6 +156,17 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .row-now { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .row-side { display: grid; justify-items: end; gap: 4px; }
 .row-fresh { color: var(--faint); font-size: 11px; }
+/* Campaign grouping: the campaign row, then its plan and any runs, indented to the row text. */
+.campaign-entity { border-bottom: 1px solid var(--line); }
+.campaign-entity > .campaign-row { border-bottom: 0; }
+.campaign-children { list-style: none; margin: 0 0 10px 90px; padding: 0 0 0 12px; border-left: 1px solid var(--line-strong); display: grid; gap: 2px; }
+.campaign-child { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px 10px; border-radius: 6px; transition: background var(--t-quick) var(--ease); }
+.campaign-child:hover { background: var(--panel); }
+.campaign-child.tier-needs { box-shadow: inset 3px 0 var(--needs); background: var(--needs-surface); }
+.child-kind { font-size: 11px; font-weight: 620; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; }
+.child-main { display: grid; gap: 1px; min-width: 0; }
+.child-main strong { font-weight: 560; font-size: 13px; overflow-wrap: anywhere; }
+.campaign-child-empty { color: var(--faint); font-size: 12px; padding: 4px 10px 6px 66px; }
 .mini-map { max-width: 100%; height: auto; }
 .mini-map .mini { fill: currentColor; }
 .mini-map .mini.tone-candidate, .mini-map .mini.tone-unknown { fill: none; stroke: var(--faint); stroke-width: 1.2; }
@@ -403,6 +414,10 @@ h1, h2, h3, h4, p { margin-top: 0; }
   .campaign-head h1 { font-size: 21px; }
   .campaign-row { grid-template-columns: 44px minmax(0, 1fr); }
   .row-side { grid-column: 2; display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 4px 12px; }
+  .campaign-children { margin-left: 26px; }
+  .campaign-child { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .campaign-child .row-side { grid-column: 1; }
+  .campaign-child-empty { padding-left: 10px; }
   .decision-panel.compact { grid-template-columns: minmax(0, 1fr); }
   .decision-panel.compact .run-controls { grid-column: 1; grid-row: auto; justify-content: flex-start; margin-top: 6px; }
   .map-scroll { overflow: visible; background-image: none; }

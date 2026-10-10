@@ -32,6 +32,11 @@ pins the complete dependency graph.
   fallback or invented client-to-server command.
 - Home groups runs into Needs you, In progress, Planned · not started, and History.
   Needs you is exactly `needsOperatorDecision`. List summaries may omit receipts.
+  When the server offers the read-only `list_factory_campaigns`, Parent campaigns
+  shows each campaign row, then its planning plan, then any linked runs. Linked runs
+  leave the other tiers, but a linked run that needs a decision still appears in Needs
+  you. Opening a campaign opens its planning run. A failed read keeps the last valid
+  grouping, marked stale. A server without the tool keeps the ungrouped tiers.
   Opening a run calls `get_factory_run`, then reads its plan with `get_factory_graph`;
   both are reads. Map and Lanes share one task-and-agent selection. See
   `../docs/mission-control.md` for the design and the contract matrix.

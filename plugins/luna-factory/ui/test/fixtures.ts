@@ -1,4 +1,4 @@
-import type { BackendCatalog, GraphEnvelope, RunView, Workbench } from "../src/domain";
+import type { BackendCatalog, CampaignView, GraphEnvelope, RunView, Workbench } from "../src/domain";
 
 export function fixtureRun(overrides: Partial<RunView> = {}): RunView {
   const run: RunView = {
@@ -117,6 +117,23 @@ export function fixtureCampaignPlan(): { run: RunView; graph: GraphEnvelope } {
   run.presentation!.criteria = { proven: 0, failed: 0, unproved: 1, mandatory: 1 };
   const graph: GraphEnvelope = { graph: { run_id: run.id, revision: run.control!.revision, repository: { alias: run.repository, identity, base_head: "c0ffee", subject: run.current_subject }, planning_only: true, nodes, criteria, attempts: [], claim: { held: false, status: "released" }, changes: [] }, proposal: null };
   return { run, graph };
+}
+
+/**
+ * A `list_factory_campaigns` entry linking `fixtureCampaignPlan()` to a GitHub parent. Producible
+ * today with `create_factory_campaign`; the parent number and URL are synthetic display assertions.
+ */
+export function fixtureCampaign(overrides: Partial<CampaignView> = {}): CampaignView {
+  const { run, graph } = fixtureCampaignPlan();
+  return {
+    id: "campaign-entity-101", repository: run.repository,
+    parent: { provider: "github", item_id: "1148934299:I_kwDOsynthetic101", revision: `sha256:${"1".repeat(64)}`, display: { number: 101, url: "https://github.com/example/actions/issues/101" } },
+    title: "Actions v2: uv packaging and cross-platform CI", finish: run.finish, status: "planned",
+    planning_run_id: run.id, run_ids: [], created_at: 1791139000, updated_at: 1791140400,
+    planning: { run_id: run.id, revision: graph.graph.revision, planning_only: true, tasks: { total: graph.graph.nodes.length, candidate: graph.graph.nodes.length, ready: 0, running: 0, verify: 0, done: 0, blocked: 0 } },
+    runs: [], promotion: { allowed: false, reason: "execution_not_qualified" },
+    ...overrides,
+  };
 }
 
 /**

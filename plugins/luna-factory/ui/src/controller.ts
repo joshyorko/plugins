@@ -1,5 +1,6 @@
 import { allowedFinishes, boundedContext, buildFollowUpPrompt, finishSchema, parseToolResult, repositoryDiscoverySchema, repositoryRegistrationSchema, runId, settingsSchema, structuredResult, type Capabilities, type FollowUpKind, type RepositoryDiscovery, type RunView, type Settings, type ToolData } from "./domain";
 import { backendCatalogSchema, graphChangeSchema, graphEnvelopeSchema, type BackendCatalog, type FactoryGraph, type GraphChange, type GraphEnvelope } from "./domain";
+import { campaignListSchema, type CampaignView } from "./domain";
 import { roster } from "./agents";
 
 export interface Bridge {
@@ -19,15 +20,18 @@ export interface ViewState {
   proposal: GraphEnvelope["proposal"]; backends: BackendCatalog | null;
   /** View-only selection shared by Map, Lanes and the inspector. Never mutates the plan. */
   viewMode: "map" | "lanes"; selectedAgent: string | null;
+  /** Last valid `list_factory_campaigns` read; null when the server has not provided one. */
+  campaigns: CampaignView[] | null; campaignsStale: boolean;
 }
 export class WorkbenchController {
-  readonly state: ViewState = { runs: [], capabilities: null, settings: {}, connectionStatus: "connecting", selectedId: null, initialized: false, connected: false, refreshing: false, pending: null, error: null, notice: null, contextError: null, discovery: null, discovering: false, graph: null, graphLoading: false, graphStale: false, selectedNodeId: null, proposal: null, backends: null, viewMode: "map", selectedAgent: null };
+  readonly state: ViewState = { runs: [], capabilities: null, settings: {}, connectionStatus: "connecting", selectedId: null, initialized: false, connected: false, refreshing: false, pending: null, error: null, notice: null, contextError: null, discovery: null, discovering: false, graph: null, graphLoading: false, graphStale: false, selectedNodeId: null, proposal: null, backends: null, viewMode: "map", selectedAgent: null, campaigns: null, campaignsStale: false };
   private initialSeen = false;
   private readVersion = 0;
   private contextVersion = 0;
   private contextQueue = Promise.resolve();
   private lastContext = "";
   private graphVersion = 0;
+  private campaignVersion = 0;
   private selectionEpoch = 0;
   private contextRestoreEpoch: number | null = null;
   private changeRetry: { fingerprint: string; key: string } | null = null;
@@ -36,8 +40,9 @@ export class WorkbenchController {
   get selected(): RunView | undefined { return this.state.runs.find(run => run.id === this.state.selectedId); }
   setConnected(connected: boolean): void { this.state.connected = connected; this.state.connectionStatus = connected ? "connected" : "connecting"; this.lastContext = ""; this.syncContext(); this.changed(); }
   setDisconnected(message: string): void {
-    ++this.readVersion; ++this.graphVersion;
+    ++this.readVersion; ++this.graphVersion; ++this.campaignVersion;
     this.state.connected = false; this.state.connectionStatus = "disconnected"; this.state.error = message;
+    this.state.campaignsStale = this.state.campaigns !== null;
     this.state.refreshing = false; this.state.graphLoading = false; this.state.graphStale = this.state.graph !== null;
     this.detailsLoaded.clear(); this.lastContext = ""; this.syncContext(); this.changed();
   }
@@ -119,12 +124,32 @@ export class WorkbenchController {
     this.changed();
     try {
       const args = this.state.selectedId ? { run_id: this.state.selectedId } : {};
-      const data = parseToolResult(await this.bridge.call("refresh_factory", args));
-      if (version !== this.readVersion) return;
+      const result = await this.bridge.call("refresh_factory", args);
+      // The grouping has its own fence, so a superseded run read still refreshes it.
+      const grouping = this.loadCampaigns();
+      const data = parseToolResult(result);
+      if (version !== this.readVersion) { await grouping; return; }
       this.apply(data);
       this.syncContext();
+      await grouping;
     } catch (error) { if (version === this.readVersion) this.state.error = errorMessage(error); }
     finally { if (version === this.readVersion) { this.state.refreshing = false; this.syncContext(); this.changed(); } }
+  }
+  /**
+   * Read-only campaign grouping. A server without the tool, or a failed or inconsistent read,
+   * never blocks the run list: the last valid grouping is kept and marked stale, otherwise
+   * runs keep their ungrouped tiers. Campaign data never feeds attention or proof.
+   */
+  async loadCampaigns(): Promise<void> {
+    if (!this.state.connected) return;
+    const version = ++this.campaignVersion;
+    try {
+      const parsed = campaignListSchema.parse(structuredResult(await this.bridge.call("list_factory_campaigns", { limit: 100 })));
+      if (version !== this.campaignVersion) return;
+      this.state.campaigns = parsed.campaigns; this.state.campaignsStale = false;
+    } catch {
+      if (version === this.campaignVersion) this.state.campaignsStale = this.state.campaigns !== null;
+    } finally { if (version === this.campaignVersion) this.changed(); }
   }
   async sendOwnerInput(input: string): Promise<boolean> {
     const run = this.selected;

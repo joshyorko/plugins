@@ -27,6 +27,7 @@ const cases = [
   { file: "swarm-map-synthetic.png", width: 1280, height: 900, params: { surface: "global", mode: "fullscreen", scenario: "swarm", graph: "1", node: "child:child-1" }, agent: "child-1" },
   { file: "swarm-lanes-synthetic-dark.png", width: 1280, height: 900, params: { surface: "global", mode: "fullscreen", theme: "dark", scenario: "swarm", graph: "1", node: "child:child-1" }, agent: "child-1", lanes: true },
   { file: "home-light.png", width: 1280, height: 860, params: { surface: "global", mode: "fullscreen", scenario: "home" } },
+  { file: "home-campaign-mobile-dark.png", width: 390, height: 844, params: { surface: "global", theme: "dark", platform: "mobile", scenario: "home" }, scroll: ".group-campaigns" },
   { file: "inline-campaign-light.png", width: 720, height: 420, params: { surface: "inline", scenario: "campaign" } },
 ];
 const server = await createServer({ root: ui, configFile: join(ui, "vite.config.ts"), server: { host: "127.0.0.1", port: 0, strictPort: true } });
@@ -46,6 +47,10 @@ try {
       const frame = page.frames().find(frame => frame.url().endsWith("/index.html"));
       assert(frame, "Production App iframe did not mount");
       await frame.locator(".workbench").waitFor();
+      // Campaign grouping is a separate read; wait for it so every capture is deterministic.
+      if (item.params.scenario !== "error") await page.waitForFunction(() => window.lunaDogfoodHost.calls.includes("list_factory_campaigns"));
+      if (item.params.scenario === "home") await frame.locator(".group-campaigns .campaign-entity .campaign-children .campaign-child").first().waitFor();
+      if (item.params.scenario === "campaign" && item.params.surface !== "inline") await frame.locator(".campaign-head .campaign-parent").waitFor();
       if (item.params.graph) {
         const node = frame.locator(`[data-node-id="${item.params.node ?? "task-b"}"]`);
         await frame.locator(`[data-node-id="${item.params.node ?? "task-b"}"][aria-pressed="true"]`).waitFor();
@@ -66,6 +71,8 @@ try {
         await frame.locator(`.lanes [data-thread-id="${item.agent}"][aria-pressed="true"]`).waitFor();
       }
       if (item.width >= 1000) await frame.evaluate(() => window.scrollTo(0, 0));
+      // Clear the sticky app bar so the section heading stays visible in the capture.
+      if (item.scroll) await frame.locator(item.scroll).evaluate(element => { element.scrollIntoView({ block: "start" }); window.scrollBy(0, -(document.querySelector(".appbar")?.getBoundingClientRect().height ?? 0) - 8); });
       if (item.disconnect) {
         await page.evaluate(() => window.lunaDogfoodHost.disconnect());
         await frame.locator('[data-connection="disconnected"]').waitFor();
@@ -74,7 +81,7 @@ try {
       if (item.params.proposal) await frame.locator('[aria-label="Review graph change"]').scrollIntoViewIfNeeded();
       if (item.params.font) assert(await frame.locator(".graph-inspector .route-list dd").first().evaluate(element => parseFloat(getComputedStyle(element).fontSize)) >= 18, "Host font size was ignored");
       const host = await page.evaluate(() => ({ calls: window.lunaDogfoodHost.calls, messages: window.lunaDogfoodHost.messages.length }));
-      assert(host.calls.every(name => ["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory"].includes(name)), "Visual capture attempted mutation or execution");
+      assert(host.calls.every(name => ["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory", "list_factory_campaigns"].includes(name)), "Visual capture attempted mutation or execution");
       assert.equal(host.messages, 0, "Message sent without a user click");
       const layout = await frame.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth, overflowingControls: Array.from(document.querySelectorAll("button,input,select,textarea")).filter(element => { const bounds = element.getBoundingClientRect(); return bounds.width > 0 && (bounds.left < -1 || bounds.right > innerWidth + 1); }).length }));
       assert(layout.scrollWidth <= layout.width + 1, `Horizontal overflow in ${item.file}: ${JSON.stringify(layout)}`);

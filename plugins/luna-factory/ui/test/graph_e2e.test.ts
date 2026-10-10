@@ -72,7 +72,8 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
     }, { timeout: 10_000, interval: 50 });
     const catalog = await rpc("tools/list", {}) as { tools: { name: string; _meta?: { ui?: { visibility?: string[] } } }[] };
     const modelTools = new Set(catalog.tools.filter(t => t._meta?.ui?.visibility?.includes("model") ?? true).map(t => t.name));
-    for (const name of ["create_factory_graph", "get_factory_graph", "propose_factory_change", "apply_factory_change", "get_factory_backends"]) expect(modelTools.has(name)).toBe(true);
+    for (const name of ["create_factory_graph", "get_factory_graph", "propose_factory_change", "apply_factory_change", "get_factory_backends", "create_factory_campaign", "list_factory_campaigns", "get_factory_campaign", "promote_factory_campaign"]) expect(modelTools.has(name)).toBe(true);
+    expect(catalog.tools).toHaveLength(26); expect(modelTools.size).toBe(18);
     const call = async (name: string, args: Record<string, unknown>) => {
       calls.push(name);
       return CallToolResultSchema.parse(await rpc("tools/call", { name, arguments: args }));

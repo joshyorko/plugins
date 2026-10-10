@@ -89,6 +89,38 @@ export const graphEnvelopeSchema = z.object({
   proposal: proposalSchema.nullable(),
 });
 export type GraphEnvelope = z.infer<typeof graphEnvelopeSchema>;
+const count = z.number().int().nonnegative().max(10_000);
+/** `list_factory_campaigns`. Parent display fields are supplied assertions, never proof. */
+const campaignSchema = z.object({
+  id: runId, repository: z.string().min(1).max(64),
+  parent: z.object({ provider: nodeId, item_id: nodeId, revision: nodeId, display: z.object({ number: z.number().int().positive().refine(Number.isSafeInteger).nullable(), url: z.string().max(2048).nullable() }).nullable() }),
+  title: z.string().min(1).max(1000), finish: finishSchema, status: z.enum(["planned", "promoted", "finished", "stopped"]),
+  planning_run_id: runId, run_ids: z.array(runId).max(64), created_at: timestamp, updated_at: timestamp,
+  planning: z.object({ run_id: runId, revision, planning_only: z.literal(true), tasks: z.object({ total: count, candidate: count, ready: count, running: count, verify: count, done: count, blocked: count }) }),
+  runs: z.array(z.object({ id: runId, state: z.enum(states), updated_at: timestamp })).max(64),
+  // A campaign projection never authorizes execution; anything else is rejected, not shown.
+  promotion: z.object({ allowed: z.literal(false), reason: z.string().max(160) }),
+}).superRefine((campaign, context) => {
+  const { tasks } = campaign.planning;
+  const linked = new Set(campaign.run_ids);
+  if (campaign.planning.run_id !== campaign.planning_run_id || linked.has(campaign.planning_run_id) || linked.size !== campaign.run_ids.length
+    || !campaign.runs.every(run => linked.has(run.id)) || tasks.total !== tasks.candidate + tasks.ready + tasks.running + tasks.verify + tasks.done + tasks.blocked) {
+    context.addIssue({ code: "custom", message: "Inconsistent campaign projection" });
+  }
+});
+export const campaignListSchema = z.object({ campaigns: z.array(campaignSchema).max(100) });
+export type CampaignView = z.infer<typeof campaignSchema>;
+const providerLabels: Record<string, string> = { github: "GitHub", local: "Local", fixture: "Fixture" };
+export function providerLabel(provider: string): string { return providerLabels[provider] ?? provider; }
+/** "GitHub #67 · reported by GitHub": the number is the provider's report, labelled as such. */
+export function parentLabel(campaign: Pick<CampaignView, "parent">): string {
+  const provider = providerLabel(campaign.parent.provider);
+  const number = campaign.parent.display?.number;
+  return number ? `${provider} #${number} · reported by ${provider}` : `${provider} item`;
+}
+export function campaignStatusLabel(status: CampaignView["status"]): string {
+  return { planned: "Planned · not started", promoted: "Promoted", finished: "Finished", stopped: "Stopped" }[status];
+}
 export type FactoryGraph = GraphEnvelope["graph"];
 export type GraphChange = z.infer<typeof graphChangeSchema>;
 export const UI_VERSION = "0.2.1";

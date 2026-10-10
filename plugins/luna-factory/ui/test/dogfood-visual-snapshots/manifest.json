@@ -1,7 +1,7 @@
 {
   "expected_ui_version": "0.2.1",
   "evidence_kind": "Real browser + MCP Apps AppBridge with synthetic fixtures; not authenticated ChatGPT Desktop acceptance",
-  "ui_source_sha256": "bb53ac76115d65da1bddeb2298f86bbd7fb233c546c4fde0b73792f8ca82130a",
+  "ui_source_sha256": "c831c3e932ca6e3b972b3ad119aa50bb7afec20e5f2fe32a8716c9a5dfd22139",
   "captures": [
     {
       "file": "inline-planning-mobile-light.png",
@@ -19,6 +19,7 @@
       },
       "read_only_tool_calls": [
         "refresh_factory",
+        "list_factory_campaigns",
         "get_factory_graph",
         "get_factory_backends"
       ],
@@ -41,7 +42,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "list_factory_campaigns"
       ],
       "automatic_messages": 0
     },
@@ -64,7 +66,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "list_factory_campaigns"
       ],
       "automatic_messages": 0
     },
@@ -86,7 +89,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "list_factory_campaigns"
       ],
       "automatic_messages": 0
     },
@@ -105,6 +109,7 @@
       },
       "read_only_tool_calls": [
         "refresh_factory",
+        "list_factory_campaigns",
         "get_factory_graph",
         "get_factory_backends"
       ],
@@ -127,7 +132,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "list_factory_campaigns"
       ],
       "automatic_messages": 0
     },
@@ -145,7 +151,8 @@
         "overflowingControls": 0
       },
       "read_only_tool_calls": [
-        "refresh_factory"
+        "refresh_factory",
+        "list_factory_campaigns"
       ],
       "automatic_messages": 0
     },
@@ -167,7 +174,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "list_factory_campaigns"
       ],
       "automatic_messages": 0
     },
@@ -189,7 +197,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "list_factory_campaigns"
       ],
       "automatic_messages": 0
     },
@@ -211,7 +220,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "list_factory_campaigns"
       ],
       "automatic_messages": 0
     },
@@ -234,7 +244,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "list_factory_campaigns"
       ],
       "automatic_messages": 0
     },
@@ -258,7 +269,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "list_factory_campaigns"
       ],
       "automatic_messages": 0
     },
@@ -280,7 +292,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "list_factory_campaigns"
       ],
       "automatic_messages": 0
     },
@@ -304,7 +317,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "list_factory_campaigns"
       ],
       "automatic_messages": 0
     },
@@ -327,7 +341,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "list_factory_campaigns"
       ],
       "automatic_messages": 0
     },
@@ -351,7 +366,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "list_factory_campaigns"
       ],
       "automatic_messages": 0
     },
@@ -370,7 +386,29 @@
         "overflowingControls": 0
       },
       "read_only_tool_calls": [
-        "refresh_factory"
+        "refresh_factory",
+        "list_factory_campaigns"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "home-campaign-mobile-dark.png",
+      "width": 390,
+      "height": 844,
+      "params": {
+        "surface": "global",
+        "theme": "dark",
+        "platform": "mobile",
+        "scenario": "home"
+      },
+      "layout": {
+        "width": 390,
+        "scrollWidth": 390,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "list_factory_campaigns"
       ],
       "automatic_messages": 0
     },
@@ -389,6 +427,7 @@
       },
       "read_only_tool_calls": [
         "refresh_factory",
+        "list_factory_campaigns",
         "get_factory_graph",
         "get_factory_backends"
       ],

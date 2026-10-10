@@ -1,5 +1,5 @@
 import type { ViewState } from "./controller";
-import type { FactoryGraph, GraphChange, RunView } from "./domain";
+import { providerLabel, type FactoryGraph, type GraphChange, type RunView } from "./domain";
 import { roster, livenessLabel, type Agent } from "./agents";
 import { canvasSize, edgePath, fitGeometry, layoutWaves, nodePosition, type MapGeometry, type MapNode, type WaveLayout } from "./campaign-map";
 import { coordinatorToken, icon, taskGlyph, taskTone, taskToneLabel, workerToken } from "./lunar";
@@ -112,10 +112,9 @@ function renderMap(tasks: MapTask[], layout: WaveLayout, agents: Agent[], state:
   </div></div>${layout.cyclic ? '<p class="notice">The server reported a dependency loop. Waves are approximate until it is resolved.</p>' : ""}`;
 }
 
-const providers: Record<string, string> = { github: "GitHub", local: "Local", fixture: "Fixture" };
 /** Provider only; opaque item identities stay in the inspector's source detail. */
 export function sourceLabel(source: NonNullable<MapTask["source"]>): string {
-  return providers[source.provider] ?? source.provider;
+  return providerLabel(source.provider);
 }
 
 function renderInspector(state: ViewState, run: RunView, tasks: MapTask[], graph: FactoryGraph | null, layout: WaveLayout, agents: Agent[], followUps: (task?: { id: string; title: string }) => string): string {
