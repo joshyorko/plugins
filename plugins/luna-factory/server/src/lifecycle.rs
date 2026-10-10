@@ -314,6 +314,8 @@ pub struct Factory {
     mutation: Arc<Mutex<()>>,
     monitors: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
     pending_repository_forms: Arc<Mutex<HashMap<String, PendingRepositoryForm>>>,
+    /// Opt-in read-only GitHub App reader. Its data is display-only, never proof.
+    github: crate::github::SharedReader,
     _lease: Arc<ServiceLease>,
 }
 struct PendingRepositoryForm {
@@ -394,6 +396,7 @@ impl Factory {
             .context("another_luna_factory_service_owns_this_database")?;
         let lease = ServiceLease(lease);
         store.mark_interrupted()?;
+        let github = Arc::new(crate::github::GithubReader::new(config.github_app.clone()));
         Ok(Self {
             config: Arc::new(config),
             store: Arc::new(Mutex::new(store)),
@@ -401,6 +404,7 @@ impl Factory {
             mutation: Arc::new(Mutex::new(())),
             monitors: Arc::new(Mutex::new(HashMap::new())),
             pending_repository_forms: Arc::new(Mutex::new(HashMap::new())),
+            github,
             _lease: Arc::new(lease),
         })
     }
@@ -907,8 +911,85 @@ impl Factory {
             "execution":{"eligible":false,"reason":"authentication_entitlement_and_adapter_qualification_unverified"},
             "routing_telemetry":{"model":"turn-bound model/rerouted mismatch notifications only","effort":"unavailable","provider":"configuration only; downstream execution and billing unverified"},
             "control_policy":{"wire_schema":1,"sqlite_schema":2,"managed_admission":"structural","native_child_policy":"cooperative_unverified","semantic_acceptance":"owner_judgment","independent_checks":["file_sha256"],"native_output_completeness":"unverified","native_environment":"unverified","delivery_certification":"unsupported"},
+            "github":self.github.capability(),
             "live_proof":"Live owner/worker, native ChatGPT and tunnel acceptance must be recorded on the operator runtime."}),
         )
+    }
+    /// GitHub reader handle (diagnostics for tests; never exposes credentials).
+    pub fn github_reader(&self) -> &crate::github::GithubReader {
+        &self.github
+    }
+    /// #76: read-only, source-bound issue-graph intake. Eligibility (GitHub App
+    /// allowlist and a Luna-approved repository with a matching remote) is decided
+    /// locally before any network request. Writes nothing to the ledger.
+    pub async fn inspect_issue_graph(
+        &self,
+        args: crate::github::InspectIssueGraph,
+    ) -> Result<Value> {
+        let repository = crate::github::RepoName::parse(&args.repository)?;
+        ensure!(
+            (1..=2_147_483_647).contains(&args.parent),
+            "invalid_github_issue_number"
+        );
+        let allowed = self.github.allowed(&repository);
+        let mut reasons = Vec::new();
+        if self.github.unavailable_reason() == Some("github_app_not_configured") {
+            reasons.push("github_app_not_configured");
+        }
+        if allowed.is_none() {
+            reasons.push("repository_not_in_github_app_allowlist");
+        }
+        let approved_aliases = if allowed.is_some() {
+            let config = self.effective_config().await?;
+            crate::github::approved_aliases(&config, &repository, self.github.web_host())
+        } else {
+            Vec::new()
+        };
+        if allowed.is_some() && approved_aliases.is_empty() {
+            reasons.push("repository_not_approved_in_luna");
+        }
+        let eligibility = crate::github::Eligibility {
+            eligible: reasons.is_empty(),
+            allowed_by_github_app: allowed.is_some(),
+            approved_aliases,
+            reasons,
+        };
+        Ok(self
+            .github
+            .inspect(repository, args.parent, eligibility)
+            .await)
+    }
+    /// #78: GitHub-reported PR/check/review/diff telemetry for graph nodes with
+    /// GitHub sources. In-memory only: it never enters control, criteria,
+    /// presentation, actions or attention, and is not written to SQLite.
+    pub async fn delivery(&self, run_id: &str) -> Result<Value> {
+        let run = self.store.lock().await.get(run_id)?;
+        let control = run.control.as_ref().context("control_missing")?;
+        let sources: Vec<_> = control
+            .graph_sources
+            .iter()
+            .filter(|(id, source)| source.provider == "github" && control.tasks.contains_key(*id))
+            .map(|(id, source)| crate::github::DeliverySource {
+                node_id: id.clone(),
+                item_id: source.item_id.clone(),
+            })
+            .collect();
+        let repositories = if self.github.unavailable_reason().is_some() || sources.is_empty() {
+            Ok(Vec::new())
+        } else {
+            let config = self.effective_config().await?;
+            match config.repositories.get(&run.request.repository) {
+                None => Err("repository_not_approved_in_luna"),
+                Some(repo) if repo.root.to_str() != Some(run.canonical_root.as_str()) => {
+                    Err("repository_alias_was_remapped")
+                }
+                Some(repo) => Ok(self.github.approved_remote_repositories(&repo.root)),
+            }
+        };
+        Ok(self
+            .github
+            .delivery(run_id, control.revision, sources, repositories)
+            .await)
     }
     pub async fn workbench(&self, id: Option<&str>) -> Result<Value> {
         let selected = match id {

@@ -19,7 +19,7 @@ fn every_structured_tool_declares_an_object_output_contract() {
 #[test]
 fn graph_catalog_requires_revision_and_is_callable_by_both_audiences() {
     let tools = tool_definitions();
-    assert_eq!(tools.len(), 22);
+    assert_eq!(tools.len(), 24);
     for name in [
         "create_factory_graph",
         "get_factory_graph",
@@ -69,6 +69,56 @@ fn graph_catalog_requires_revision_and_is_callable_by_both_audiences() {
         resource["contents"][0]["_meta"]["openai/ui"]["preferredDisplayMode"],
         "inline"
     );
+}
+
+#[test]
+fn github_reads_are_read_only_open_world_and_callable_by_both_audiences() {
+    let tools = tool_definitions();
+    for name in ["inspect_factory_issue_graph", "read_factory_delivery"] {
+        let tool = tools.iter().find(|t| t.name == name).unwrap();
+        let value = serde_json::to_value(tool).unwrap();
+        assert_eq!(value["_meta"]["ui"]["visibility"], json!(["model", "app"]));
+        assert_eq!(
+            value["annotations"],
+            json!({"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":true})
+        );
+        assert_eq!(value["inputSchema"]["additionalProperties"], false);
+        let output = &value["outputSchema"]["properties"];
+        assert_eq!(output["reported_by"]["const"], "github");
+    }
+    let inspect = tools
+        .iter()
+        .find(|t| t.name == "inspect_factory_issue_graph")
+        .unwrap();
+    let input = serde_json::to_value(&inspect.input_schema).unwrap();
+    assert_eq!(input["required"], json!(["repository", "parent"]));
+    let validator = jsonschema::validator_for(&input).unwrap();
+    assert!(validator.is_valid(&json!({"repository":"joshyorko/plugins","parent":67})));
+    for bad in [
+        json!({"repository":"joshyorko/plugins#67","parent":67}),
+        json!({"repository":"../plugins","parent":67}),
+        json!({"repository":"joshyorko/plugins","parent":0}),
+        json!({"repository":"joshyorko/plugins","parent":67,"token":"x"}),
+    ] {
+        assert!(!validator.is_valid(&bad), "{bad}");
+    }
+    let model_visible = tools
+        .iter()
+        .filter(|tool| {
+            serde_json::to_value(tool).unwrap()["_meta"]["ui"]["visibility"]
+                .as_array()
+                .is_none_or(|v| v.iter().any(|c| c == "model"))
+        })
+        .count();
+    assert_eq!(model_visible, 16);
+    let delivery = tools
+        .iter()
+        .find(|t| t.name == "read_factory_delivery")
+        .unwrap();
+    let output = serde_json::to_value(delivery.output_schema.as_ref().unwrap()).unwrap();
+    assert_eq!(output["properties"]["proof"]["const"], "none");
+    assert_eq!(output["properties"]["merge_capability"]["const"], "none");
+    assert_eq!(output["properties"]["min_interval_seconds"]["const"], 60);
 }
 
 #[test]
