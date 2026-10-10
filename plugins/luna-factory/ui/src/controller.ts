@@ -317,6 +317,10 @@ export class WorkbenchController {
     const graph = this.state.graph;
     if (!this.state.connected || !graph || this.state.pending || this.state.graphLoading || this.state.graphStale) return false;
     if (!graph.planning_only && (graph.claim.held || graph.claim.status !== "released")) return false;
+    // The server has no "clear target" change, and an empty ID would fail its node-ID bound.
+    if (input.kind === "set_target" && !input.target_id) {
+      this.reportNotice("Choose a planning target first. A saved planning note can't be cleared from here."); return false;
+    }
     const change = graphChangeSchema.parse(input);
     if (change.kind !== "import_candidates" && !graph.nodes.some(node => node.id === change.node_id)) return false;
     const recovered = this.state.proposal;

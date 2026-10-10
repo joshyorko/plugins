@@ -164,8 +164,20 @@ function renderPlanEditor(state: ViewState, graph: FactoryGraph, selected: Facto
   return `<details id="edit-${esc(selected.id)}" class="planning-editor"><summary>Edit this planned task</summary><p class="field-hint">Selecting a task only inspects it. Saving records a proposal for review. Only a confirmed application changes the plan, and no work is dispatched.</p><form data-form="graph-node" data-input-identity="${esc(graph.run_id)}:${esc(selected.id)}:${graph.revision}">
       ${nodeLocked && !locked ? '<p class="field-hint">Only planned tasks with no execution history can be edited.</p>' : ""}
       <div class="field"><label for="dependencies">Prerequisite tasks</label><select id="dependencies" name="dependencies" multiple size="${Math.min(5, Math.max(2, graph.nodes.length - 1))}"${disabled(nodeLocked)}>${graph.nodes.filter(node => node.id !== selected.id).map(node => `<option value="${esc(node.id)}"${selected.dependencies.includes(node.id) ? " selected" : ""}>${esc(node.title)}</option>`).join("")}</select><p class="field-hint">Choose the tasks that must finish first. ${selected.dependencies.length ? "Clearing all selections proposes removal of existing prerequisites." : "There are no prerequisites yet. Empty selection leaves the plan unchanged."} The server rejects cycles.</p></div><button class="button" type="submit" value="dependencies"${disabled(nodeLocked)}>Save prerequisite proposal</button>
-      <details id="target-${esc(selected.id)}" class="target-editor"><summary>Optional planning target note</summary><div class="field target-field"><label for="target_id">Planning target note</label><select id="target_id" name="target_id"${disabled(nodeLocked || !eligible.length)}><option value=""${selected.target_preference === null ? " selected" : ""}>No preference</option>${eligible.map(target => `<option value="${esc(target.id)}"${selected.target_preference === target.id ? " selected" : ""}${disabled(!target.planning_eligible)}>${esc(target.label)} · execution unverified</option>`).join("") || '<option value="">Read targets with Refresh plan</option>'}</select><p class="field-hint">A planning preference does not authorize execution or verify subscription access.</p></div><button class="button" type="submit" value="target"${disabled(nodeLocked || !eligible.length)}>Save planning note proposal</button></details>
+      <details id="target-${esc(selected.id)}" class="target-editor"><summary>Optional planning target note</summary><div class="field target-field"><label for="target_id">Planning target note</label><select id="target_id" name="target_id"${disabled(nodeLocked || !eligible.length)}>${targetOptions(selected.target_preference ?? null, eligible)}</select><p class="field-hint">A planning preference does not authorize execution or verify subscription access.</p></div><button class="button" type="submit" value="target"${disabled(nodeLocked || !eligible.length)}>Save planning note proposal</button></details>
     </form></details>`;
+}
+
+/**
+ * An empty target is never a submittable value. "No preference" is only a disabled placeholder
+ * while no note is set; a saved note cannot be cleared here, because the server has no clear change.
+ */
+export function targetOptions(current: string | null, eligible: Array<{ id: string; label: string; planning_eligible: boolean }>): string {
+  const offered = eligible.map(target => `<option value="${esc(target.id)}"${current === target.id ? " selected" : ""}${disabled(!target.planning_eligible)}>${esc(target.label)} · execution unverified</option>`).join("");
+  const placeholder = current === null
+    ? '<option value="" selected disabled>No preference</option>'
+    : eligible.some(target => target.id === current) ? "" : `<option value="${esc(current)}" selected disabled>${esc(current)} · current note</option>`;
+  return placeholder + (offered || '<option value="" disabled>Read targets with Refresh plan</option>');
 }
 
 /** Proposal review stays prominent: nothing applies without an exact, confirmed revision. */
