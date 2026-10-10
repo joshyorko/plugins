@@ -106,7 +106,12 @@ export class HostBridge implements Bridge {
     const support = this.app.getHostCapabilities()?.updateModelContext;
     if (!support?.structuredContent && !support?.text) throw new Error("This host does not support model context updates");
     const empty = Object.keys(context).length === 0;
-    const params = support.structuredContent ? { structuredContent: context } : { content: empty ? [] : [{ type: "text" as const, text: JSON.stringify(context) }] };
+    const title = empty ? null : contextTitle(context);
+    // Titles label the host's context chip; content-block _meta is excluded from model input.
+    const titled = title ? { _meta: { "openai/title": title } } : {};
+    const params = support.structuredContent
+      ? { structuredContent: context, ...(title && support.text ? { content: [{ type: "text" as const, text: title, ...titled }] } : {}) }
+      : { content: empty ? [] : [{ type: "text" as const, text: JSON.stringify(context), ...titled }] };
     this.inFlight = empty
       ? { kind: "clear", selectionEpoch: this.selectionEpoch, notificationSeen: false }
       : { kind: "publish", payload: JSON.stringify(context) };
@@ -159,6 +164,15 @@ export class HostBridge implements Bridge {
     if (node.success && typeof revision === "number" && Number.isSafeInteger(revision) && revision >= 0) this.restoreSelection(id.data, node.data, revision);
     else this.restoreSelection(id.data);
   }
+}
+/** A short human label for the attached selection, built only from bounded context fields. */
+export function contextTitle(context: Record<string, unknown>): string | null {
+  const text = (key: string) => typeof context[key] === "string" && context[key] ? String(context[key]) : null;
+  const clip = (value: string, length: number) => value.length > length ? `${value.slice(0, length - 1)}…` : value;
+  const subject = text("node_title") ?? text("objective");
+  const parts = [text("agent_label"), subject ? clip(subject, 48) : null].filter((part): part is string => part !== null);
+  if (!parts.length) return text("repository") ? `Luna Factory · ${text("repository")}` : null;
+  return clip(`${parts.join(" · ")}`, 72);
 }
 function contextData(state: Exclude<OpenAIModelContextHostState, null>): Record<string, unknown> | undefined {
   if (state.structuredContent) return state.structuredContent;

@@ -1,7 +1,7 @@
 {
   "expected_ui_version": "0.2.1",
   "evidence_kind": "Real browser + MCP Apps AppBridge with synthetic fixtures; not authenticated ChatGPT Desktop acceptance",
-  "ui_source_sha256": "bb53ac76115d65da1bddeb2298f86bbd7fb233c546c4fde0b73792f8ca82130a",
+  "ui_source_sha256": "8bb9f1c47921f7cf2086683556909dbbb46bb43362f71fffa39c7441bcaa02e5",
   "captures": [
     {
       "file": "inline-planning-mobile-light.png",

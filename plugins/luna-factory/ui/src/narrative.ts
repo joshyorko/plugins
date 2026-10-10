@@ -45,18 +45,32 @@ export function freshness(seconds: number | undefined, now = Date.now() / 1000):
   return `Updated ${clock(seconds, now)}`;
 }
 
-interface Baseline { at: number; updated: number }
+export interface Baseline { at: number; updated: number }
 /**
  * "Since you last looked", scoped honestly to this open session.
  * The first snapshot of each run is the baseline; later snapshots report only server-recorded changes.
  */
 export class SinceTracker {
   private readonly seen = new Map<string, Baseline>();
-  constructor(private readonly now: () => number = () => Date.now() / 1000) {}
+  /**
+   * `restored` carries baselines from an earlier session when the host persists widget state;
+   * `persist` is told when new runs are first seen. Both are optional and feature-detected by the caller.
+   */
+  constructor(private readonly now: () => number = () => Date.now() / 1000, restored: Record<string, Baseline> = {}, private readonly persist?: (baselines: Record<string, Baseline>) => void) {
+    for (const [id, base] of Object.entries(restored).slice(0, 200)) if (Number.isFinite(base?.at) && Number.isFinite(base?.updated)) this.seen.set(id, { at: base.at, updated: base.updated });
+  }
   observe(runs: RunView[]): void {
+    let added = false;
     for (const run of runs) {
-      if (!this.seen.has(run.id)) this.seen.set(run.id, { at: this.now(), updated: run.updated_at ?? 0 });
+      if (!this.seen.has(run.id)) { this.seen.set(run.id, { at: this.now(), updated: run.updated_at ?? 0 }); added = true; }
     }
+    if (added) this.persist?.(Object.fromEntries(this.seen));
+  }
+  /** Moves every baseline to now, so the next visit reports only what changed after this one. */
+  markSeen(runs: RunView[]): void {
+    const at = this.now();
+    for (const run of runs) this.seen.set(run.id, { at, updated: run.updated_at ?? 0 });
+    this.persist?.(Object.fromEntries(this.seen));
   }
   /** Returns null when nothing changed after the baseline, so no change is implied. */
   changes(run: RunView): { since: number; lines: string[] } | null {

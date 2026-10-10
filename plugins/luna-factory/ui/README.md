@@ -47,6 +47,10 @@ pins the complete dependency graph.
 - Status refresh uses `refresh_factory` every 30 seconds while visible, connected,
   and not editing or waiting on an action. It is a persisted-state read, not a
   model polling loop. A stale plan is reread after the poll.
+- The view registers model-callable tools: `luna_read_view`, `luna_focus_task`,
+  `luna_focus_agent`, `luna_show_view` and `luna_open_run`. They read or move the
+  view only. They never call a server mutation, never expose raw thread IDs, and
+  never reattach model context that the user removed.
 - Settings save only capacity, finish, and an approved profile alias. Repository
   access, providers, credentials, and trusted limits remain server-owned.
 
