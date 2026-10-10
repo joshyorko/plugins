@@ -3,7 +3,8 @@ import { applyDeepLink, HostBridge, surfaceFromHostContext } from "./bridge";
 import { WorkbenchController, type Bridge } from "./controller";
 import { allowedFinishes, finishLabels, settingsSchema, startRequest, UI_VERSION, type FollowUpKind } from "./domain";
 import { renderWorkbench, type Editor, type WorkbenchOptions } from "./view";
-import { SinceTracker } from "./narrative";
+import { SinceTracker, type Baseline } from "./narrative";
+import { registerViewTools } from "./view-tools";
 import { submitNewRun } from "./submission";
 import "./style.css";
 
@@ -15,11 +16,15 @@ let pendingStart: { fingerprint: string; key: string } | null = null;
 let messagePending = false;
 const fixturePreview = import.meta.env.DEV && new URLSearchParams(location.search).get("preview") === "fixture";
 const previewParams = new URLSearchParams(location.search);
-const app = new App({ name: "Luna Factory", version: UI_VERSION }, { availableDisplayModes: ["inline", "fullscreen"] });
+const app = new App({ name: "Luna Factory", version: UI_VERSION }, { availableDisplayModes: ["inline", "fullscreen"], tools: { listChanged: false } });
 const hostBridge = new HostBridge(app, (id, nodeId, revision) => { void controller.restoreContext(id, nodeId, revision); }, message => { controller.setDisconnected(message); applyHostContext(); });
 const extensions = hostBridge.extensions;
 let connection: Promise<void> | null = null;
-const since = new SinceTracker();
+// ChatGPT can persist small widget state; other hosts keep the baseline for this session only.
+type WidgetHost = { widgetState?: unknown; setWidgetState?: (state: Record<string, unknown>) => unknown };
+const widgetHost = (globalThis as { openai?: WidgetHost }).openai;
+const restoredSince = (widgetHost?.widgetState as { since?: Record<string, Baseline> } | undefined)?.since ?? {};
+const since = new SinceTracker(undefined, restoredSince, typeof widgetHost?.setWidgetState === "function" ? baselines => { try { void widgetHost.setWidgetState?.({ ...(widgetHost.widgetState as Record<string, unknown> | undefined), since: baselines }); } catch { /* Persistence is best effort. */ } } : undefined);
 let workbenchOptions: WorkbenchOptions = { surface: "global", displayMode: "inline", canSendFollowUps: false, since };
 const bridge: Bridge = {
   async call(tool, args) {
@@ -219,6 +224,8 @@ if (fixturePreview) {
   }
   renderWorkbench(mount, controller.state, editor, fixturePreview, workbenchOptions);
 } else {
+  // Model-callable view tools must exist before the handshake advertises them.
+  registerViewTools(app as never, controller, { surface: () => workbenchOptions.surface ?? "global", readPlan: readSelectedPlan });
   connection = hostBridge.connect();
   void connection.then(() => {
     controller.setConnected(true);

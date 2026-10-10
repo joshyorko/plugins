@@ -295,9 +295,10 @@ export class WorkbenchController {
     this.state.viewMode = mode; this.changed();
   }
   /** Selecting an agent also selects its persisted task, so one context reaches ChatGPT. */
-  selectAgent(thread: string | null): void {
+  selectAgent(thread: string | null, explicit = true): void {
     if (thread !== null && !roster(this.selected, this.state.graph).some(agent => agent.thread === thread)) return;
-    ++this.selectionEpoch; this.contextRestoreEpoch = null; this.bridge.selectContext?.(); this.lastContext = "";
+    // Only a user gesture reattaches context the user removed; model-driven focus respects that removal.
+    if (explicit) { ++this.selectionEpoch; this.contextRestoreEpoch = null; this.bridge.selectContext?.(); this.lastContext = ""; }
     this.state.selectedAgent = thread;
     const task = roster(this.selected, this.state.graph).find(agent => agent.thread === thread)?.taskId;
     if (task && this.state.graph?.nodes.some(node => node.id === task)) this.state.selectedNodeId = task;
