@@ -135,6 +135,10 @@ async fn read_settings_onboarding_and_graph_responses_match_their_contracts() {
     );
     // Additive projection fields are typed; receipts carry nullable attribution.
     assert!(run["created_at"].is_u64() && run["activity_at"].is_u64());
+    assert_eq!(
+        run["presentation"]["blocker_kind"],
+        json!({"kind":"planning_only"})
+    );
     for (pointer, wrong) in [
         (
             "/source/display/url",
@@ -166,6 +170,33 @@ async fn read_settings_onboarding_and_graph_responses_match_their_contracts() {
         .unwrap()
         .remove("thread_id");
     assert!(!validator("get_factory_run").is_valid(&receipt));
+    for kind in [
+        json!({"kind":"budget_exhausted","budget":"time"}),
+        json!({"kind":"budget_exhausted","budget":"repair"}),
+        json!({"kind":"diagnosis_required"}),
+        json!({"kind":"native_approval"}),
+        json!({"kind":"effect_outcome_unknown"}),
+        json!({"kind":"liveness_unknown"}),
+        json!({"kind":"planning_only"}),
+        json!({"kind":"none"}),
+        json!({"kind":"unknown"}),
+    ] {
+        let mut typed = run.clone();
+        typed["presentation"]["blocker_kind"] = kind.clone();
+        valid("get_factory_run", &typed);
+    }
+    // No server detection exists for these, so they are not part of the contract yet.
+    for kind in [
+        json!({"kind":"budget_exhausted"}),
+        json!({"kind":"budget_exhausted","budget":"tokens"}),
+        json!({"kind":"protected_resource","path":"x","permission":"write"}),
+        json!({"kind":"external_dependency","kind_detail":"runner"}),
+        json!("budget_exhausted"),
+    ] {
+        let mut typed = run.clone();
+        typed["presentation"]["blocker_kind"] = kind.clone();
+        assert!(!validator("get_factory_run").is_valid(&typed), "{kind}");
+    }
     for field in ["created_at", "activity_at"] {
         let mut bad = run.clone();
         bad.as_object_mut().unwrap().remove(field);

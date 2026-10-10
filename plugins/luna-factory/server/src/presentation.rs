@@ -47,7 +47,8 @@ pub fn project(run: &Run, control: &Control, timestamp: u64) -> Value {
             "owner":{"thread_id":null,"turn_id":null,"liveness":"idle"},"workers":[],
             "budget":{"time_remaining_seconds":null,"repair_attempts_remaining":run.request.repair_attempts,"repairs_used":0},
             "claim":{"held":false,"status":match run.observed_claim {crate::store::ObservedClaim::Foreign=>"foreign",crate::store::ObservedClaim::Unknown=>"unknown",_=>"released"}},
-            "deliverable":{"kind":"local_candidate","status":"unproved","subject":control.current_subject,"reference":null}});
+            "deliverable":{"kind":"local_candidate","status":"unproved","subject":control.current_subject,"reference":null},
+            "blocker_kind":{"kind":"planning_only"}});
     }
     let active = control.settlement == crate::control::Settlement::Live;
     let stopped = control.settlement == crate::control::Settlement::Stopped;
@@ -233,13 +234,44 @@ pub fn project(run: &Run, control: &Control, timestamp: u64) -> Value {
     } else {
         ("unverified", "Execution or effect outcome remains unknown")
     };
+    // Copy and placement only. It mirrors the predicates behind the existing resume reason codes
+    // (claim, effect, liveness, time, repair, diagnosis), evaluated after every action and
+    // attention decision above. Nothing reads it back, so it cannot grant or create a decision.
+    // Protected-resource and external-dependency kinds have no server detection yet.
+    let blocker_kind = if control.run_control == crate::control::RunControl::NeedsInput
+        && run.pending_decision.is_none()
+    {
+        json!({"kind":"native_approval"})
+    } else if verified || active {
+        json!({"kind":"none"})
+    } else if matches!(
+        run.observed_claim,
+        crate::store::ObservedClaim::Foreign | crate::store::ObservedClaim::Unknown
+    ) {
+        json!({"kind":"unknown"})
+    } else if control.unknown_effect() {
+        json!({"kind":"effect_outcome_unknown"})
+    } else if !stopped {
+        json!({"kind":"liveness_unknown"})
+    } else if time == 0 {
+        json!({"kind":"budget_exhausted","budget":"time"})
+    } else if repairs == 0 && !decision && !fresh_task {
+        json!({"kind":"budget_exhausted","budget":"repair"})
+    } else if needs_diagnosis && !decision {
+        json!({"kind":"diagnosis_required"})
+    } else if decision || resume["allowed"] == true {
+        json!({"kind":"none"})
+    } else {
+        json!({"kind":"unknown"})
+    };
     let workers:Vec<_>=run.owned_threads.iter().rev().take(64).map(|id|json!({"thread_id":id,"liveness":match control.child_liveness.get(id).copied().unwrap_or_default(){crate::control::Settlement::Live=>"active",crate::control::Settlement::Stopped=>"idle",crate::control::Settlement::Unknown=>"unknown"}})).collect();
     json!({"revision":control.revision,"primary_action":primary,"actions":[wait,refresh,answer,steer,cancel,resume,reconcile,inspect],
         "criteria":{"proven":proven,"failed":failed,"unproved":control.criteria.len()-proven-failed,"mandatory":control.criteria.len()},
         "result":{"kind":kind,"label":label},"owner":{"thread_id":run.thread_id,"turn_id":run.turn_id,"liveness":match control.owner_liveness {crate::control::Settlement::Live=>"active",crate::control::Settlement::Stopped=>"idle",crate::control::Settlement::Unknown=>"unknown"}},
         "workers":workers,"budget":{"time_remaining_seconds":time,"repair_attempts_remaining":repairs,"repairs_used":run.repairs_used},
         "claim":{"held":run.claim_held,"status":match run.observed_claim {crate::store::ObservedClaim::Owned=>"owned",crate::store::ObservedClaim::Released=>"released",crate::store::ObservedClaim::Foreign=>"foreign",crate::store::ObservedClaim::Unknown=>"unknown"}},
-        "deliverable":{"kind":if run.request.finish=="pr"{"pr_ready"}else{&run.request.finish},"status":if verified&&run.request.finish=="local_candidate"{"verified"}else{"unproved"},"subject":control.current_subject,"reference":null}})
+        "deliverable":{"kind":if run.request.finish=="pr"{"pr_ready"}else{&run.request.finish},"status":if verified&&run.request.finish=="local_candidate"{"verified"}else{"unproved"},"subject":control.current_subject,"reference":null},
+        "blocker_kind":blocker_kind})
 }
 pub fn authorize_action(
     run: &Run,

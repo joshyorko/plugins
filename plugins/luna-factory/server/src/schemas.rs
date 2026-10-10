@@ -99,8 +99,15 @@ fn definitions() -> Map<String, Value> {
         "workers":array(object(json!({"thread_id":id(),"liveness":liveness})),64),
         "budget":object(json!({"time_remaining_seconds":nullable(count()),"repair_attempts_remaining":count(),"repairs_used":count()})),
         "claim":reference("claim"),
-        "deliverable":object(json!({"kind":enumeration(&["local_candidate","push","pr_ready"]),"status":enumeration(&["verified","unproved"]),"subject":id(),"reference":nullable(string())}))
+        "deliverable":object(json!({"kind":enumeration(&["local_candidate","push","pr_ready"]),"status":enumeration(&["verified","unproved"]),"subject":id(),"reference":nullable(string())})),
+        "blocker_kind":reference("blocker_kind")
     })));
+    // Copy/placement category derived from existing server state and reason codes only.
+    // It never grants an action or creates attention; clients map unknown kinds to `unknown`.
+    defs.insert("blocker_kind".into(),json!({"oneOf":[
+        object(json!({"kind":{"const":"budget_exhausted"},"budget":enumeration(&["time","repair"])})),
+        object(json!({"kind":enumeration(&["diagnosis_required","native_approval","effect_outcome_unknown","liveness_unknown","planning_only","none","unknown"])}))
+    ]}));
     defs.insert("route".into(),object(json!({
         "requested_model":{"const":"gpt-6-luna"},"requested_effort":nullable(string()),
         "configured_model":nullable(string()),"configured_effort":nullable(string()),
