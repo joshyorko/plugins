@@ -1,0 +1,215 @@
+{
+  "expected_ui_version": "0.2.1",
+  "evidence_kind": "Real browser + MCP Apps AppBridge with synthetic fixtures; not authenticated ChatGPT Desktop acceptance",
+  "ui_source_sha256": "dd6074a8c61a359204dfc28fe7fdf9a4ec823200c4e958e30fd3bbff3750eafa",
+  "captures": [
+    {
+      "file": "inline-planning-mobile-light.png",
+      "width": 320,
+      "height": 640,
+      "params": {
+        "surface": "inline",
+        "scenario": "planning",
+        "platform": "mobile"
+      },
+      "layout": {
+        "width": 320,
+        "scrollWidth": 320,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "global-planning-split-light.png",
+      "width": 480,
+      "height": 760,
+      "params": {
+        "surface": "global",
+        "scenario": "planning",
+        "graph": "1"
+      },
+      "layout": {
+        "width": 480,
+        "scrollWidth": 480,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "get_factory_graph",
+        "get_factory_backends"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "fullscreen-planning-dark.png",
+      "width": 1200,
+      "height": 900,
+      "params": {
+        "surface": "global",
+        "mode": "fullscreen",
+        "theme": "dark",
+        "scenario": "planning",
+        "graph": "1"
+      },
+      "layout": {
+        "width": 1200,
+        "scrollWidth": 1200,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "get_factory_graph",
+        "get_factory_backends"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "thread-selected-dark.png",
+      "width": 360,
+      "height": 760,
+      "params": {
+        "surface": "thread",
+        "theme": "dark",
+        "scenario": "planning",
+        "graph": "1"
+      },
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "get_factory_graph",
+        "get_factory_backends"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "inline-decision-light.png",
+      "width": 640,
+      "height": 640,
+      "params": {
+        "surface": "inline",
+        "scenario": "decision"
+      },
+      "layout": {
+        "width": 640,
+        "scrollWidth": 640,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "thread-blocked-narrow.png",
+      "width": 320,
+      "height": 700,
+      "params": {
+        "surface": "thread",
+        "scenario": "blocked",
+        "graph": "1"
+      },
+      "layout": {
+        "width": 320,
+        "scrollWidth": 320,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "get_factory_graph",
+        "get_factory_backends"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "global-error-light.png",
+      "width": 480,
+      "height": 640,
+      "params": {
+        "surface": "global",
+        "scenario": "error"
+      },
+      "layout": {
+        "width": 480,
+        "scrollWidth": 480,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "global-disconnected-mobile.png",
+      "width": 360,
+      "height": 720,
+      "params": {
+        "surface": "global",
+        "scenario": "planning",
+        "platform": "mobile",
+        "graph": "1"
+      },
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "get_factory_graph",
+        "get_factory_backends"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "global-proposal-review.png",
+      "width": 480,
+      "height": 760,
+      "params": {
+        "surface": "global",
+        "scenario": "planning",
+        "graph": "1",
+        "proposal": "1"
+      },
+      "layout": {
+        "width": 480,
+        "scrollWidth": 480,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "get_factory_graph",
+        "get_factory_backends"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "global-large-host-font.png",
+      "width": 480,
+      "height": 760,
+      "params": {
+        "surface": "global",
+        "scenario": "planning",
+        "graph": "1",
+        "font": "large"
+      },
+      "layout": {
+        "width": 480,
+        "scrollWidth": 480,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "get_factory_graph",
+        "get_factory_backends"
+      ],
+      "automatic_messages": 0
+    }
+  ]
+}

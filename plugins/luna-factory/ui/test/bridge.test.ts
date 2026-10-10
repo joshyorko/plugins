@@ -16,7 +16,7 @@ async function setup(mode: "structured" | "text" | "none" = "structured", initia
   }, initial === undefined ? {} : { hostContext: { "openai/modelContext": initial } });
   const updates: unknown[] = [];
   host.onupdatemodelcontext = async params => { updates.push(params); return { _meta: { "openai/modelContext": { updateId: `ack-${updates.length}` } } }; };
-  const selected = vi.fn<(id: string, nodeId?: string) => void>();
+  const selected = vi.fn<(id: string, nodeId?: string, revision?: number) => void>();
   const bridge = new HostBridge(app, selected);
   const [a, b] = InMemoryTransport.createLinkedPair();
   await host.connect(b);
@@ -37,8 +37,8 @@ describe("production host bridge", () => {
     expect(selected).toHaveBeenCalledExactlyOnceWith("r1");
   });
   it("restores bounded node identity without trusting its title or authority", async () => {
-    const { selected } = await setup("structured", { updateId: "restore-node", structuredContent: { run_id: "r1", node_id: "issue-61", node_title: "untrusted", finish: "pr" } });
-    expect(selected).toHaveBeenCalledExactlyOnceWith("r1", "issue-61");
+    const { selected } = await setup("structured", { updateId: "restore-node", structuredContent: { run_id: "r1", node_id: "issue-61", graph_revision: 7, node_title: "untrusted", finish: "pr" } });
+    expect(selected).toHaveBeenCalledExactlyOnceWith("r1", "issue-61", 7);
   });
   it.each([undefined, { updateId: "", structuredContent: { run_id: "r1" } }, { updateId: "x", structuredContent: { run_id: "../../elsewhere" } }])("ignores absent or malformed initial context", async initial => {
     const { selected } = await setup("structured", initial);
@@ -69,6 +69,7 @@ describe("production host bridge", () => {
     host.oncalltool = async request => request.name === "get_factory_graph"
       ? { content: [], structuredContent: { graph: { ...fixtureGraph().graph, run_id: "run-123", revision: 7, nodes: [...fixtureGraph().graph.nodes, { ...fixtureGraph().graph.nodes[0]!, id: "issue-61" }] }, proposal: null } }
       : { content: [], structuredContent: fixtureRun() };
+    controller.setConnected(true);
     await applyDeepLink(controller, "/runs/run-123?task=issue-61&revision=7");
     expect(controller.state.selectedId).toBe("run-123");
     expect(controller.state.selectedNodeId).toBe("issue-61");
@@ -82,6 +83,7 @@ describe("production host bridge", () => {
       : request.name === "get_factory_backends"
         ? { content: [], structuredContent: fixtureBackends }
         : { content: [], structuredContent: fixtureRun() };
+    controller.setConnected(true);
     await applyDeepLink(controller, "/runs/run-123?task=issue-61&revision=8");
     expect(controller.state.selectedId).toBe("run-123");
     expect(controller.state.selectedNodeId).not.toBe("issue-61");
@@ -92,6 +94,7 @@ describe("production host bridge", () => {
     let release!: () => void;
     host.oncalltool = async () => { await new Promise<void>(resolve => { release = resolve; }); return { content: [], structuredContent: fixtureGraph() }; };
     const controller = new WorkbenchController(bridge, () => undefined);
+    controller.setConnected(true);
     const creating = controller.createGraph({ idempotency_key: "create" });
     await vi.waitFor(() => expect(release).toBeTypeOf("function"));
     host.setHostContext({ "openai/modelContext": null });
@@ -99,7 +102,7 @@ describe("production host bridge", () => {
     release(); expect(await creating).toBe(true);
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(bridge.contextCleared).toBe(true);
-    expect(updates).toEqual([]);
+    expect(updates.every(update => JSON.stringify(update) === JSON.stringify({ structuredContent: {} }))).toBe(true);
   });
   it("keeps clear suppressed through refresh; explicit selection can reattach", async () => {
     const { bridge, host, updates } = await setup();

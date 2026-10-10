@@ -57,6 +57,7 @@ export const capabilitiesSchema = z.object({
   profiles: z.array(z.object({ alias: z.string().min(1).max(64), effort: z.string().max(64), supported: z.boolean().optional() })).max(100).transform(profiles => profiles.filter(profile => profile.supported !== false)),
   limits: z.object({ capacity: z.number().int().min(1).max(8), repair_attempts: z.number().int().min(0).max(10), wall_seconds: z.number().int().min(30).max(86400) }),
   repository_onboarding: z.object({ enabled: z.boolean(), approval: z.literal("local_operator") }).optional(),
+  execution: z.object({ eligible: z.boolean(), reason: z.string().max(2000) }).optional(),
 });
 export type Capabilities = z.infer<typeof capabilitiesSchema>;
 const repositoryName = z.string().min(1).max(256).refine(value => !/^[A-Za-z]:/.test(value) && !/[\x00-\x1f\x7f]/.test(value) && value.split(/[\\/]/).every(part => part !== "" && part !== "." && part !== ".."), "Expected a relative repository name");
@@ -107,7 +108,7 @@ export function buildFollowUpPrompt(run: RunView, kind: FollowUpKind, task?: Fol
     ...(task ? [`Task ID: ${task.id}`, `Task: ${task.title.slice(0, 360)}`] : []),
   ].join("\n");
   const context = [
-    `State: ${run.state.slice(0, 64)}`,
+    `State: ${boundedContext(run).state.slice(0, 64)}`,
     `Objective: ${run.objective.slice(0, 600)}`,
     ...(run.blocker ? [`Blocker: ${run.blocker.slice(0, 360)}`] : []),
     ...(run.remaining_gap ? [`Remaining gap: ${run.remaining_gap.slice(0, 360)}`] : []),
@@ -162,14 +163,17 @@ function validateProjection(run: RunView): void {
     throw new Error("The server marked unresolved criteria as finished. Refresh to read a current view.");
   }
 }
+export function needsOperatorDecision(run: RunView): boolean {
+  const action = run.presentation?.primary_action;
+  if (run.planning_only || !run.control || !run.presentation || run.control.revision !== run.presentation.revision || !action?.allowed) return false;
+  return Boolean(run.pending_decision && action.kind === "answer" && action.tool === "resume_factory_run")
+    || action.kind === "inspect" && action.tool === "get_factory_run" && action.reason === "native_approval_requires_native_ui";
+}
 export function classifyRun(run: RunView): "needs" | "active" | "recent" {
-  if (run.control && run.presentation) {
-    if (["needs_input", "stopped_unresolved", "unverified"].includes(run.presentation.result.kind)) return "needs";
-    if (run.presentation.result.kind === "finished_verified") return "recent";
-    return "active";
-  }
-  // Older server payloads have no shared result projection; do not call them complete.
-  return "needs";
+  if (needsOperatorDecision(run)) return "needs";
+  if (!run.planning_only && run.control && run.presentation?.result.kind === "working") return "active";
+  // Plans, blockers and uncertain history stay inspectable without inventing a decision.
+  return "recent";
 }
 export function parseRunLink(value: string): string | null {
   // Validate the raw path before URL normalization can erase traversal segments.
@@ -217,7 +221,7 @@ export function boundedContext(run: RunView) {
     ? ({ finished_verified: "CONVERGED", stopped_unresolved: "STOPPED_UNRESOLVED", working: run.state === "CONVERGED" ? "WORKING" : run.state, needs_input: "NEEDS_INPUT", unverified: "UNVERIFIED" } satisfies Record<NonNullable<RunView["presentation"]>["result"]["kind"], string>)[run.presentation.result.kind]
     : run.state === "CONVERGED" ? "UNVERIFIED" : run.state;
   return {
-    run_id: run.id, repository: run.repository, objective: run.objective.slice(0, 1200), state: projectedState,
+    run_id: run.id, revision: run.control?.revision ?? run.presentation?.revision ?? null, repository: run.repository, objective: run.objective.slice(0, 1200), state: run.planning_only ? "PLANNING" : projectedState,
     current_subject: run.current_subject.slice(0, 180), remaining_mandatory_gap: bound(run.remaining_gap, 800),
     blocker: bound(run.blocker, 600), finish: run.finish,
   };

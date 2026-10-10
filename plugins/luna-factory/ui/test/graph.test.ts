@@ -7,32 +7,37 @@ describe("planning graph controls", () => {
   it("creates a planning graph through the public tool without dispatching", async () => {
     const call = vi.fn<Bridge["call"]>().mockResolvedValue({ structuredContent: fixtureGraph() });
     const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
+    controller.setConnected(true);
     expect(await controller.createGraph({ idempotency_key: "create-1" })).toBe(true);
     expect(call).toHaveBeenCalledExactlyOnceWith("create_factory_graph", { idempotency_key: "create-1" });
     expect(controller.state.graph?.planning_only).toBe(true);
     expect(controller.state.selectedId).toBe("run-123");
   });
   it("reviews a proposed change before applying at its returned revision", async () => {
-    const call = vi.fn<Bridge["call"]>().mockImplementation(async tool => ({ structuredContent: tool === "get_factory_backends" ? catalog : fixtureGraph() }));
+    const call = vi.fn<Bridge["call"]>().mockImplementation(async tool => ({ structuredContent: tool === "get_factory_backends" ? fixtureBackends : fixtureGraph() }));
     const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
-    controller.receiveInitial({ structuredContent: fixtureRun() });
+    controller.setConnected(true);
+  controller.receiveInitial({ structuredContent: fixtureRun() });
     await controller.loadGraph();
     controller.selectNode("task-owner");
-    const change = { kind: "set_dependencies" as const, node_id: "task-owner", dependencies: [] };
+    const change = { kind: "set_target" as const, node_id: "task-owner", target_id: "native-local" };
     const proposed = fixtureGraph(8);
     proposed.proposal = { id: "change-1", base_revision: 7, idempotency_key: "change-key", fingerprint: "hash", actor: "local_operator", subject: proposed.graph.repository.subject, change, status: "proposed", applied_revision: null };
-    call.mockResolvedValueOnce({ structuredContent: proposed });
+    const proposedRun = fixtureRun(); proposedRun.control!.revision = proposedRun.presentation!.revision = 8;
+    call.mockResolvedValueOnce({ structuredContent: proposed }).mockResolvedValueOnce({ structuredContent: proposedRun });
     expect(await controller.proposeChange(change)).toBe(true);
     expect(call).not.toHaveBeenCalledWith("apply_factory_change", expect.anything());
     const applied = fixtureGraph(9); applied.proposal = { ...proposed.proposal, status: "applied", applied_revision: 9 };
-    call.mockResolvedValueOnce({ structuredContent: applied });
-    expect(await controller.applyChange()).toBe(true);
-    expect(call).toHaveBeenLastCalledWith("apply_factory_change", { run_id: "run-123", change_id: "change-1", expected_revision: 8 });
+    const appliedRun = fixtureRun(); appliedRun.control!.revision = appliedRun.presentation!.revision = 9;
+    call.mockResolvedValueOnce({ structuredContent: applied }).mockResolvedValueOnce({ structuredContent: appliedRun });
+    expect(await controller.applyChange(true)).toBe(true);
+    expect(call).toHaveBeenCalledWith("apply_factory_change", { run_id: "run-123", change_id: "change-1", expected_revision: 8 });
   });
   it("preserves a newer view but disables graph mutations after a stale read", async () => {
     const call = vi.fn<Bridge["call"]>().mockImplementation(async tool => ({ structuredContent: tool === "get_factory_backends" ? catalog : fixtureGraph(9) }));
     const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
-    controller.receiveInitial({ structuredContent: fixtureRun() });
+    controller.setConnected(true);
+  controller.receiveInitial({ structuredContent: fixtureRun() });
     await controller.loadGraph();
     call.mockImplementation(async tool => ({ structuredContent: tool === "get_factory_backends" ? catalog : fixtureGraph(8) }));
     await controller.loadGraph();
@@ -48,16 +53,19 @@ describe("planning graph controls", () => {
     const call = vi.fn<Bridge["call"]>().mockImplementation(async tool => ({ structuredContent: tool === "get_factory_backends" ? catalog : tool === "get_factory_run" ? fixtureRun() : graph }));
     const context = vi.fn<Bridge["context"]>().mockResolvedValue();
     const controller = new WorkbenchController({ call, context }, () => undefined);
-    await controller.restoreContext("run-123", "issue-61");
+    controller.setConnected(true);
+  await controller.restoreContext("run-123", "issue-61");
     expect(controller.state.selectedNodeId).toBe("issue-61");
     await vi.waitFor(() => expect(context).toHaveBeenLastCalledWith(expect.objectContaining({ node_id: "issue-61", node_title: "x".repeat(300), graph_revision: 7 })));
-    await controller.restoreContext("run-123", "invented-node");
-    expect(controller.state.selectedNodeId).toBe("issue-61");
+    controller.setConnected(true);
+  await controller.restoreContext("run-123", "invented-node");
+    expect(controller.state.selectedNodeId).toBeNull();
   });
   it("keeps unsupported targets from becoming planning preferences", async () => {
     const call = vi.fn<Bridge["call"]>().mockImplementation(async tool => ({ structuredContent: tool === "get_factory_backends" ? fixtureBackends : fixtureGraph() }));
     const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
-    controller.receiveInitial({ structuredContent: fixtureRun() }); await controller.loadGraph(); call.mockClear();
+    controller.setConnected(true);
+  controller.receiveInitial({ structuredContent: fixtureRun() }); await controller.loadGraph(); call.mockClear();
     expect(await controller.proposeChange({ kind: "set_target", node_id: "task-owner", target_id: "codex-cloud" })).toBe(false);
     expect(call).not.toHaveBeenCalled();
   });
@@ -70,7 +78,8 @@ describe("planning graph controls", () => {
     let resolve!: (value: unknown) => void;
     const call = vi.fn<Bridge["call"]>().mockImplementation(async tool => tool === "get_factory_graph" ? new Promise(res => { resolve = res; }) : { structuredContent: catalog });
     const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
-    controller.receiveInitial({ structuredContent: fixtureRun() });
+    controller.setConnected(true);
+  controller.receiveInitial({ structuredContent: fixtureRun() });
     const reading = controller.loadGraph();
     await controller.select(null);
     resolve({ structuredContent: fixtureGraph() }); await reading;
@@ -82,6 +91,7 @@ describe("planning graph controls", () => {
     let resolve!: (value: unknown) => void;
     const call = vi.fn<Bridge["call"]>().mockImplementation(async () => new Promise(res => { resolve = res; }));
     const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
+    controller.setConnected(true);
     const creating = controller.createGraph({ idempotency_key: "k" });
     await controller.select(null);
     resolve({ structuredContent: fixtureGraph() });

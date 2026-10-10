@@ -11,6 +11,7 @@ function deferred() {
 function setup(call = vi.fn<Bridge["call"]>()) {
   const bridge: Bridge = { call, context: vi.fn(async () => undefined) };
   const controller = new WorkbenchController(bridge, () => undefined);
+  controller.setConnected(true);
   controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, selected_run: fixtureRun() } });
   return { controller, bridge, call };
 }
@@ -75,7 +76,8 @@ describe("workbench state and MCP lifecycle", () => {
     const { controller, call } = setup();
     call.mockResolvedValue({ structuredContent: { ...fixtureWorkbench, runs: [fixtureRun({ state: "CONVERGED", updated_at: 5 })] } });
     await controller.refresh();
-    controller.receiveInitial({ structuredContent: fixtureWorkbench });
+    controller.setConnected(true);
+  controller.receiveInitial({ structuredContent: fixtureWorkbench });
     expect(controller.state.runs[0]?.state).toBe("CONVERGED");
   });
   it("preserves valid data after a malformed refresh", async () => {
@@ -164,7 +166,8 @@ describe("workbench state and MCP lifecycle", () => {
     const call = vi.fn<Bridge["call"]>().mockResolvedValue({ structuredContent: fixtureRun() });
     const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
     const { receipts: _receipts, ...summary } = fixtureRun();
-    controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [summary] } });
+    controller.setConnected(true);
+  controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [summary] } });
     expect(controller.state.initialized).toBe(true);
     await controller.select("run-123");
     expect(call).toHaveBeenCalledWith("get_factory_run", { run_id: "run-123" });
@@ -181,7 +184,8 @@ describe("workbench state and MCP lifecycle", () => {
   it("answers completed NEEDS_INPUT turns by resuming the same run with input", async () => {
     const call = vi.fn<Bridge["call"]>().mockResolvedValue({ structuredContent: fixtureRun({ state: "RUNNING", turn_id: "new-turn" }) });
     const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
-    controller.receiveInitial({ structuredContent: fixtureRun({ state: "NEEDS_INPUT", turn_id: null, pending_decision: { id: "decision-1", question: "Keep the migration local?" } }) });
+    controller.setConnected(true);
+  controller.receiveInitial({ structuredContent: fixtureRun({ state: "NEEDS_INPUT", turn_id: null, pending_decision: { id: "decision-1", question: "Keep the migration local?" } }) });
     expect(await controller.sendOwnerInput("  Keep the migration local  ")).toBe(true);
     expect(call).toHaveBeenCalledWith("resume_factory_run", { run_id: "run-123", message: "Keep the migration local", expected_decision_id: "decision-1", expected_revision: 7 });
     expect(controller.selected?.owner_thread).toBe("owner-123");
@@ -190,7 +194,8 @@ describe("workbench state and MCP lifecycle", () => {
   it("does not submit native approvals as decision answers", async () => {
     const call = vi.fn<Bridge["call"]>();
     const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
-    controller.receiveInitial({ structuredContent: fixtureRun({ state: "NEEDS_INPUT", blocker: "Approval required in Codex" }) });
+    controller.setConnected(true);
+  controller.receiveInitial({ structuredContent: fixtureRun({ state: "NEEDS_INPUT", blocker: "Approval required in Codex" }) });
     await expect(controller.sendOwnerInput("Approve")).rejects.toThrow("native Codex");
     expect(call).not.toHaveBeenCalled();
   });
@@ -217,7 +222,8 @@ describe("workbench state and MCP lifecycle", () => {
     };
     const call = vi.fn<Bridge["call"]>().mockResolvedValue({ structuredContent: fixtureRun({ state: "RUNNING" }) });
     const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
-    controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [run], selected_run: run } });
+    controller.setConnected(true);
+  controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [run], selected_run: run } });
     controller.setConnected(true);
     expect(await controller.mutate("resume_factory_run", { run_id: "run-123" })).toBe(true);
     expect(call).toHaveBeenCalledWith("resume_factory_run", { run_id: "run-123", expected_revision: 7 });
@@ -228,7 +234,8 @@ describe("workbench state and MCP lifecycle", () => {
     delete legacy.presentation;
     const call = vi.fn<Bridge["call"]>();
     const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
-    controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [legacy], selected_run: legacy } });
+    controller.setConnected(true);
+  controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [legacy], selected_run: legacy } });
     expect(await controller.mutate("cancel_factory_run", { run_id: "run-123" })).toBe(false);
     expect(call).not.toHaveBeenCalled();
     expect(controller.state.error).toContain("Refresh");
@@ -242,7 +249,8 @@ describe("workbench state and MCP lifecycle", () => {
     run.presentation = { ...presentation, primary_action: wait, actions: [wait, steer] };
     const call = vi.fn<Bridge["call"]>().mockResolvedValue({ structuredContent: fixtureRun({ state: "RUNNING" }) });
     const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
-    controller.receiveInitial({ structuredContent: run });
+    controller.setConnected(true);
+  controller.receiveInitial({ structuredContent: run });
     expect(await controller.sendOwnerInput("Keep the current scope" )).toBe(true);
     expect(call).toHaveBeenCalledWith("steer_factory_run", { run_id: run.id, expected_turn_id: run.presentation.owner.turn_id, message: "Keep the current scope", expected_revision: run.presentation.revision });
   });
@@ -255,7 +263,8 @@ describe("workbench state and MCP lifecycle", () => {
     run.presentation = { ...presentation, primary_action: wait, actions: [wait, steer] };
     const call = vi.fn<Bridge["call"]>();
     const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
-    controller.receiveInitial({ structuredContent: run });
+    controller.setConnected(true);
+  controller.receiveInitial({ structuredContent: run });
     await expect(controller.sendOwnerInput("Keep the current scope")).rejects.toThrow();
     expect(call).not.toHaveBeenCalled();
   });

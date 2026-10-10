@@ -207,7 +207,7 @@ describe("accessible workbench", () => {
     expect(text.indexOf("Needs Josh")).toBeLessThan(text.indexOf("Proven"));
     expect(text).toContain("Proven");
     expect(text).toContain("Failed");
-    expect(text).toContain("Unproved");
+    expect(text).toContain("Evidence pending");
     expect(root.querySelectorAll(".needs-josh .button.primary")).toHaveLength(1);
   });
   it("renders stopped unresolved separately from finished verified and retains unknown liveness", () => {

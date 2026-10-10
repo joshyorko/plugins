@@ -1,7 +1,7 @@
 import { App, applyDocumentTheme, applyHostStyleVariables } from "@modelcontextprotocol/ext-apps";
 import { applyDeepLink, HostBridge, surfaceFromHostContext } from "./bridge";
 import { WorkbenchController, type Bridge } from "./controller";
-import { allowedFinishes, buildFollowUpPrompt, finishLabels, settingsSchema, startRequest, UI_VERSION, type FollowUpKind } from "./domain";
+import { allowedFinishes, finishLabels, settingsSchema, startRequest, UI_VERSION, type FollowUpKind } from "./domain";
 import { renderWorkbench, type Editor, type WorkbenchOptions } from "./view";
 import { submitNewRun } from "./submission";
 import "./style.css";
@@ -15,7 +15,7 @@ let messagePending = false;
 const fixturePreview = import.meta.env.DEV && new URLSearchParams(location.search).get("preview") === "fixture";
 const previewParams = new URLSearchParams(location.search);
 const app = new App({ name: "Luna Factory", version: UI_VERSION }, { availableDisplayModes: ["inline", "fullscreen"] });
-const hostBridge = new HostBridge(app, (id, nodeId) => { void controller.restoreContext(id, nodeId); }, message => { controller.setDisconnected(message); applyHostContext(); });
+const hostBridge = new HostBridge(app, (id, nodeId, revision) => { void controller.restoreContext(id, nodeId, revision); }, message => { controller.setDisconnected(message); applyHostContext(); });
 const extensions = hostBridge.extensions;
 let connection: Promise<void> | null = null;
 let workbenchOptions: WorkbenchOptions = { surface: "global", displayMode: "inline", canSendFollowUps: false };
@@ -48,7 +48,7 @@ mount.addEventListener("click", event => {
     case "refresh": void (async () => { await controller.refresh(); if (controller.state.graph) await controller.loadGraph(); })(); break;
     case "graph": editor = null; void controller.loadGraph(); break;
     case "graph-node": if (target.dataset.nodeId) controller.selectNode(target.dataset.nodeId); break;
-    case "apply-change": void controller.applyChange(); break;
+    case "apply-change": void controller.applyChange(mount.querySelector<HTMLInputElement>("#confirm-graph-change")?.checked === true); break;
     case "share-context": void controller.select(controller.state.selectedId); break;
     case "start": showEditor("start"); break;
     case "settings": showEditor("settings"); break;
@@ -65,7 +65,7 @@ mount.addEventListener("click", event => {
       if (descriptor.kind === "answer" && descriptor.tool === "resume_factory_run") { showEditor("steer"); break; }
       if (descriptor.kind === "steer" && descriptor.tool === "steer_factory_run") { showEditor("steer"); break; }
       if (descriptor.kind === "cancel" && descriptor.tool === "cancel_factory_run") { showEditor("stop"); break; }
-      if (descriptor.kind === "refresh" && descriptor.tool === "refresh_factory") { void controller.refresh(); break; }
+      if (descriptor.kind === "refresh" && descriptor.tool === "refresh_factory") { void (async () => { await controller.refresh(); if (run.planning_only || controller.state.graph) await controller.loadGraph(); })(); break; }
       if (descriptor.kind === "resume" && descriptor.tool === "resume_factory_run") { void controller.mutate("resume_factory_run", { run_id: run.id }); break; }
       if (descriptor.kind === "reconcile" && descriptor.tool === "reconcile_factory_run") { void controller.mutate("reconcile_factory_run", { run_id: run.id }); break; }
       if (descriptor.kind === "inspect" && descriptor.tool === "get_factory_run") { void controller.select(run.id); break; }
@@ -83,6 +83,11 @@ mount.addEventListener("click", event => {
   }
 });
 mount.addEventListener("change", event => {
+  if (event.target instanceof HTMLInputElement && event.target.id === "confirm-graph-change") {
+    const apply = mount.querySelector<HTMLButtonElement>('[data-action="apply-change"]');
+    if (apply) apply.disabled = !event.target.checked || !controller.state.connected || !!controller.state.pending || controller.state.graphStale || controller.state.graphLoading;
+    return;
+  }
   if (event.target instanceof HTMLSelectElement && event.target.name === "candidate_id") {
     const selected = event.target.value;
     const candidate = controller.state.discovery?.candidates.find(item => item.id === selected);
@@ -117,6 +122,7 @@ mount.addEventListener("submit", event => {
         if (success) pendingStart = null;
         if (success && intent !== "start") { await controller.refresh(); await controller.loadGraph(); }
       } else if (form.dataset.form === "graph-node") {
+        if (intent !== "target" && intent !== "dependencies") throw new Error("Choose which plan change to propose.");
         const nodeId = controller.state.selectedNodeId;
         if (!nodeId) throw new Error("Select a task first");
         success = await controller.proposeChange(intent === "target" ? { kind: "set_target", node_id: nodeId, target_id: fields.target_id ?? "" } : { kind: "set_dependencies", node_id: nodeId, dependencies: new FormData(form).getAll("dependencies").filter((value): value is string => typeof value === "string") });
@@ -166,6 +172,11 @@ function applyHostContext(): void {
 }
 app.ontoolresult = result => controller.receiveInitial(result);
 app.ontoolcancelled = () => controller.reportError("The host cancelled the opening request. Refresh to read the current state.");
+app.onteardown = async () => {
+  controller.setDisconnected("The MCP Apps host closed this workbench. Reopen Luna Factory to read current state.");
+  await hostBridge.context({});
+  return {};
+};
 app.addEventListener("hostcontextchanged", applyHostContext);
 
 if (fixturePreview) {
@@ -221,16 +232,13 @@ async function sendFollowUp(kind: FollowUpKind, taskId?: string): Promise<void> 
   const run = controller.selected;
   if (messagePending) { controller.reportError("A ChatGPT message is already being sent."); return; }
   if (!run) { controller.reportError("Select a current run before sending a ChatGPT message."); return; }
-  const task = taskId ? controller.state.graph?.nodes.find(node => node.id === taskId) : undefined;
-  if (taskId && (!task || controller.state.graphStale || controller.state.graph?.run_id !== run.id)) {
-    controller.reportError("The selected task is stale. Refresh the run and graph before sending context.");
-    return;
-  }
+  let prompt: string;
+  try { prompt = controller.currentFollowUpPrompt(kind, taskId); }
+  catch (error) { controller.reportError(error instanceof Error ? error.message : "Refresh before sending context."); return; }
   messagePending = true;
   applyHostContext();
   try {
-    const revision = task ? controller.state.graph?.revision : undefined;
-    await hostBridge.sendFollowUp(buildFollowUpPrompt(run, kind, task, revision));
+    await hostBridge.sendFollowUp(prompt);
     controller.reportNotice("Message sent to the active ChatGPT conversation.");
   } catch (error) {
     controller.reportError(error instanceof Error ? error.message : "ChatGPT could not receive this message.");

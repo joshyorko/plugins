@@ -51,9 +51,9 @@ describe("the server boundary", () => {
 });
 
 describe("operator attention", () => {
-  it("keeps blocked and quiescent outcomes in Needs me", () => {
-    expect(classifyRun(fixtureRun({ state: "BLOCKED" }))).toBe("needs");
-    expect(classifyRun(fixtureRun({ state: "QUIESCENT" }))).toBe("needs");
+  it("keeps nondecision blockers and quiescent plans in history", () => {
+    expect(classifyRun(fixtureRun({ state: "BLOCKED" }))).toBe("recent");
+    expect(classifyRun(fixtureRun({ state: "QUIESCENT" }))).toBe("recent");
     expect(classifyRun(fixtureRun({ state: "RUNNING" }))).toBe("active");
     expect(classifyRun(fixtureRun({ state: "CONVERGED" }))).toBe("recent");
   });
@@ -61,11 +61,11 @@ describe("operator attention", () => {
     const stopped = fixtureRun({ state: "CONVERGED" });
     if (!stopped.presentation) throw new Error("Missing fixture presentation");
     stopped.presentation.result = { kind: "stopped_unresolved", label: "Stopped with work unresolved" };
-    expect(classifyRun(stopped)).toBe("needs");
+    expect(classifyRun(stopped)).toBe("recent");
     const legacy = fixtureRun({ state: "CONVERGED" });
     delete legacy.control;
     delete legacy.presentation;
-    expect(classifyRun(legacy)).toBe("needs");
+    expect(classifyRun(legacy)).toBe("recent");
   });
   it("does not export stale CONVERGED as model context", () => {
     const run = fixtureRun({ state: "CONVERGED" });
@@ -95,9 +95,9 @@ describe("exact run links", () => {
 });
 
 describe("bounded Model-App Context", () => {
-  it("shares only the eight permitted fields with hard text bounds", () => {
+  it("shares only revision-fenced permitted fields with hard text bounds", () => {
     const context = boundedContext(fixtureRun({ objective: "x".repeat(8000), delta: "private receipt", blocker: "b".repeat(2000) }));
-    expect(Object.keys(context)).toEqual(["run_id", "repository", "objective", "state", "current_subject", "remaining_mandatory_gap", "blocker", "finish"]);
+    expect(Object.keys(context)).toEqual(["run_id", "revision", "repository", "objective", "state", "current_subject", "remaining_mandatory_gap", "blocker", "finish"]);
     expect(JSON.stringify(context).length).toBeLessThan(3500);
     expect(JSON.stringify(context)).not.toContain("private receipt");
     expect(context.objective.length).toBeLessThanOrEqual(1200);

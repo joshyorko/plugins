@@ -40,7 +40,7 @@ export class HostBridge implements Bridge {
   private readonly ownIds = new Set<string>();
   private connected = false;
 
-  constructor(private readonly app: App, private readonly restoreSelection: (id: string, nodeId?: string) => void, private readonly onDisconnected?: (message: string) => void) {
+  constructor(private readonly app: App, private readonly restoreSelection: (id: string, nodeId?: string, revision?: number) => void, private readonly onDisconnected?: (message: string) => void) {
     this.extensions = new OpenAIExtensions(app);
     app.onclose = () => {
       this.connected = false;
@@ -90,7 +90,7 @@ export class HostBridge implements Bridge {
   /** Only explicit navigation/reattachment overrides a user's context removal. */
   selectContext(): void { this.contextCleared = false; ++this.epoch; ++this.selectionEpoch; }
   async context(context: Record<string, unknown>): Promise<void> {
-    if (this.contextCleared) return;
+    if (this.contextCleared || !this.connected) return;
     const epoch = ++this.epoch;
     if (!this.connection) return;
     await this.connection;
@@ -155,7 +155,8 @@ export class HostBridge implements Bridge {
     ++this.epoch;
     this.contextCleared = false;
     const node = nodeId.safeParse(payload?.node_id);
-    if (node.success) this.restoreSelection(id.data, node.data);
+    const revision = payload?.graph_revision;
+    if (node.success && typeof revision === "number" && Number.isSafeInteger(revision) && revision >= 0) this.restoreSelection(id.data, node.data, revision);
     else this.restoreSelection(id.data);
   }
 }

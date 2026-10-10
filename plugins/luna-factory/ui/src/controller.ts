@@ -1,4 +1,4 @@
-import { allowedFinishes, boundedContext, finishSchema, parseToolResult, repositoryDiscoverySchema, repositoryRegistrationSchema, runId, settingsSchema, structuredResult, type Capabilities, type RepositoryDiscovery, type RunView, type Settings, type ToolData } from "./domain";
+import { allowedFinishes, boundedContext, buildFollowUpPrompt, finishSchema, parseToolResult, repositoryDiscoverySchema, repositoryRegistrationSchema, runId, settingsSchema, structuredResult, type Capabilities, type FollowUpKind, type RepositoryDiscovery, type RunView, type Settings, type ToolData } from "./domain";
 import { backendCatalogSchema, graphChangeSchema, graphEnvelopeSchema, type BackendCatalog, type FactoryGraph, type GraphChange, type GraphEnvelope } from "./domain";
 
 export interface Bridge {
@@ -31,8 +31,13 @@ export class WorkbenchController {
   private readonly detailsLoaded = new Set<string>();
   constructor(private readonly bridge: Bridge, private readonly changed: () => void) {}
   get selected(): RunView | undefined { return this.state.runs.find(run => run.id === this.state.selectedId); }
-  setConnected(connected: boolean): void { this.state.connected = connected; this.state.connectionStatus = connected ? "connected" : "connecting"; this.changed(); }
-  setDisconnected(message: string): void { this.state.connected = false; this.state.connectionStatus = "disconnected"; this.state.error = message; this.changed(); }
+  setConnected(connected: boolean): void { this.state.connected = connected; this.state.connectionStatus = connected ? "connected" : "connecting"; this.lastContext = ""; this.syncContext(); this.changed(); }
+  setDisconnected(message: string): void {
+    ++this.readVersion; ++this.graphVersion;
+    this.state.connected = false; this.state.connectionStatus = "disconnected"; this.state.error = message;
+    this.state.refreshing = false; this.state.graphLoading = false; this.state.graphStale = this.state.graph !== null;
+    this.detailsLoaded.clear(); this.lastContext = ""; this.syncContext(); this.changed();
+  }
   reportError(message: string): void { this.state.error = message; this.changed(); }
   reportNotice(message: string): void { this.state.error = null; this.state.notice = message; this.changed(); }
   receiveInitial(result: unknown): void {
@@ -81,9 +86,11 @@ export class WorkbenchController {
     if (id !== this.state.selectedId) {
       ++this.graphVersion;
       this.state.graph = null; this.state.proposal = null; this.state.selectedNodeId = null; this.state.graphLoading = false;
+      this.state.graphStale = false; this.state.backends = null; this.changeRetry = null;
     }
     this.state.selectedId = id;
     this.state.error = null;
+    this.state.notice = null;
     const version = ++this.readVersion;
     this.state.refreshing = false;
     this.changed();
@@ -98,13 +105,14 @@ export class WorkbenchController {
       this.apply(data);
       this.syncContext();
     } catch (error) { if (version === this.readVersion) this.state.error = errorMessage(error); }
-    finally { if (version === this.readVersion) { this.state.refreshing = false; this.changed(); } }
+    finally { if (version === this.readVersion) { this.state.refreshing = false; this.syncContext(); this.changed(); } }
   }
   async refresh(): Promise<void> {
     if (this.state.pending) return;
     const version = ++this.readVersion;
     this.state.refreshing = true;
     this.state.error = null;
+    this.syncContext();
     this.changed();
     try {
       const args = this.state.selectedId ? { run_id: this.state.selectedId } : {};
@@ -113,7 +121,7 @@ export class WorkbenchController {
       this.apply(data);
       this.syncContext();
     } catch (error) { if (version === this.readVersion) this.state.error = errorMessage(error); }
-    finally { if (version === this.readVersion) { this.state.refreshing = false; this.changed(); } }
+    finally { if (version === this.readVersion) { this.state.refreshing = false; this.syncContext(); this.changed(); } }
   }
   async sendOwnerInput(input: string): Promise<boolean> {
     const run = this.selected;
@@ -137,7 +145,7 @@ export class WorkbenchController {
     throw new Error("The server presentation does not authorize an owner answer or correction. Refresh before trying again.");
   }
   async mutate(tool: MutationTool, args: Record<string, unknown>): Promise<boolean> {
-    if (this.state.pending) return false;
+    if (!this.state.connected || this.state.pending || tool === "start_factory" && this.state.capabilities?.execution?.eligible !== true) return false;
     const targetId = typeof args.run_id === "string" ? args.run_id : null;
     const targeted = tool !== "start_factory";
     const run = targeted && targetId !== null ? this.state.runs.find(item => item.id === targetId) : undefined;
@@ -211,7 +219,7 @@ export class WorkbenchController {
     finally { this.state.pending = null; this.changed(); }
   }
   async createGraph(args: Record<string, unknown>): Promise<boolean> {
-    if (this.state.pending) return false;
+    if (!this.state.connected || this.state.pending) return false;
     const selectionEpoch = ++this.selectionEpoch;
     this.contextRestoreEpoch = null;
     this.bridge.selectContext?.();
@@ -235,9 +243,9 @@ export class WorkbenchController {
   }
   async loadGraph(): Promise<void> {
     const id = this.state.selectedId;
-    if (!id || this.state.pending) return;
+    if (!this.state.connected || !id || this.state.pending) return;
     const version = ++this.graphVersion;
-    this.state.graphLoading = true; this.state.error = null; this.changed();
+    this.state.graphLoading = true; this.state.error = null; this.syncContext(); this.changed();
     const [graph, backends] = await Promise.allSettled([
       this.bridge.call("get_factory_graph", { run_id: id }), this.bridge.call("get_factory_backends", {}),
     ]);
@@ -245,23 +253,26 @@ export class WorkbenchController {
     try {
       if (graph.status === "rejected") throw graph.reason;
       this.acceptGraph(graphEnvelopeSchema.parse(structuredResult(graph.value)));
+      if (this.selected?.control?.revision !== this.state.graph?.revision) await this.readGraphRun(id);
+      if (version !== this.graphVersion || id !== this.state.selectedId) return;
       if (backends.status === "fulfilled") this.state.backends = backendCatalogSchema.parse(structuredResult(backends.value));
       else { this.state.backends = null; this.state.error = "Execution targets could not be read. Target preferences are unavailable."; }
-    } catch (error) { this.state.graphStale = true; this.state.error = `${errorMessage(error)} Refresh the graph before changing it.`; }
-    finally { this.state.graphLoading = false; this.changed(); this.syncContext(); }
+    } catch (error) { if (version === this.graphVersion && id === this.state.selectedId) { this.state.graphStale = true; this.state.error = `${errorMessage(error)} Refresh the graph before changing it.`; } }
+    finally { if (version === this.graphVersion && id === this.state.selectedId) { this.state.graphLoading = false; this.changed(); this.syncContext(); } }
   }
   async restoreContext(id: string, nodeId?: string, expectedRevision?: number): Promise<void> {
     const epoch = this.selectionEpoch + 1;
     ++this.contextVersion;
     this.contextRestoreEpoch = epoch;
+    this.state.selectedNodeId = null;
     try {
       await this.select(id, false);
       if (nodeId && epoch === this.selectionEpoch && this.state.selectedId === id) {
         await this.loadGraph();
         if (epoch === this.selectionEpoch && this.state.selectedId === id) {
           const graph = this.state.graph;
-          if (expectedRevision !== undefined && graph?.revision !== expectedRevision) this.reportError("This task link is stale. Refresh the run and reopen the task at its current revision.");
-          else if (!graph?.nodes.some(node => node.id === nodeId)) this.reportError("This task is no longer present in the selected run.");
+          if (expectedRevision !== undefined && graph?.revision !== expectedRevision) { this.state.selectedNodeId = null; this.reportError("This task link is stale. Refresh the run and reopen the task at its current revision."); }
+          else if (!graph?.nodes.some(node => node.id === nodeId)) { this.state.selectedNodeId = null; this.reportError("This task is no longer present in the selected run."); }
           else this.selectNode(nodeId, false);
         }
       }
@@ -285,35 +296,54 @@ export class WorkbenchController {
   }
   async proposeChange(input: GraphChange): Promise<boolean> {
     const graph = this.state.graph;
-    if (!graph || this.state.pending || this.state.graphLoading || this.state.graphStale) return false;
+    if (!this.state.connected || !graph || this.state.pending || this.state.graphLoading || this.state.graphStale) return false;
+    if (!graph.planning_only && (graph.claim.held || graph.claim.status !== "released")) return false;
     const change = graphChangeSchema.parse(input);
     if (change.kind !== "import_candidates" && !graph.nodes.some(node => node.id === change.node_id)) return false;
-    if (change.kind === "set_target" && !this.state.backends?.targets.some(target => target.id === change.target_id && target.planning_eligible)) {
+    const recovered = this.state.proposal;
+    if (recovered?.status === "proposed" && recovered.base_revision + 1 === graph.revision && JSON.stringify(recovered.change) === JSON.stringify(change)) {
+      this.reportNotice("This proposal is already saved. Review and confirm it before applying."); return true;
+    }
+    if (unchangedGraphChange(graph, change)) {
+      this.reportNotice("No plan change: the selected values are already current."); return false;
+    }
+    if (change.kind === "set_target" && !this.state.backends?.targets.some(target => target.id === change.target_id && target.operator_enabled && target.planning_eligible && target.qualification !== "unsupported")) {
       this.reportError("This execution target cannot be selected for planning."); return false;
     }
     const fingerprint = JSON.stringify({ run_id: graph.run_id, revision: graph.revision, change });
     if (this.changeRetry?.fingerprint !== fingerprint) this.changeRetry = { fingerprint, key: crypto.randomUUID() };
     return this.graphMutation("propose_factory_change", { run_id: graph.run_id, expected_revision: graph.revision, idempotency_key: this.changeRetry.key, change });
   }
-  async applyChange(): Promise<boolean> {
+  async applyChange(confirmed = false): Promise<boolean> {
     const { graph, proposal } = this.state;
-    if (!graph || !proposal || proposal.status !== "proposed" || proposal.base_revision + 1 !== graph.revision || this.state.graphStale || this.state.pending || this.state.graphLoading) return false;
+    if (!confirmed || !this.state.connected || !graph || !proposal || proposal.status !== "proposed" || proposal.base_revision + 1 !== graph.revision || this.state.graphStale || this.state.pending || this.state.graphLoading) return false;
+    if (!graph.planning_only && (graph.claim.held || graph.claim.status !== "released")) return false;
+    if (unchangedGraphChange(graph, proposal.change)) { this.reportNotice("This saved proposal is unchanged. Its history is retained; nothing was applied."); return false; }
     return this.graphMutation("apply_factory_change", { run_id: graph.run_id, change_id: proposal.id, expected_revision: graph.revision });
   }
   private async graphMutation(tool: "propose_factory_change" | "apply_factory_change", args: Record<string, unknown>): Promise<boolean> {
-    ++this.graphVersion; ++this.readVersion;
+    const version = ++this.graphVersion; ++this.readVersion;
     this.state.pending = { tool, runId: String(args.run_id) }; this.state.error = null; this.changed();
     try {
       const result = graphEnvelopeSchema.parse(structuredResult(await this.bridge.call(tool, args)));
       if (!result.proposal || (tool === "apply_factory_change" ? result.proposal.id !== args.change_id || result.proposal.status !== "applied" : result.proposal.base_revision !== args.expected_revision || JSON.stringify(result.proposal.change) !== JSON.stringify(args.change))) throw new Error("The server returned a different graph change");
-      if (this.state.selectedId !== args.run_id) return true;
+      if (!this.state.connected || version !== this.graphVersion || this.state.selectedId !== args.run_id) return false;
       this.acceptGraph(result);
+      await this.readGraphRun(String(args.run_id));
+      if (!this.state.connected || version !== this.graphVersion || this.state.selectedId !== args.run_id) return false;
       this.syncContext();
       this.state.notice = tool === "propose_factory_change" ? "Change proposed. Review its exact scope below, then apply it." : "Graph change applied. This records the plan; execution was not started.";
       this.changeRetry = null;
       return true;
-    } catch (error) { this.state.graphStale = true; this.state.error = `${errorMessage(error)} Refresh before retrying; the change may have reached the server.`; return false; }
+    } catch (error) { if (this.state.selectedId === args.run_id) { this.state.graphStale = true; this.state.error = `${errorMessage(error)} Refresh before retrying; the change may have reached the server.`; } return false; }
     finally { this.state.pending = null; this.changed(); }
+  }
+  private async readGraphRun(id: string): Promise<void> {
+    const result = await this.bridge.call("get_factory_run", { run_id: id });
+    if (this.state.selectedId !== id) return;
+    const data = parseToolResult(result);
+    if (data.kind !== "run" || data.value.id !== id || data.value.control?.revision !== this.state.graph?.revision) throw new Error("Run and graph revisions differ. Refresh both before changing or sharing the plan.");
+    this.apply(data);
   }
   async discoverRepositories(): Promise<void> {
     if (this.state.discovering || this.state.pending) return;
@@ -369,9 +399,11 @@ export class WorkbenchController {
   }
   private syncContext(): void {
     if (this.contextRestoreEpoch !== null) return;
-    const graph = this.state.graph?.run_id === this.state.selectedId ? this.state.graph : null;
+    const current = this.state.connected && !this.state.refreshing && !this.state.graphLoading && !this.state.graphStale;
+    const graph = current && this.state.graph?.run_id === this.state.selectedId ? this.state.graph : null;
+    const run = current && this.selected && this.detailsLoaded.has(this.selected.id) && (!graph || this.selected.control?.revision === graph.revision) ? this.selected : undefined;
     const node = graph?.nodes.find(item => item.id === this.state.selectedNodeId);
-    const context = { ...(this.selected ? boundedContext(this.selected) : graph ? { run_id: graph.run_id, repository: graph.repository.alias, state: graph.planning_only ? "PLANNING" : "UNVERIFIED", current_subject: graph.repository.subject.slice(0, 180) } : {}),
+    const context = { ...(run ? boundedContext(run) : graph ? { run_id: graph.run_id, revision: graph.revision, repository: graph.repository.alias, state: graph.planning_only ? "PLANNING" : "UNVERIFIED", current_subject: graph.repository.subject.slice(0, 180) } : {}),
       ...(node && graph ? { node_id: node.id, node_title: node.title.slice(0, 300), node_state: node.state, graph_revision: graph.revision } : {}),
     };
     const serialized = JSON.stringify(context);
@@ -386,6 +418,22 @@ export class WorkbenchController {
       this.changed();
     });
   }
+  currentFollowUpPrompt(kind: FollowUpKind, taskId?: string): string {
+    const run = this.selected;
+    if (!this.state.connected || !run?.control || !run.presentation || !this.detailsLoaded.has(run.id) || this.state.refreshing || this.state.graphLoading || this.state.graphStale || this.state.pending) throw new Error("Refresh the current run and graph before sending ChatGPT context.");
+    const graph = this.state.graph;
+    const task = taskId ? graph?.nodes.find(node => node.id === taskId && node.id === this.state.selectedNodeId) : undefined;
+    if (taskId && (!task || graph?.run_id !== run.id || graph.revision !== run.control?.revision)) throw new Error("The selected task is stale. Refresh the run and graph before sending context.");
+    return buildFollowUpPrompt(run, kind, task, task ? graph?.revision : undefined);
+  }
 }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message.slice(0, 800) : "The request could not be completed"; }
+function unchangedGraphChange(graph: FactoryGraph, change: GraphChange): boolean {
+  if (change.kind === "import_candidates") return false;
+  const node = graph.nodes.find(item => item.id === change.node_id);
+  if (!node) return false;
+  return change.kind === "set_dependencies"
+    ? change.dependencies.length === node.dependencies.length && new Set(change.dependencies).size === change.dependencies.length && change.dependencies.every(id => node.dependencies.includes(id))
+    : change.target_id === node.target_preference;
+}
 function validOwnerMessage(value: unknown): value is string { return typeof value === "string" && value.trim().length > 0 && value.length <= 4000; }
