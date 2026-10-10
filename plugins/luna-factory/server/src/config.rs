@@ -18,6 +18,10 @@ pub struct Config {
     pub native_socket: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub cas_targets: BTreeMap<String, crate::cas::CasTarget>,
+    /// Optional, operator-only: repository alias -> CAS target alias whose exact
+    /// target and CWD may be read for that repository's Factory-known threads.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub cas_timelines: BTreeMap<String, String>,
     pub database: PathBuf,
     pub codex_binary: PathBuf,
     pub skill_path: PathBuf,
@@ -104,6 +108,14 @@ impl Config {
         for (alias, target) in &self.cas_targets {
             ensure!(valid_alias(alias), "invalid_cas_alias");
             target.validate()?;
+        }
+        ensure!(self.cas_timelines.len() <= 64, "too_many_cas_timelines");
+        for (repository, alias) in &self.cas_timelines {
+            ensure!(valid_alias(repository), "invalid_cas_timeline_repository");
+            ensure!(
+                self.cas_targets.contains_key(alias),
+                "cas_timeline_target_not_configured"
+            );
         }
         ensure!(
             ["stdio", "existing_daemon"].contains(&self.native_transport.as_str()),

@@ -145,6 +145,7 @@ fn definitions() -> Map<String, Value> {
         "execution":object(json!({"eligible":{"const":false},"reason":string()})),
         "routing_telemetry":object(json!({"model":string(),"effort":string(),"provider":string()})),
         "control_policy":object(json!({"wire_schema":{"const":1},"sqlite_schema":{"const":2},"managed_admission":string(),"native_child_policy":string(),"semantic_acceptance":string(),"independent_checks":array(string(),32),"native_output_completeness":string(),"native_environment":string(),"delivery_certification":string()})),
+        "agent_timeline":object(json!({"source":{"const":"codex-action-server"},"enabled":boolean(),"detail":text(300)})),
         "live_proof":string()
     })));
     defs.insert("candidate".into(),object(json!({"id":{"type":"string","pattern":"^[a-f0-9]{64}$"},"name":string(),"root_alias":text(64),"max_finish":finish()})));
@@ -218,6 +219,16 @@ pub fn output_schema(tool_name: &str) -> Value {
             "qualification":object(json!({"execution_eligible":{"const":false},"blockers":array(text(256),16)})),
             "receipt":nullable(object(json!({"request_id":text(128),"state":enumeration(&["not_found","unknown","in_progress","accepted","created_not_materialized","completed","failed","interrupted"]),"thread_id":nullable(text(512)),"turn_id":nullable(text(512)),"binding_verified":{"const":false},"execution_eligible":{"const":false},"reason":text(256)}))),
             "thread":nullable(object(json!({"target":text(128),"cwd":text(512),"thread_id":text(512),"liveness":enumeration(&["active","idle","unknown"]),"execution_eligible":{"const":false},"reason":text(256)})))
+        })),
+        "read_factory_agent_timeline" => object(json!({
+            "schema_version":{"const":1},"run_id":id(),"thread_id":id(),"observed":boolean(),
+            "status":enumeration(&["observed","unavailable"]),"source":{"const":"codex-action-server"},
+            "reason":nullable(enumeration(&crate::timeline::REASONS)),"detail":nullable(text(300)),
+            "events":array(object(json!({"at":{"type":"integer","minimum":0,"maximum":crate::cas::MAX_TIMESTAMP},"kind":enumeration(&crate::timeline::KINDS),"summary":text(crate::timeline::SUMMARY_LIMIT),"thread_id":id()})),crate::timeline::MAX_EVENTS),
+            "children":array(object(json!({"parent_thread":id(),"receiver_thread":id()})),crate::timeline::MAX_CHILDREN),
+            "omitted":count(),"next_cursor":nullable(text(1024)),
+            "freshness":nullable(object(json!({"observed_at":count(),"age_seconds":count(),"cache":enumeration(&["miss","hit","revalidated"]),"native_updated_at":nullable(count()),"thread_status":enumeration(&["active","idle","not_loaded","system_error","unknown"])}))),
+            "binding_verified":{"const":false},"execution_eligible":{"const":false}
         })),
         _ => panic!("missing output schema for {tool_name}"),
     };
