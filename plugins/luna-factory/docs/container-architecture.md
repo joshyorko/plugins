@@ -21,7 +21,7 @@ See `server/src/native.rs` and [Native transport verification](native-transport-
 
 ## Keep the default container planning-only
 
-The OCI default contains Luna Factory, the released workbench and skill, and a health probe. It contains no Codex executable or credential. It mounts no host Codex home, host app-server socket, or repository. The operator config has empty repository and CAS maps.
+The OCI default contains Luna Factory, the branch-built workbench, the released skill, and a health probe. The pinned Node build stage is absent from the final runtime image. It contains no Codex executable or credential. It mounts no host Codex home, host app-server socket, or repository. The operator config has empty repository and CAS maps.
 
 This is the right default for Dakota. It starts the service with fresh state and lets a local MCP client verify discovery and persisted planning settings. It does not claim that Codex execution works inside the container.
 

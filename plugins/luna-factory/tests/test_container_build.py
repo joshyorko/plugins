@@ -95,11 +95,33 @@ class ContainerBuildTests(unittest.TestCase):
         containerfile = (CONTAINER_DIR / "Containerfile").read_text()
         self.assertIn("rust:1.99.0-slim-trixie@sha256:", containerfile)
         self.assertIn("python:3.13-slim-trixie@sha256:", containerfile)
+        self.assertIn("node:24.11.1-bookworm-slim@sha256:", containerfile)
         self.assertIn("GIT_PACKAGE_VERSION=1:2.47.3-0+deb13u1", containerfile)
         self.assertIn("DEBIAN_SNAPSHOT=20261010T000000Z", containerfile)
         self.assertIn("git-package-version", containerfile)
         self.assertIn('git=${GIT_PACKAGE_VERSION}', containerfile)
         self.assertNotIn(":latest", containerfile)
+
+    def test_container_image_builds_the_branch_ui_in_the_pinned_node_stage(self):
+        containerfile = (CONTAINER_DIR / "Containerfile").read_text()
+        self.assertIn("FROM ${NODE_BASE} AS ui-build", containerfile)
+        self.assertIn("COPY ui/package.json ui/package-lock.json ./", containerfile)
+        self.assertIn("COPY --from=ui-build /build/ui/dist/index.html", containerfile)
+        self.assertNotIn("COPY release/luna-factory-0.2.1-x86_64-unknown-linux-gnu/ui/dist/index.html", containerfile)
+
+    def test_build_fingerprint_covers_the_chatgpt_ui_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = root / "plugins/luna-factory"
+            shutil.copytree(CONTAINER_DIR.parent / "server", plugin / "server")
+            shutil.copytree(CONTAINER_DIR, plugin / "container")
+            shutil.copytree(CONTAINER_DIR.parent / "ui", plugin / "ui", ignore=shutil.ignore_patterns("node_modules", ".vite", "coverage"))
+            (plugin / "assets").mkdir()
+            shutil.copy2(CONTAINER_DIR.parent / "assets/logo.png", plugin / "assets/logo.png")
+            before = BUILD.source_patch_sha256(root)
+            source = plugin / "ui/src/main.ts"
+            source.write_bytes(source.read_bytes() + b"\n")
+            self.assertNotEqual(before, BUILD.source_patch_sha256(root))
 
     def test_build_fingerprint_covers_every_compiled_rust_source(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -107,6 +129,7 @@ class ContainerBuildTests(unittest.TestCase):
             plugin = root / "plugins/luna-factory"
             shutil.copytree(CONTAINER_DIR.parent / "server", plugin / "server")
             shutil.copytree(CONTAINER_DIR, plugin / "container")
+            shutil.copytree(CONTAINER_DIR.parent / "ui", plugin / "ui", ignore=shutil.ignore_patterns("node_modules", ".vite", "coverage"))
             (plugin / "assets").mkdir()
             shutil.copy2(CONTAINER_DIR.parent / "assets/logo.png", plugin / "assets/logo.png")
             before = BUILD.source_patch_sha256(root)
@@ -121,6 +144,11 @@ class ContainerBuildTests(unittest.TestCase):
             [
                 "plugins/luna-factory/server/src/config.rs",
                 "plugins/luna-factory/container/Containerfile",
+                "plugins/luna-factory/server/src/extensions.rs",
+                "plugins/luna-factory/server/src/mentions.rs",
+                "plugins/luna-factory/server/tests/openai_forms.rs",
+                "plugins/luna-factory/docs/chatgpt-extension-gap-matrix.md",
+                "skills/setup",
             ]
         )
 

@@ -31,21 +31,45 @@ RELEASE_UI_SHA256 = "8ea6a2029aa29cac4577753df3f8a01466c92647e3dc1b34f33b6c48e5c
 RELEASE_SKILL_SHA256 = "c03d30a21a67cf9a63e4262a4fbac172e53682e73c5bb12e6998950b736b1c74"
 GIT_PACKAGE_VERSION = "1:2.47.3-0+deb13u1"
 DEBIAN_SNAPSHOT = "20261010T000000Z"
+NODE_BASE = "docker.io/library/node:24.11.1-bookworm-slim@sha256:48abc13a19400ca3985071e287bd405a1d99306770eb81d61202fb6b65cf0b57"
 RELEASE_BUNDLE_DIR = "luna-factory-0.2.1-x86_64-unknown-linux-gnu"
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 ROOT = Path(__file__).resolve().parents[3]
 ALLOWED_RELEASE_DELTA = {
     "docs/superpowers/plans/2026-10-10-luna-factory-oci.md",
+    ".agents/plugins/marketplace.json",
+    ".agents/skills/setup",
+    "skills/setup",
+    "plugins/luna-factory/.codex-plugin/plugin.json",
     "plugins/luna-factory/docs/container-architecture.md",
     "plugins/luna-factory/docs/container-deployment.md",
+    "plugins/luna-factory/docs/chatgpt-extension-gap-matrix.md",
     "plugins/luna-factory/docs/local-service.md",
     "plugins/luna-factory/docs/package.md",
     "plugins/luna-factory/server/src/config.rs",
+    "plugins/luna-factory/server/src/lib.rs",
+    "plugins/luna-factory/server/src/lifecycle.rs",
+    "plugins/luna-factory/server/src/mcp.rs",
     "plugins/luna-factory/server/src/http.rs",
+    "plugins/luna-factory/server/src/schemas.rs",
+    "plugins/luna-factory/server/src/extensions.rs",
+    "plugins/luna-factory/server/src/mentions.rs",
     "plugins/luna-factory/server/tests/http_security.rs",
+    "plugins/luna-factory/server/tests/http_integration.rs",
+    "plugins/luna-factory/server/tests/mcp_contract.rs",
+    "plugins/luna-factory/server/tests/output_schemas.rs",
+    "plugins/luna-factory/server/tests/mentions.rs",
+    "plugins/luna-factory/server/tests/openai_forms.rs",
+    "plugins/luna-factory/server/Cargo.lock",
+    "plugins/luna-factory/server/Cargo.toml",
     "plugins/luna-factory/tests/test_container_build.py",
+    "plugins/luna-factory/plugin.json",
+    "plugins/luna-factory/skills/setup/SKILL.md",
 }
-ALLOWED_RELEASE_PREFIXES = ("plugins/luna-factory/container/",)
+ALLOWED_RELEASE_PREFIXES = (
+    "plugins/luna-factory/container/",
+    "plugins/luna-factory/ui/",
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -198,6 +222,18 @@ def verify_release_files(release_dir: Path) -> tuple[Path, dict[str, Any]]:
     return archive, provenance
 
 
+def ui_build_inputs(source_root: Path) -> tuple[Path, ...]:
+    ui = source_root / "plugins/luna-factory/ui"
+    return tuple(
+        path.relative_to(source_root)
+        for path in sorted(ui.rglob("*"))
+        if path.is_file()
+        and "node_modules" not in path.parts
+        and ".vite" not in path.parts
+        and "coverage" not in path.parts
+    )
+
+
 def build_inputs(source_root: Path) -> tuple[Path, ...]:
     server = source_root / "plugins/luna-factory/server"
     paths = [
@@ -209,6 +245,7 @@ def build_inputs(source_root: Path) -> tuple[Path, ...]:
             if path.is_file()
         ),
         Path("plugins/luna-factory/assets/logo.png"),
+        *ui_build_inputs(source_root),
         Path("plugins/luna-factory/container/Containerfile"),
         Path("plugins/luna-factory/container/build_image.py"),
         Path("plugins/luna-factory/container/healthcheck.py"),
@@ -231,6 +268,18 @@ def hash_build_inputs(source_root: Path) -> str:
 
 def source_patch_sha256(source_root: Path) -> str:
     return hash_build_inputs(source_root)
+
+
+def source_ui_sha256(source_root: Path) -> str:
+    digest = hashlib.sha256()
+    paths = ui_build_inputs(source_root)
+    if not paths:
+        raise ValueError("ChatGPT UI source is missing")
+    for relative in paths:
+        digest.update(relative.as_posix().encode())
+        digest.update(b"\0")
+        digest.update(hashlib.sha256((source_root / relative).read_bytes()).digest())
+    return digest.hexdigest()
 
 
 def validate_release_delta(paths: list[str]) -> None:
@@ -284,6 +333,14 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
     ).stdout.splitlines()
     validate_release_delta(changed_paths)
     archive, provenance = verify_release_files(release_dir)
+    package_manifest = json.loads((source_root / "plugins/luna-factory/ui/package.json").read_text(encoding="utf-8"))
+    if package_manifest.get("version") != RELEASE_VERSION:
+        raise ValueError("branch UI package version mismatch")
+    ui_version = package_manifest["version"]
+    source_ui_hash = source_ui_sha256(source_root)
+    source_ui_dist = source_root / "plugins/luna-factory/ui/dist/index.html"
+    if not source_ui_dist.is_file() or sha256_file(source_ui_dist) == RELEASE_UI_SHA256:
+        raise ValueError("built branch UI preview is missing or still matches the released UI")
     patch_hash = source_patch_sha256(source_root)
     fingerprint = image_fingerprint(source_root)
     image = image_tag(source_root)
@@ -297,6 +354,7 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
         if sha256_file(source_logo) != sha256_file(package / "assets/logo.png"):
             raise ValueError("pinned source logo differs from the released MCP icon")
         shutil.copytree(source_root / "plugins/luna-factory/server", context / "server", ignore=shutil.ignore_patterns("target", ".git"))
+        shutil.copytree(source_root / "plugins/luna-factory/ui", context / "ui", ignore=shutil.ignore_patterns("node_modules", "dist", ".vite", "coverage"))
         (context / "assets").mkdir()
         shutil.copy2(source_root / "plugins/luna-factory/assets/logo.png", context / "assets/logo.png")
         shutil.copy2(source_root / "plugins/luna-factory/container/Containerfile", context / "Containerfile")
@@ -322,6 +380,12 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
                 f"GIT_PACKAGE_VERSION={GIT_PACKAGE_VERSION}",
                 "--build-arg",
                 f"DEBIAN_SNAPSHOT={DEBIAN_SNAPSHOT}",
+                "--build-arg",
+                f"NODE_BASE={NODE_BASE}",
+                "--build-arg",
+                f"SOURCE_UI_INPUT_SHA256={source_ui_hash}",
+                "--build-arg",
+                f"UI_VERSION={ui_version}",
                 ".",
             ],
             cwd=context,
@@ -351,7 +415,7 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
             "python3",
             image,
             "-c",
-            "import hashlib,json,pathlib,subprocess; root=pathlib.Path('/opt/luna-factory'); binary=pathlib.Path('/usr/local/bin/luna-factoryd'); version=subprocess.run([str(binary),'--version'],check=True,capture_output=True,text=True).stdout.strip(); git_version=subprocess.run(['git','--version'],check=True,capture_output=True,text=True).stdout.strip(); print(json.dumps({'version':version,'git_version':git_version,'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'ui_sha256':hashlib.sha256((root/'ui/dist/index.html').read_bytes()).hexdigest(),'skill_sha256':hashlib.sha256((root/'skills/luna-factory/SKILL.md').read_bytes()).hexdigest()}))",
+            "import hashlib,json,pathlib,re,subprocess; root=pathlib.Path('/opt/luna-factory'); binary=pathlib.Path('/usr/local/bin/luna-factoryd'); version=subprocess.run([str(binary),'--version'],check=True,capture_output=True,text=True).stdout.strip(); git_version=subprocess.run(['git','--version'],check=True,capture_output=True,text=True).stdout.strip(); html=(root/'ui/dist/index.html').read_bytes(); ui_version='0.2.1' if b'<meta name=\"luna-factory-version\" content=\"0.2.1\">' in html else 'unknown'; print(json.dumps({'version':version,'git_version':git_version,'ui_version':ui_version,'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'ui_sha256':hashlib.sha256(html).hexdigest(),'skill_sha256':hashlib.sha256((root/'skills/luna-factory/SKILL.md').read_bytes()).hexdigest()}))",
         ],
         check=True,
         capture_output=True,
@@ -362,8 +426,10 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
         raise ValueError("OCI binary version mismatch")
     if runtime.get("git_version") != "git version 2.47.3":
         raise ValueError("OCI Git version mismatch")
-    if runtime.get("ui_sha256") != RELEASE_UI_SHA256:
-        raise ValueError("OCI UI hash differs from the published release")
+    if runtime.get("ui_sha256") != sha256_file(source_ui_dist):
+        raise ValueError("OCI UI hash differs from the reviewed branch build")
+    if runtime.get("ui_version") != RELEASE_VERSION:
+        raise ValueError("OCI UI version mismatch")
     if runtime.get("skill_sha256") != RELEASE_SKILL_SHA256:
         raise ValueError("OCI skill hash differs from the published release")
     if runtime.get("binary_sha256") == RELEASE_BINARY_SHA256:
@@ -376,6 +442,8 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
         "release_archive_sha256": RELEASE_ARCHIVE_SHA256,
         "release_binary_sha256": RELEASE_BINARY_SHA256,
         "release_ui_sha256": RELEASE_UI_SHA256,
+        "source_ui_sha256": source_ui_hash,
+        "oci_ui_version": runtime["ui_version"],
         "source_commit": RELEASE_COMMIT,
         "build_head": head,
         "source_patch_sha256": patch_hash,
@@ -384,6 +452,7 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
         "oci_binary_version": runtime["version"],
         "git_package_version": GIT_PACKAGE_VERSION,
         "debian_snapshot": DEBIAN_SNAPSHOT,
+        "node_base": NODE_BASE,
         "git_version": runtime["git_version"],
         "oci_ui_sha256": runtime["ui_sha256"],
         "oci_skill_sha256": runtime["skill_sha256"],

@@ -6,11 +6,11 @@ For the role of Codex CLI, Codex app-server, CAS, and Luna Factory, read [Contai
 
 ## What the image contains
 
-The image uses the published 0.2.1 workbench and skill. The Rust server is a local derivative of source commit `ebe2753ed032347456ef9b1c193646469bf17c96`. The derivative adds an opt-in loopback publish authority. It does not change the published tag or archive. The runtime includes Debian Trixie Git `1:2.47.3-0+deb13u1`, required for repository-bound planning graphs; it is installed from the pinned `20261010T000000Z` Debian snapshot and is unavailable to remote network routes at runtime.
+The image verifies the published 0.2.1 workbench hash as release provenance and builds the PR branch workbench from its locked npm package. The Rust server is a local derivative of source commit `ebe2753ed032347456ef9b1c193646469bf17c96`. The derivative adds an opt-in loopback publish authority. It does not change the published tag or archive. The runtime includes Debian Trixie Git `1:2.47.3-0+deb13u1`, required for repository-bound planning graphs; it is installed from the pinned `20261010T000000Z` Debian snapshot and is unavailable to remote network routes at runtime.
 
 The released server accepts only loopback bind addresses. A rootless Podman port publish forwards traffic to the container interface. The optional `published_origin` setting lets the server bind `0.0.0.0` inside the isolated container while accepting only the exact loopback host and origin. The Compose network is private, and the host port binds to `127.0.0.1`.
 
-The image uses Rust 1.99.0 and Python 3.13 Trixie images pinned by digest. Both provide glibc 2.41. The released binary requires glibc 2.39. Dakota provides glibc 2.44.
+The image uses Rust 1.99.0 and Python 3.13 Trixie images pinned by digest. Both provide glibc 2.41. The branch UI is built in a separate digest-pinned Node 24.11.1 Bookworm stage and copied as a single HTML resource; Node and npm are not included in the runtime image. The released binary requires glibc 2.39. Dakota provides glibc 2.44.
 
 ## Build the image
 
@@ -25,6 +25,7 @@ umask 077
 BUILD_RECORD=$(mktemp "${TMPDIR:-/tmp}/luna-factory-oci-build.XXXXXX")
 podman pull docker.io/library/rust:1.99.0-slim-trixie@sha256:2752b332db73fdbb7dc576f06c82ed1f312005784ef913d7e04a28f5f55dc581
 podman pull docker.io/library/python:3.13-slim-trixie@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+podman pull docker.io/library/node:24.11.1-bookworm-slim@sha256:48abc13a19400ca3985071e287bd405a1d99306770eb81d61202fb6b65cf0b57
 python3 plugins/luna-factory/container/build_image.py \
   --release-dir "$RELEASE_DIR" > "$BUILD_RECORD"
 IMAGE_REF=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image_ref"])' "$BUILD_RECORD")
@@ -38,7 +39,7 @@ IMAGE_REF=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["ima
 
 The helper rejects a different release commit or artifact. It extracts only regular files beneath the release bundle directory. The build uses the exact Rust and Python image digests in `container/Containerfile` and runs `cargo build --locked` against the pinned source.
 
-The OCI binary is a derivative build, so its hash differs from the official release binary. `image-build.json` records the release archive, release binary, release UI, complete build-input hash, clean build HEAD, and immutable image reference. The private Compose `.env` is initialized with that digest reference, not a mutable tag. Keep the record outside the repository.
+The OCI binary and workbench are derivative builds, so their hashes differ from the official release components. `image-build.json` records both UI hashes, the source UI input hash, complete build-input hash, clean build HEAD, and immutable image reference. The private Compose `.env` is initialized with that digest reference, not a mutable tag. Keep the record outside the repository.
 
 Check the image ID and the private paths before starting the service.
 

@@ -1,5 +1,14 @@
 ARG RUST_BASE=docker.io/library/rust:1.99.0-slim-trixie@sha256:2752b332db73fdbb7dc576f06c82ed1f312005784ef913d7e04a28f5f55dc581
 ARG PYTHON_BASE=docker.io/library/python:3.13-slim-trixie@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+ARG NODE_BASE=docker.io/library/node:24.11.1-bookworm-slim@sha256:48abc13a19400ca3985071e287bd405a1d99306770eb81d61202fb6b65cf0b57
+FROM ${NODE_BASE} AS ui-build
+
+WORKDIR /build/ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci --ignore-scripts
+COPY ui/ ./
+RUN npm run build
+
 FROM ${RUST_BASE} AS build
 
 WORKDIR /build/server
@@ -17,6 +26,9 @@ ARG RELEASE_ARCHIVE_SHA256
 ARG RELEASE_UI_SHA256
 ARG GIT_PACKAGE_VERSION=1:2.47.3-0+deb13u1
 ARG DEBIAN_SNAPSHOT=20261010T000000Z
+ARG NODE_BASE
+ARG SOURCE_UI_INPUT_SHA256
+ARG UI_VERSION
 LABEL org.opencontainers.image.title="Luna Factory OCI preview" \
       org.opencontainers.image.version="0.2.1" \
       org.opencontainers.image.revision="${SOURCE_COMMIT}" \
@@ -24,11 +36,14 @@ LABEL org.opencontainers.image.title="Luna Factory OCI preview" \
       io.luna-factory.released-ui-sha256="${RELEASE_UI_SHA256}" \
       io.luna-factory.git-package-version="${GIT_PACKAGE_VERSION}" \
       io.luna-factory.debian-snapshot="${DEBIAN_SNAPSHOT}" \
+      io.luna-factory.node-builder="${NODE_BASE}" \
+      io.luna-factory.ui-source-input-sha256="${SOURCE_UI_INPUT_SHA256}" \
+      io.luna-factory.ui-version="${UI_VERSION}" \
       io.luna-factory.oci-source-patch-sha256="${SOURCE_PATCH_SHA256}" \
       io.luna-factory.oci-image-fingerprint="${IMAGE_FINGERPRINT}"
 
 COPY --from=build /build/server/target/release/luna-factoryd /usr/local/bin/luna-factoryd
-COPY release/luna-factory-0.2.1-x86_64-unknown-linux-gnu/ui/dist/index.html /opt/luna-factory/ui/dist/index.html
+COPY --from=ui-build /build/ui/dist/index.html /opt/luna-factory/ui/dist/index.html
 COPY release/luna-factory-0.2.1-x86_64-unknown-linux-gnu/skills/luna-factory /opt/luna-factory/skills/luna-factory
 COPY healthcheck.py /opt/luna-factory/container/healthcheck.py
 RUN printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%s trixie main\n' "${DEBIAN_SNAPSHOT}" > /tmp/luna-factory-snapshot.list \

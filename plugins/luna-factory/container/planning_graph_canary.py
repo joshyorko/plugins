@@ -45,7 +45,7 @@ def check_surface(client: McpClient) -> dict[str, Any]:
         "get_factory_capabilities", "list_factory_runs", "read_factory_settings",
         "create_factory_graph", "get_factory_graph", "propose_factory_change", "apply_factory_change",
     }
-    require(len(tools) == 21 and required.issubset(names), "MCP planning tool catalog mismatch")
+    require(len(tools) == 22 and required.issubset(names), "MCP planning tool catalog mismatch")
     resources = client.request("resources/list").get("resources", [])
     require(any(item.get("uri") == WORKBENCH_URI for item in resources), "bundled workbench resource missing")
     read = client.request("resources/read", {"uri": WORKBENCH_URI}).get("contents", [])

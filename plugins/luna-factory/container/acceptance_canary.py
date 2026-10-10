@@ -101,7 +101,7 @@ def run(url: str, mode: str) -> dict[str, Any]:
     tools = client.request("tools/list").get("tools", [])
     names = {tool.get("name") for tool in tools}
     if (
-        len(tools) != 21
+        len(tools) != 22
         or not ALLOWED_TOOL_CALLS.issubset(names)
         or not FORBIDDEN_TOOL_CALLS.issubset(names)
     ):
