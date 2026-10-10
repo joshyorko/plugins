@@ -95,6 +95,9 @@ class ContainerBuildTests(unittest.TestCase):
         containerfile = (CONTAINER_DIR / "Containerfile").read_text()
         self.assertIn("rust:1.99.0-slim-trixie@sha256:", containerfile)
         self.assertIn("python:3.13-slim-trixie@sha256:", containerfile)
+        self.assertIn("GIT_PACKAGE_VERSION=1:2.47.3-0+deb13u1", containerfile)
+        self.assertIn("git-package-version", containerfile)
+        self.assertIn('git=${GIT_PACKAGE_VERSION}', containerfile)
         self.assertNotIn(":latest", containerfile)
 
     def test_build_fingerprint_covers_every_compiled_rust_source(self):

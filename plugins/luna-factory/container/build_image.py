@@ -29,6 +29,7 @@ RELEASE_CHECKSUMS_SHA256 = "2f436fffa19c38ff126eff0221f680a65ee1ccbfd3d912cdd0be
 RELEASE_BINARY_SHA256 = "8ce20a7f4bc17bfaa10afb4ca450e44318b67c6f9479aa3a7190da8a2b15e03b"
 RELEASE_UI_SHA256 = "8ea6a2029aa29cac4577753df3f8a01466c92647e3dc1b34f33b6c48e5ce3004"
 RELEASE_SKILL_SHA256 = "c03d30a21a67cf9a63e4262a4fbac172e53682e73c5bb12e6998950b736b1c74"
+GIT_PACKAGE_VERSION = "1:2.47.3-0+deb13u1"
 RELEASE_BUNDLE_DIR = "luna-factory-0.2.1-x86_64-unknown-linux-gnu"
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 ROOT = Path(__file__).resolve().parents[3]
@@ -208,6 +209,7 @@ def build_inputs(source_root: Path) -> tuple[Path, ...]:
         ),
         Path("plugins/luna-factory/assets/logo.png"),
         Path("plugins/luna-factory/container/Containerfile"),
+        Path("plugins/luna-factory/container/build_image.py"),
         Path("plugins/luna-factory/container/healthcheck.py"),
     ]
     missing = [path.as_posix() for path in paths if not (source_root / path).is_file()]
@@ -315,6 +317,7 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
                 f"RELEASE_ARCHIVE_SHA256={RELEASE_ARCHIVE_SHA256}",
                 "--build-arg",
                 f"RELEASE_UI_SHA256={RELEASE_UI_SHA256}",
+                f"GIT_PACKAGE_VERSION={GIT_PACKAGE_VERSION}",
                 ".",
             ],
             cwd=context,
@@ -344,7 +347,7 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
             "python3",
             image,
             "-c",
-            "import hashlib,json,pathlib,subprocess; root=pathlib.Path('/opt/luna-factory'); binary=pathlib.Path('/usr/local/bin/luna-factoryd'); version=subprocess.run([str(binary),'--version'],check=True,capture_output=True,text=True).stdout.strip(); print(json.dumps({'version':version,'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'ui_sha256':hashlib.sha256((root/'ui/dist/index.html').read_bytes()).hexdigest(),'skill_sha256':hashlib.sha256((root/'skills/luna-factory/SKILL.md').read_bytes()).hexdigest()}))",
+            "import hashlib,json,pathlib,subprocess; root=pathlib.Path('/opt/luna-factory'); binary=pathlib.Path('/usr/local/bin/luna-factoryd'); version=subprocess.run([str(binary),'--version'],check=True,capture_output=True,text=True).stdout.strip(); git_version=subprocess.run(['git','--version'],check=True,capture_output=True,text=True).stdout.strip(); print(json.dumps({'version':version,'git_version':git_version,'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'ui_sha256':hashlib.sha256((root/'ui/dist/index.html').read_bytes()).hexdigest(),'skill_sha256':hashlib.sha256((root/'skills/luna-factory/SKILL.md').read_bytes()).hexdigest()}))",
         ],
         check=True,
         capture_output=True,
@@ -353,6 +356,8 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
     runtime = json.loads(runtime_check.stdout)
     if runtime.get("version") != f"luna-factoryd {RELEASE_VERSION}":
         raise ValueError("OCI binary version mismatch")
+    if runtime.get("git_version") != "git version 2.47.3":
+        raise ValueError("OCI Git version mismatch")
     if runtime.get("ui_sha256") != RELEASE_UI_SHA256:
         raise ValueError("OCI UI hash differs from the published release")
     if runtime.get("skill_sha256") != RELEASE_SKILL_SHA256:
@@ -373,6 +378,8 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
         "image_fingerprint": fingerprint,
         "oci_binary_sha256": runtime["binary_sha256"],
         "oci_binary_version": runtime["version"],
+        "git_package_version": GIT_PACKAGE_VERSION,
+        "git_version": runtime["git_version"],
         "oci_ui_sha256": runtime["ui_sha256"],
         "oci_skill_sha256": runtime["skill_sha256"],
         "oci_binary_is_derivative": "true",

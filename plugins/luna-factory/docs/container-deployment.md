@@ -6,7 +6,7 @@ For the role of Codex CLI, Codex app-server, CAS, and Luna Factory, read [Contai
 
 ## What the image contains
 
-The image uses the published 0.2.1 workbench and skill. The Rust server is a local derivative of source commit `ebe2753ed032347456ef9b1c193646469bf17c96`. The derivative adds an opt-in loopback publish authority. It does not change the published tag or archive.
+The image uses the published 0.2.1 workbench and skill. The Rust server is a local derivative of source commit `ebe2753ed032347456ef9b1c193646469bf17c96`. The derivative adds an opt-in loopback publish authority. It does not change the published tag or archive. The runtime includes Debian Trixie Git `1:2.47.3-0+deb13u1`, required for repository-bound planning graphs; it is installed at the pinned Python base image's build step and is unavailable to remote network routes at runtime.
 
 The released server accepts only loopback bind addresses. A rootless Podman port publish forwards traffic to the container interface. The optional `published_origin` setting lets the server bind `0.0.0.0` inside the isolated container while accepting only the exact loopback host and origin. The Compose network is private, and the host port binds to `127.0.0.1`.
 

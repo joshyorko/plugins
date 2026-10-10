@@ -15,11 +15,13 @@ ARG SOURCE_PATCH_SHA256
 ARG IMAGE_FINGERPRINT
 ARG RELEASE_ARCHIVE_SHA256
 ARG RELEASE_UI_SHA256
+ARG GIT_PACKAGE_VERSION=1:2.47.3-0+deb13u1
 LABEL org.opencontainers.image.title="Luna Factory OCI preview" \
       org.opencontainers.image.version="0.2.1" \
       org.opencontainers.image.revision="${SOURCE_COMMIT}" \
       io.luna-factory.release-archive-sha256="${RELEASE_ARCHIVE_SHA256}" \
       io.luna-factory.released-ui-sha256="${RELEASE_UI_SHA256}" \
+      io.luna-factory.git-package-version="${GIT_PACKAGE_VERSION}" \
       io.luna-factory.oci-source-patch-sha256="${SOURCE_PATCH_SHA256}" \
       io.luna-factory.oci-image-fingerprint="${IMAGE_FINGERPRINT}"
 
@@ -27,6 +29,10 @@ COPY --from=build /build/server/target/release/luna-factoryd /usr/local/bin/luna
 COPY release/luna-factory-0.2.1-x86_64-unknown-linux-gnu/ui/dist/index.html /opt/luna-factory/ui/dist/index.html
 COPY release/luna-factory-0.2.1-x86_64-unknown-linux-gnu/skills/luna-factory /opt/luna-factory/skills/luna-factory
 COPY healthcheck.py /opt/luna-factory/container/healthcheck.py
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends "git=${GIT_PACKAGE_VERSION}" \
+    && git --version \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
