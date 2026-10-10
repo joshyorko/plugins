@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -78,6 +79,22 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+class _LunaUIMetaParser(HTMLParser):
+    version: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() == "meta":
+            values = dict(attrs)
+            if values.get("name") == "luna-factory-version":
+                self.version = values.get("content")
+
+
+def ui_version_from_html(content: bytes) -> str | None:
+    parser = _LunaUIMetaParser()
+    parser.feed(content.decode("utf-8"))
+    return parser.version
 
 
 def validate_provenance(data: dict[str, Any]) -> None:
@@ -341,6 +358,8 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
     source_ui_dist = source_root / "plugins/luna-factory/ui/dist/index.html"
     if not source_ui_dist.is_file() or sha256_file(source_ui_dist) == RELEASE_UI_SHA256:
         raise ValueError("built branch UI preview is missing or still matches the released UI")
+    if ui_version_from_html(source_ui_dist.read_bytes()) != ui_version:
+        raise ValueError("branch UI document version differs from its package version")
     patch_hash = source_patch_sha256(source_root)
     fingerprint = image_fingerprint(source_root)
     image = image_tag(source_root)
@@ -421,7 +440,7 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
             "python3",
             image,
             "-c",
-            "import hashlib,json,pathlib,re,subprocess; root=pathlib.Path('/opt/luna-factory'); binary=pathlib.Path('/usr/local/bin/luna-factoryd'); version=subprocess.run([str(binary),'--version'],check=True,capture_output=True,text=True).stdout.strip(); git_version=subprocess.run(['git','--version'],check=True,capture_output=True,text=True).stdout.strip(); html=(root/'ui/dist/index.html').read_bytes(); ui_version='0.2.1' if b'<meta name=\"luna-factory-version\" content=\"0.2.1\">' in html else 'unknown'; print(json.dumps({'version':version,'git_version':git_version,'ui_version':ui_version,'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'ui_sha256':hashlib.sha256(html).hexdigest(),'skill_sha256':hashlib.sha256((root/'skills/luna-factory/SKILL.md').read_bytes()).hexdigest()}))",
+            "import hashlib,json,pathlib,subprocess; root=pathlib.Path('/opt/luna-factory'); binary=pathlib.Path('/usr/local/bin/luna-factoryd'); version=subprocess.run([str(binary),'--version'],check=True,capture_output=True,text=True).stdout.strip(); git_version=subprocess.run(['git','--version'],check=True,capture_output=True,text=True).stdout.strip(); html=(root/'ui/dist/index.html').read_bytes(); print(json.dumps({'version':version,'git_version':git_version,'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'ui_sha256':hashlib.sha256(html).hexdigest(),'skill_sha256':hashlib.sha256((root/'skills/luna-factory/SKILL.md').read_bytes()).hexdigest()}))",
         ],
         check=True,
         capture_output=True,
@@ -434,8 +453,6 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
         raise ValueError("OCI Git version mismatch")
     if runtime.get("ui_sha256") != sha256_file(source_ui_dist):
         raise ValueError("OCI UI hash differs from the reviewed branch build")
-    if runtime.get("ui_version") != RELEASE_VERSION:
-        raise ValueError("OCI UI version mismatch")
     if runtime.get("skill_sha256") != RELEASE_SKILL_SHA256:
         raise ValueError("OCI skill hash differs from the published release")
     if runtime.get("binary_sha256") == RELEASE_BINARY_SHA256:
@@ -449,7 +466,7 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
         "release_binary_sha256": RELEASE_BINARY_SHA256,
         "release_ui_sha256": RELEASE_UI_SHA256,
         "source_ui_sha256": source_ui_hash,
-        "oci_ui_version": runtime["ui_version"],
+        "oci_ui_version": ui_version_from_html(source_ui_dist.read_bytes()),
         "source_commit": RELEASE_COMMIT,
         "build_head": head,
         "source_patch_sha256": patch_hash,

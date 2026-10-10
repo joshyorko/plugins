@@ -109,6 +109,13 @@ class ContainerBuildTests(unittest.TestCase):
         self.assertIn("COPY --from=ui-build /build/ui/dist/index.html", containerfile)
         self.assertNotIn("COPY release/luna-factory-0.2.1-x86_64-unknown-linux-gnu/ui/dist/index.html", containerfile)
 
+    def test_ui_version_probe_handles_self_closing_html_meta(self):
+        self.assertEqual(
+            BUILD.ui_version_from_html(b'<meta content="0.2.1" name="luna-factory-version" />'),
+            "0.2.1",
+        )
+        self.assertIsNone(BUILD.ui_version_from_html(b'<meta name="other" content="0.2.1">'))
+
     def test_oci_build_caps_memory_cpu_stages_and_cargo_jobs(self):
         builder = (CONTAINER_DIR / "build_image.py").read_text()
         containerfile = (CONTAINER_DIR / "Containerfile").read_text()
