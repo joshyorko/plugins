@@ -19,7 +19,7 @@ fn every_structured_tool_declares_an_object_output_contract() {
 #[test]
 fn graph_catalog_requires_revision_and_is_callable_by_both_audiences() {
     let tools = tool_definitions();
-    assert_eq!(tools.len(), 22);
+    assert_eq!(tools.len(), 26);
     for name in [
         "create_factory_graph",
         "get_factory_graph",
@@ -69,6 +69,83 @@ fn graph_catalog_requires_revision_and_is_callable_by_both_audiences() {
         resource["contents"][0]["_meta"]["openai/ui"]["preferredDisplayMode"],
         "inline"
     );
+}
+
+#[test]
+fn campaign_catalog_is_model_and_app_visible_with_read_only_reads_and_fenced_promotion() {
+    let tools = tool_definitions();
+    let value =
+        |name: &str| serde_json::to_value(tools.iter().find(|t| t.name == name).unwrap()).unwrap();
+    for name in [
+        "create_factory_campaign",
+        "list_factory_campaigns",
+        "get_factory_campaign",
+        "promote_factory_campaign",
+    ] {
+        let tool = value(name);
+        assert_eq!(
+            tool["_meta"]["ui"]["visibility"],
+            json!(["model", "app"]),
+            "{name}"
+        );
+        assert!(tool["_meta"]["ui"].get("resourceUri").is_none(), "{name}");
+        assert_eq!(tool["inputSchema"]["additionalProperties"], false, "{name}");
+    }
+    for name in ["list_factory_campaigns", "get_factory_campaign"] {
+        assert_eq!(value(name)["annotations"]["readOnlyHint"], true, "{name}");
+        assert_eq!(value(name)["annotations"]["openWorldHint"], false, "{name}");
+    }
+    let create = value("create_factory_campaign");
+    assert_eq!(create["annotations"]["readOnlyHint"], false);
+    assert_eq!(create["annotations"]["destructiveHint"], false);
+    assert_eq!(create["annotations"]["idempotentHint"], true);
+    let input = create["inputSchema"].clone();
+    let validator = jsonschema::validator_for(&input).unwrap();
+    let request = json!({"repository":"plugins","parent":{"provider":"github","item_id":"1:I_x","revision":"v1","display":{"number":67,"url":"https://github.com/o/r/issues/67"}},
+        "title":"Parent","objective":"Plan","acceptance":["A1"],"non_goals":[],"finish":"local_candidate","profile":"default","idempotency_key":"k"});
+    assert!(validator.is_valid(&request));
+    for bad in [
+        json!({"capacity":1}),
+        json!({"parent":{"provider":"github","item_id":"1:I_x","revision":"v1","repository_id":"forged"}}),
+        json!({"parent":{"provider":"github","item_id":"1:I_x","revision":"v1","display":{"url":"http://o/r"}}}),
+        json!({"acceptance":[]}),
+        json!({"finish":"deploy"}),
+    ] {
+        let mut candidate = request.clone();
+        for (key, field) in bad.as_object().unwrap() {
+            candidate[key] = field.clone();
+        }
+        assert!(!validator.is_valid(&candidate), "{bad}");
+    }
+    let promote = value("promote_factory_campaign");
+    assert_eq!(promote["annotations"]["readOnlyHint"], false);
+    assert_eq!(
+        promote["inputSchema"]["required"],
+        json!(["campaign_id", "expected_revision", "idempotency_key"])
+    );
+    assert_eq!(
+        promote["inputSchema"]["properties"]["expected_revision"]["maximum"],
+        9_007_199_254_740_991_u64
+    );
+    // The projection contract itself cannot claim execution today.
+    let campaign = &value("get_factory_campaign")["outputSchema"]["$defs"]["campaign"];
+    assert_eq!(
+        campaign["properties"]["promotion"]["properties"]["allowed"],
+        json!({"const":false})
+    );
+    assert_eq!(
+        campaign["properties"]["planning"]["properties"]["planning_only"],
+        json!({"const":true})
+    );
+    let models = tools
+        .iter()
+        .filter(|tool| {
+            serde_json::to_value(tool).unwrap()["_meta"]["ui"]["visibility"]
+                .as_array()
+                .is_none_or(|v| v.iter().any(|c| c == "model"))
+        })
+        .count();
+    assert_eq!(models, 18);
 }
 
 #[test]
@@ -258,6 +335,8 @@ fn status_and_ui_reads_are_truthfully_read_only() {
         if [
             "list_factory_runs",
             "get_factory_run",
+            "list_factory_campaigns",
+            "get_factory_campaign",
             "get_factory_capabilities",
             "open_factory",
             "open_factory_panel",

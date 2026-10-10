@@ -445,7 +445,8 @@ impl Store {
           CREATE TABLE IF NOT EXISTS claims (identity TEXT PRIMARY KEY, run_id TEXT NOT NULL UNIQUE REFERENCES runs(id));
           CREATE TABLE IF NOT EXISTS receipts (sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES runs(id), subject TEXT NOT NULL, kind TEXT NOT NULL, summary TEXT NOT NULL, created_at INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
-          CREATE TABLE IF NOT EXISTS repository_registrations (id TEXT PRIMARY KEY, alias TEXT NOT NULL UNIQUE, payload TEXT NOT NULL);")?;
+          CREATE TABLE IF NOT EXISTS repository_registrations (id TEXT PRIMARY KEY, alias TEXT NOT NULL UNIQUE, payload TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS campaigns (id TEXT PRIMARY KEY, idem TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL, repository_identity TEXT NOT NULL, parent_provider TEXT NOT NULL, parent_item TEXT NOT NULL, planning_run_id TEXT NOT NULL UNIQUE REFERENCES runs(id), payload TEXT NOT NULL, UNIQUE(repository_identity, parent_provider, parent_item));")?;
         let mut store = Self { connection };
         store.migrate_control()?;
         Ok(store)
@@ -1079,6 +1080,132 @@ impl Store {
         );
         run.claim_held = true;
         self.persist(run, None)
+    }
+    fn query_campaigns(
+        &self,
+        clause: &str,
+        params: impl rusqlite::Params,
+    ) -> Result<Vec<crate::campaign::Campaign>> {
+        let mut statement = self.connection.prepare(&format!("SELECT id,idem,fingerprint,repository_identity,parent_provider,parent_item,planning_run_id,payload FROM campaigns {clause}"))?;
+        let rows = statement
+            .query_map(params, |row| {
+                Ok((
+                    [
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                    ],
+                    row.get::<_, String>(7)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(columns, payload)| {
+                let campaign: crate::campaign::Campaign = serde_json::from_str(&payload)?;
+                campaign.validate()?;
+                // Indexed columns must agree with the payload they constrain.
+                ensure!(
+                    columns
+                        == [
+                            campaign.id.clone(),
+                            campaign.idempotency_key.clone(),
+                            campaign.fingerprint.clone(),
+                            campaign.repository_identity.clone(),
+                            campaign.parent.provider.clone(),
+                            campaign.parent.item_id.clone(),
+                            campaign.planning_run_id.clone(),
+                        ],
+                    "campaign_record_corrupt"
+                );
+                Ok(campaign)
+            })
+            .collect()
+    }
+    pub fn campaign(&self, id: &str) -> Result<crate::campaign::Campaign> {
+        self.query_campaigns("WHERE id=?1", [id])?
+            .pop()
+            .context("campaign_not_found")
+    }
+    pub fn campaign_by_key(&self, key: &str) -> Result<Option<crate::campaign::Campaign>> {
+        Ok(self.query_campaigns("WHERE idem=?1", [key])?.pop())
+    }
+    pub fn campaign_by_parent(
+        &self,
+        identity: &str,
+        provider: &str,
+        item_id: &str,
+    ) -> Result<Option<crate::campaign::Campaign>> {
+        Ok(self
+            .query_campaigns(
+                "WHERE repository_identity=?1 AND parent_provider=?2 AND parent_item=?3",
+                [identity, provider, item_id],
+            )?
+            .pop())
+    }
+    pub fn campaigns(&self, limit: u32) -> Result<Vec<crate::campaign::Campaign>> {
+        self.query_campaigns("ORDER BY rowid DESC LIMIT ?1", [limit.clamp(1, 100)])
+    }
+    /// Links an existing planning-only graph. Never touches the run, its claim or journal.
+    pub fn insert_campaign(&mut self, campaign: &crate::campaign::Campaign) -> Result<()> {
+        campaign.validate()?;
+        let planning = self.get(&campaign.planning_run_id)?;
+        ensure!(
+            planning.planning_only
+                && !planning.claim_held
+                && planning.request.repository == campaign.repository
+                && planning.request.finish == campaign.finish
+                && crate::graph::repository_id(&planning) == campaign.repository_identity,
+            "campaign_planning_run_invalid"
+        );
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        for (sql, value, reason) in [
+            (
+                "SELECT 1 FROM campaigns WHERE idem=?1",
+                &campaign.idempotency_key,
+                "campaign_idempotency_conflict",
+            ),
+            (
+                "SELECT 1 FROM campaigns WHERE planning_run_id=?1",
+                &campaign.planning_run_id,
+                "campaign_planning_run_linked",
+            ),
+        ] {
+            ensure!(
+                tx.query_row(sql, [value], |_| Ok(())).optional()?.is_none(),
+                reason
+            );
+        }
+        ensure!(
+            tx.query_row(
+                "SELECT 1 FROM campaigns WHERE repository_identity=?1 AND parent_provider=?2 AND parent_item=?3",
+                params![campaign.repository_identity, campaign.parent.provider, campaign.parent.item_id],
+                |_| Ok(())
+            )
+            .optional()?
+            .is_none(),
+            "campaign_parent_exists"
+        );
+        tx.execute(
+            "INSERT INTO campaigns(id,idem,fingerprint,repository_identity,parent_provider,parent_item,planning_run_id,payload) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![
+                campaign.id,
+                campaign.idempotency_key,
+                campaign.fingerprint,
+                campaign.repository_identity,
+                campaign.parent.provider,
+                campaign.parent.item_id,
+                campaign.planning_run_id,
+                serde_json::to_string(campaign)?
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
     }
     pub fn settings(&self) -> Result<serde_json::Value> {
         let value: Option<String> = self

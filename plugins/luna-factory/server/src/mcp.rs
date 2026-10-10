@@ -167,6 +167,7 @@ pub fn tool_definitions() -> Vec<Tool> {
         definition("request_factory_repository", "Request repository access", "Request one discovered repository alias and explicit finish cap. With no complete selection, supported ChatGPT hosts may ask through an OpenAI form; otherwise use the accessible Luna Factory Add repository form. This only queues a request; local operator approval is still required. Never accepts filesystem paths or remote approval.", object(json!({"candidate_id":{"type":"string","pattern":"^[a-f0-9]{64}$"},"alias":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"},"max_finish":{"type":"string","enum":["local_candidate","push","pr"]}}), &[]), false),
     ]);
     let create_schema = serde_json::to_value(&tools[0].input_schema).expect("start schema");
+    let start = create_schema["properties"].clone();
     let node_id = json!({"type":"string","minLength":1,"maxLength":256});
     let deps = json!({"type":"array","maxItems":128,"uniqueItems":true,"items":node_id});
     let source = object(
@@ -190,6 +191,24 @@ pub fn tool_definitions() -> Vec<Tool> {
         definition("inspect_factory_cas", "Inspect configured CAS target", "Opt-in read-only CAS inspection. Use an operator-configured target alias. Optionally supply both run_id and an existing durable planning request_id to read its receipt and exact thread. Does not dispatch, retry, authenticate, release claims or certify execution. Missing receipts and subscription entitlement remain unverified.", object(json!({"target_alias":{"type":"string","minLength":1,"maxLength":64},"run_id":id,"request_id":{"type":"string","minLength":1,"maxLength":128}}), &["target_alias"]), true),
         definition("propose_factory_change", "Propose graph change", "Record a source-bound, revision-fenced planning proposal under local operator authority. Imports remain candidates without execution authority. Inspect its returned ID/revision before applying; duplicate keys require identical payloads.", object(json!({"run_id":id,"expected_revision":revision,"idempotency_key":node_id,"change":change}), &["run_id","expected_revision","idempotency_key","change"]), false),
         definition("apply_factory_change", "Apply graph change", "Apply one inspected proposal at its current revision. Rechecks source, authority and backend preference. Does not dispatch or reassign active/unknown execution. Identical recorded retries do not apply twice.", object(json!({"run_id":id,"change_id":node_id,"expected_revision":revision}), &["run_id","change_id","expected_revision"]), false),
+    ]);
+    let parent = object(
+        json!({"provider":node_id,"item_id":node_id,"revision":node_id,
+            "display":{"type":"object","additionalProperties":false,"properties":{
+                "number":{"type":"integer","minimum":1,"maximum":9_007_199_254_740_991_u64},
+                "url":{"type":"string","minLength":9,"maxLength":2048,"pattern":"^https://"}}}}),
+        &["provider", "item_id", "revision"],
+    );
+    let campaign_id = json!({"type":"string","minLength":1,"maxLength":64});
+    tools.extend([
+        definition("create_factory_campaign", "Create planning campaign", "Group one parent work item (for example a GitHub issue) with a new planning-only graph in an approved repository. Parent number/URL are supplied display assertions, never evidence. One campaign per repository and parent item; duplicate keys require identical payloads. Starts no claim, worker, inference or execution; continue planning with propose_factory_change on the returned graph.", object(json!({
+            "repository":start["repository"],"parent":parent,"title":{"type":"string","minLength":1,"maxLength":1000},
+            "objective":start["objective"],"acceptance":start["acceptance"],"non_goals":start["non_goals"],
+            "finish":start["finish"],"profile":start["profile"],"idempotency_key":start["idempotency_key"]
+        }), &["repository","parent","title","objective","acceptance","non_goals","finish","profile","idempotency_key"]), false),
+        definition("list_factory_campaigns", "Factory campaigns", "Read recent campaigns with their parent item, planning graph summary and linked runs, without inference. A planned campaign has no execution.", object(json!({"limit":{"type":"integer","minimum":1,"maximum":100}}), &[]), true),
+        definition("get_factory_campaign", "Factory campaign", "Read one campaign, its planning graph summary (task counts by state and revision) and its linked runs, without inference.", object(json!({"campaign_id":campaign_id}), &["campaign_id"]), true),
+        definition("promote_factory_campaign", "Promote campaign to execution", "Request promotion of a campaign's reviewed plan into execution, fenced to the planning graph revision. Fails closed with execution_not_qualified while capabilities.execution.eligible is false; it never upgrades the planning graph and records nothing.", object(json!({"campaign_id":campaign_id,"expected_revision":revision,"idempotency_key":node_id}), &["campaign_id","expected_revision","idempotency_key"]), false),
     ]);
     for tool in &mut tools {
         let name = tool.name.as_ref();
@@ -232,6 +251,10 @@ pub fn tool_definitions() -> Vec<Tool> {
                 | "inspect_factory_cas"
                 | "propose_factory_change"
                 | "apply_factory_change"
+                | "create_factory_campaign"
+                | "list_factory_campaigns"
+                | "get_factory_campaign"
+                | "promote_factory_campaign"
         ) {
             tool.meta = Some(
                 serde_json::from_value(json!({"ui":{"visibility":["model","app"]}}))
@@ -245,7 +268,10 @@ pub fn tool_definitions() -> Vec<Tool> {
         }
         if matches!(
             name,
-            "create_factory_graph" | "propose_factory_change" | "apply_factory_change"
+            "create_factory_graph"
+                | "propose_factory_change"
+                | "apply_factory_change"
+                | "create_factory_campaign"
         ) {
             tool.annotations = Some(serde_json::from_value(json!({"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false})).expect("planning annotations"));
         }

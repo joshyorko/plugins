@@ -165,6 +165,22 @@ fn definitions() -> Map<String, Value> {
         "run_id":id(),"revision":count(),"repository":object(json!({"alias":text(64),"identity":{"type":"string","pattern":"^[a-f0-9]{64}$"},"base_head":string(),"subject":id()})),
         "planning_only":boolean(),"nodes":array(reference("graph_node"),128),"criteria":array(reference("criterion"),32),"attempts":array(reference("attempt"),256),"claim":reference("claim"),"changes":array(reference("proposal"),128)
     })));
+    let safe_integer = json!({"type":"integer","minimum":1,"maximum":9_007_199_254_740_991_u64});
+    defs.insert("campaign_parent".into(),object(json!({
+        "provider":id(),"item_id":id(),"revision":id(),
+        "display":nullable(object(json!({"number":nullable(safe_integer),"url":nullable(text(2048))})))
+    })));
+    // A campaign projection never claims execution: its plan is planning-only and
+    // promotion is disallowed until execution is independently qualified (#71).
+    defs.insert("campaign".into(),object(json!({
+        "id":id(),"repository":text(64),"parent":reference("campaign_parent"),"title":text(1000),"finish":finish(),
+        "status":enumeration(&["planned","promoted","finished","stopped"]),
+        "planning_run_id":id(),"run_ids":array(id(),64),"created_at":count(),"updated_at":count(),
+        "planning":object(json!({"run_id":id(),"revision":count(),"planning_only":{"const":true},
+            "tasks":object(json!({"total":count(),"candidate":count(),"ready":count(),"running":count(),"verify":count(),"done":count(),"blocked":count()}))})),
+        "runs":array(object(json!({"id":id(),"state":string(),"updated_at":count()})),64),
+        "promotion":object(json!({"allowed":{"const":false},"reason":string()}))
+    })));
     defs.insert(
         "operation".into(),
         object(json!({"advertised":boolean(),"enabled":boolean(),"qualified":boolean()})),
@@ -208,6 +224,13 @@ pub fn output_schema(tool_name: &str) -> Value {
         | "propose_factory_change"
         | "apply_factory_change" => {
             object(json!({"graph":reference("graph"),"proposal":nullable(reference("proposal"))}))
+        }
+        "create_factory_campaign" => {
+            object(json!({"campaign":reference("campaign"),"graph":reference("graph")}))
+        }
+        "list_factory_campaigns" => object(json!({"campaigns":array(reference("campaign"),100)})),
+        "get_factory_campaign" | "promote_factory_campaign" => {
+            object(json!({"campaign":reference("campaign")}))
         }
         "get_factory_backends" => object(
             json!({"schema_version":{"const":1},"discovery":{"const":"configuration_only"},"policy":{"const":"subscription_only"},"targets":array(reference("backend"),5)}),

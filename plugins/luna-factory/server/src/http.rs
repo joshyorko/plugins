@@ -39,6 +39,11 @@ struct RunId {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct CampaignId {
+    campaign_id: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Refresh {
     run_id: Option<String>,
 }
@@ -302,6 +307,14 @@ impl McpServer {
                     .await
             }
             "get_factory_graph" => self.factory.graph(&parse::<RunId>(args)?.run_id).await,
+            "create_factory_campaign" => self.factory.create_campaign(parse(args)?).await,
+            "list_factory_campaigns" => self.factory.campaigns(parse::<List>(args)?.limit).await,
+            "get_factory_campaign" => {
+                self.factory
+                    .campaign(&parse::<CampaignId>(args)?.campaign_id)
+                    .await
+            }
+            "promote_factory_campaign" => self.factory.promote_campaign(parse(args)?).await,
             "propose_factory_change" => self.factory.propose_graph_change(parse(args)?).await,
             "apply_factory_change" => self.factory.apply_graph_change(parse(args)?).await,
             "get_factory_backends" => {
