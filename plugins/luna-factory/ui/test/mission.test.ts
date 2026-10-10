@@ -6,7 +6,9 @@ import { WorkbenchController, type Bridge } from "../src/controller";
 import { renderLanes } from "../src/lanes";
 import { nowSentence, runTier, SinceTracker, statusLabel } from "../src/narrative";
 import { renderWorkbench } from "../src/view";
-import { fixtureBackends, fixtureCampaignPlan, fixturePlanningRun, fixtureRun, fixtureSwarmRun, fixtureWorkbench } from "./fixtures";
+import { fixtureBackends, fixtureCampaignPlan, fixturePlanningRun, fixtureRun, fixtureSwarmRun, fixtureTimelineCapability, fixtureTimelines, fixtureWorkbench } from "./fixtures";
+import { classifyRun, needsOperatorDecision, type Capabilities } from "../src/domain";
+import { TIMELINE_INTERVAL_MS } from "../src/controller";
 
 const node = (id: string, dependencies: string[] = [], state = "candidate") => ({ id, title: id, dependencies, state, owner_thread: null });
 
@@ -177,5 +179,103 @@ describe("motion and message copy", () => {
     expect(root.textContent).toContain("Available once the current read finishes");
     renderWorkbench(root, controller.state, null, false, { surface: "inline", canSendFollowUps: false, canExpand: true });
     expect(root.textContent).toContain("unavailable in this host");
+  });
+});
+
+async function observedController(capability: Capabilities["agent_timeline"] | null = fixtureTimelineCapability, reply?: (thread: string) => unknown) {
+  const run = fixtureSwarmRun();
+  const plan = fixtureCampaignPlan();
+  const graph = { graph: { ...plan.graph.graph, run_id: run.id, revision: run.control!.revision, planning_only: false, nodes: run.control!.tasks.map(task => ({ ...task, source: null, target_preference: null })), attempts: [] }, proposal: null };
+  const timelines = fixtureTimelines(run.id);
+  const call = vi.fn<Bridge["call"]>().mockImplementation(async (tool, args) => {
+    if (tool === "read_factory_agent_timeline") return reply ? reply(String(args.thread_id)) : { structuredContent: timelines[String(args.thread_id)] };
+    return { structuredContent: tool === "get_factory_backends" ? fixtureBackends : tool === "get_factory_run" ? run : graph };
+  });
+  const context = vi.fn<Bridge["context"]>().mockResolvedValue();
+  const controller = new WorkbenchController({ call, context }, () => undefined);
+  controller.setConnected(true);
+  controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [run], selected_run: run, capabilities: { ...fixtureWorkbench.capabilities, ...(capability ? { agent_timeline: capability } : {}) } } });
+  await controller.loadGraph();
+  const timelineCalls = () => call.mock.calls.filter(([tool]) => tool === "read_factory_agent_timeline");
+  return { controller, context, call, run, timelineCalls };
+}
+
+describe("observed agent timelines", () => {
+  it("reads only rostered agents, only in Lanes, at a bounded rate", async () => {
+    let clock = 1_791_142_800_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    try {
+      const { controller, timelineCalls, run } = await observedController();
+      await controller.loadTimelines();
+      expect(timelineCalls()).toHaveLength(0);
+      controller.setViewMode("lanes");
+      await vi.waitFor(() => expect(Object.keys(controller.state.timelines)).toHaveLength(3));
+      expect(timelineCalls().map(([, args]) => args)).toEqual(["owner-a", "child-1", "child-2"].map(thread_id => ({ run_id: run.id, thread_id })));
+      controller.setViewMode("map"); controller.setViewMode("lanes"); controller.selectAgent("child-1");
+      await controller.loadTimelines();
+      expect(timelineCalls()).toHaveLength(3);
+      clock += TIMELINE_INTERVAL_MS;
+      await controller.loadTimelines();
+      expect(timelineCalls()).toHaveLength(6);
+      await controller.select(null);
+      expect(controller.state.timelines).toEqual({});
+    } finally { now.mockRestore(); }
+  });
+  it("renders observed ticks labelled Observed in Codex and keeps the server's reason on unavailable lanes", async () => {
+    const { controller, run } = await observedController();
+    controller.setViewMode("lanes");
+    await vi.waitFor(() => expect(Object.keys(controller.state.timelines)).toHaveLength(3));
+    controller.selectAgent("child-1");
+    const root = document.createElement("div");
+    root.innerHTML = renderLanes(run, roster(run, controller.state.graph), controller.state, (run.updated_at ?? 0) + 60);
+    expect(root.querySelectorAll(".lane-track.observed")).toHaveLength(2);
+    expect(root.querySelectorAll(".tick.observed")).toHaveLength(13);
+    expect(root.querySelector(".lane-track.observed")?.getAttribute("aria-label")).toContain("Observed in Codex");
+    expect(root.querySelector(".tick.observed")?.getAttribute("title")).toContain("Observed in Codex");
+    expect(root.querySelector(".lane-track.unavailable")?.textContent).toContain("declined this read");
+    expect(root.querySelector(".observed-events h4")?.textContent).toBe("Observed in Codex · Worker 1");
+    expect(root.querySelector(".observed-events")?.textContent).toContain("Check passed: cargo test");
+    expect(root.querySelector(".lanes-legend")?.textContent).toContain("Observed in Codex");
+    controller.selectAgent("owner-a");
+    root.innerHTML = renderLanes(run, roster(run, controller.state.graph), controller.state, (run.updated_at ?? 0) + 60);
+    expect(root.querySelector(".observed-events")?.textContent).toContain("Spawned in Codex: Worker 1, Worker 2");
+    expect(root.textContent).not.toMatch(/cas_|child-1|owner-a/);
+  });
+  it("labels every no-observation state with a server-supplied reason", async () => {
+    const run = fixtureSwarmRun();
+    const reasons = async (capability: Capabilities["agent_timeline"] | null, reply?: (thread: string) => unknown) => {
+      const { controller } = await observedController(capability, reply);
+      controller.setViewMode("lanes");
+      if (capability?.enabled) await vi.waitFor(() => expect(Object.keys(controller.state.timelines)).toHaveLength(3));
+      const root = document.createElement("div");
+      root.innerHTML = renderLanes(run, roster(run, null), controller.state);
+      return Array.from(root.querySelectorAll(".lane-track.unavailable"), track => track.textContent);
+    };
+    expect(await reasons(null)).toEqual(Array(3).fill("Per-agent timeline not reported by this server"));
+    expect(await reasons({ source: "codex-action-server", enabled: false, detail: "Codex observation is not configured on this server." })).toEqual(Array(3).fill("Codex observation is not configured on this server."));
+    expect(await reasons(fixtureTimelineCapability, () => ({ isError: true, content: [{ type: "text", text: "agent_thread_not_in_run" }] }))).toEqual(Array(3).fill("Codex observation could not be read for this agent."));
+    expect(await reasons(fixtureTimelineCapability, () => ({ structuredContent: { ...fixtureTimelines(run.id)["owner-a"], binding_verified: true } }))).toEqual(Array(3).fill("Codex observation could not be read for this agent."));
+  });
+  it("never changes attention, proof, the Map or the ChatGPT context", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_791_142_800_000);
+    try {
+      const { controller, context, run } = await observedController();
+      const root = document.createElement("div");
+      // The first render settles the snapshot-diff motion tracker shared across renders.
+      renderWorkbench(root, controller.state, null, false);
+      renderWorkbench(root, controller.state, null, false);
+      const map = root.innerHTML;
+      await vi.waitFor(() => expect(context).toHaveBeenCalled());
+      const contextBefore = context.mock.lastCall?.[0];
+      const attention = [needsOperatorDecision(run), classifyRun(run), JSON.stringify(controller.selected?.presentation), JSON.stringify(controller.selected?.control), JSON.stringify(controller.state.graph)];
+      controller.setViewMode("lanes");
+      await vi.waitFor(() => expect(Object.keys(controller.state.timelines)).toHaveLength(3));
+      controller.setViewMode("map");
+      renderWorkbench(root, controller.state, null, false);
+      expect(root.innerHTML).toBe(map);
+      expect([needsOperatorDecision(controller.selected!), classifyRun(controller.selected!), JSON.stringify(controller.selected?.presentation), JSON.stringify(controller.selected?.control), JSON.stringify(controller.state.graph)]).toEqual(attention);
+      expect(context.mock.lastCall?.[0]).toEqual(contextBefore);
+      expect(JSON.stringify(context.mock.calls)).not.toMatch(/Observed|summary|cargo test|events/);
+    } finally { now.mockRestore(); }
   });
 });

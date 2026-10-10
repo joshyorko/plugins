@@ -1,4 +1,4 @@
-import type { BackendCatalog, GraphEnvelope, RunView, Workbench } from "../src/domain";
+import type { AgentTimeline, BackendCatalog, Capabilities, GraphEnvelope, RunView, Workbench } from "../src/domain";
 
 export function fixtureRun(overrides: Partial<RunView> = {}): RunView {
   const run: RunView = {
@@ -145,4 +145,25 @@ export function fixtureSwarmRun(): RunView {
   run.presentation!.owner = { thread_id: "owner-a", turn_id: "turn-a", liveness: "active" };
   run.presentation!.workers = [{ thread_id: "child-1", liveness: "active" }, { thread_id: "child-2", liveness: "unknown" }];
   return run;
+}
+
+/** Server capability advertising the app-only timeline read, with an operator binding present. */
+export const fixtureTimelineCapability: NonNullable<Capabilities["agent_timeline"]> = { source: "codex-action-server", enabled: true, detail: "Agent activity is observed in Codex through an operator-configured loopback Codex Action Server. It is never Factory proof." };
+
+/**
+ * SYNTHETIC "Observed in Codex" results for fixtureSwarmRun, shaped like read_factory_agent_timeline.
+ * The coordinator and Worker 1 are observed; Worker 2 carries the server's unavailable reason.
+ */
+export function fixtureTimelines(runId = "swarm-fixture"): Record<string, AgentTimeline> {
+  const base = 1791140400;
+  const observed = (thread: string, events: Array<[number, AgentTimeline["events"][number]["kind"], string]>, children: AgentTimeline["children"] = []): AgentTimeline => ({
+    schema_version: 1, run_id: runId, thread_id: thread, observed: true, status: "observed", source: "codex-action-server", reason: null, detail: null,
+    events: events.map(([offset, kind, summary]) => ({ at: base + offset, kind, summary, thread_id: thread })), children, omitted: 0, next_cursor: null,
+    freshness: { observed_at: base + 2290, age_seconds: 4, cache: "miss", native_updated_at: base + 2230, thread_status: "active" }, binding_verified: false, execution_eligible: false,
+  });
+  return {
+    "owner-a": observed("owner-a", [[5, "assigned", "Received instructions"], [120, "command", "Ran rg (exit 0)"], [530, "subagent_spawned", "Spawned a helper agent"], [770, "subagent_spawned", "Spawned a helper agent"], [1200, "waiting", "Waiting on helper agents"], [1820, "message", "The restart reproduction fails as expected; reviewing the worker's fix."]], [{ parent_thread: "owner-a", receiver_thread: "child-1" }, { parent_thread: "owner-a", receiver_thread: "child-2" }]),
+    "child-1": observed("child-1", [[545, "assigned", "Received instructions"], [700, "command", "Ran git status (exit 0)"], [1100, "file_change", "Changed 2 files"], [1490, "check_result", "Check failed: cargo test (exit 101)"], [1900, "file_change", "Changed 1 file"], [2210, "check_result", "Check passed: cargo test"], [2240, "commit", "Committed changes with git commit"]]),
+    "child-2": { schema_version: 1, run_id: runId, thread_id: "child-2", observed: false, status: "unavailable", source: "codex-action-server", reason: "cas_action_failed", detail: "The Codex Action Server declined this read, for example because the thread is outside its configured workspace.", events: [], children: [], omitted: 0, next_cursor: null, freshness: null, binding_verified: false, execution_eligible: false },
+  };
 }

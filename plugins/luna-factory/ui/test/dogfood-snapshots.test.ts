@@ -24,7 +24,7 @@ describe("dogfood MCP Apps browser simulator evidence", () => {
       expect(capture.layout.overflowingControls).toBe(0);
       expect(capture.layout.scrollWidth).toBeLessThanOrEqual(capture.layout.width + 1);
       expect(capture.automatic_messages).toBe(0);
-      expect(capture.read_only_tool_calls.every(name => ["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory"].includes(name))).toBe(true);
+      expect(capture.read_only_tool_calls.every(name => ["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory", "read_factory_agent_timeline"].includes(name))).toBe(true);
     }
   });
 });

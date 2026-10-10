@@ -307,6 +307,16 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .tick { position: absolute; left: var(--at); top: 6px; width: 2px; height: 14px; margin-left: -1px; border-radius: 2px; background: var(--luna); }
 .tick.kind-routing_mismatch, .tick.kind-native_turn_failure, .tick.kind-terminal_stop_requested { background: var(--needs); }
 .tick.kind-owner_acceptance, .tick.kind-criterion_acceptance { background: var(--done); }
+.tick.observed { left: clamp(5px, var(--at), calc(100% - 5px)); top: 8px; width: 9px; height: 9px; margin-left: -4.5px; border-radius: 50%; background: var(--surface); border: 1.5px solid var(--luna); }
+.tick.observed.obs-waiting, .tick.observed.obs-error { border-style: dashed; border-color: var(--muted); }
+.lanes-legend { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
+.legend-receipt, .legend-observed { display: inline-block; flex: none; }
+.legend-receipt { width: 2px; height: 12px; border-radius: 2px; background: var(--luna); }
+.legend-observed { width: 9px; height: 9px; margin-left: 10px; border-radius: 50%; border: 1.5px solid var(--luna); background: var(--surface); }
+.observed-events { margin-top: 12px; }
+.observed-events h4 { margin: 0 0 4px; font-size: 13px; }
+.observed-events .lane-events { margin-top: 4px; }
+.observed-events p { margin: 6px 0 0; }
 .now-line { position: absolute; left: var(--at); top: 0; bottom: 0; width: 1px; margin-left: -1px; background: var(--muted); }
 .lane-events { list-style: none; margin: 12px 0 0; padding: 0; border-top: 1px solid var(--line); }
 .lane-events li { display: grid; grid-template-columns: 52px 150px minmax(0, 1fr); gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
