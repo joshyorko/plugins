@@ -429,14 +429,13 @@ impl Factory {
         let now = Instant::now();
         let mut pending = self.pending_repository_forms.lock().await;
         pending.retain(|_, request| request.expires_at > now);
-        if pending.len() >= 128 {
-            if let Some(oldest) = pending
+        if pending.len() >= 128
+            && let Some(oldest) = pending
                 .iter()
                 .min_by_key(|(_, request)| request.expires_at)
                 .map(|(state, _)| state.clone())
-            {
-                pending.remove(&oldest);
-            }
+        {
+            pending.remove(&oldest);
         }
         pending.insert(
             state.clone(),
