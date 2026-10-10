@@ -584,6 +584,7 @@ impl Factory {
             request.expected_revision == control.revision,
             "stale_control_revision"
         );
+        crate::graph::ensure_meaningful(control, &request.change)?;
         let proposal = crate::graph::Proposal {
             id: uuid::Uuid::new_v4().to_string(),
             idempotency_key: request.idempotency_key,
@@ -632,6 +633,16 @@ impl Factory {
             );
             return Ok(crate::graph::envelope(&run, Some(&proposal)));
         }
+        let control = run.control.as_ref().context("control_missing")?;
+        ensure!(
+            request.expected_revision == control.revision,
+            "stale_control_revision"
+        );
+        ensure!(
+            proposal.base_revision.checked_add(1) == Some(control.revision),
+            "stale_graph_proposal"
+        );
+        crate::graph::ensure_meaningful(control, &proposal.change)?;
         let event = crate::control::EventEnvelope {
             id: format!("graph-apply:{}", proposal.id),
             expected_revision: request.expected_revision,
@@ -893,6 +904,7 @@ impl Factory {
             "repository_onboarding":{"enabled":!self.config.discovery_roots.is_empty(),"approval":"local_operator"},
             "profiles":self.config.profiles.iter().map(|(alias,profile)|json!({"alias":alias,"effort":profile.effort,"supported":profile.codex_profile.is_none()})).collect::<Vec<_>>(),
             "limits":self.config.limits,"observed_routing":"unverified","status_inference_calls":0,
+            "execution":{"eligible":false,"reason":"authentication_entitlement_and_adapter_qualification_unverified"},
             "routing_telemetry":{"model":"turn-bound model/rerouted mismatch notifications only","effort":"unavailable","provider":"configuration only; downstream execution and billing unverified"},
             "control_policy":{"wire_schema":1,"sqlite_schema":2,"managed_admission":"structural","native_child_policy":"cooperative_unverified","semantic_acceptance":"owner_judgment","independent_checks":["file_sha256"],"native_output_completeness":"unverified","native_environment":"unverified","delivery_certification":"unsupported"},
             "live_proof":"Live owner/worker, native ChatGPT and tunnel acceptance must be recorded on the operator runtime."}),

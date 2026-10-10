@@ -97,7 +97,7 @@ fn definitions() -> Map<String, Value> {
         "result":object(json!({"kind":enumeration(&["finished_verified","working","needs_input","stopped_unresolved","unverified"]),"label":string()})),
         "owner":object(json!({"thread_id":nullable(id()),"turn_id":nullable(id()),"liveness":liveness})),
         "workers":array(object(json!({"thread_id":id(),"liveness":liveness})),64),
-        "budget":object(json!({"time_remaining_seconds":count(),"repair_attempts_remaining":count(),"repairs_used":count()})),
+        "budget":object(json!({"time_remaining_seconds":nullable(count()),"repair_attempts_remaining":count(),"repairs_used":count()})),
         "claim":reference("claim"),
         "deliverable":object(json!({"kind":enumeration(&["local_candidate","push","pr_ready"]),"status":enumeration(&["verified","unproved"]),"subject":id(),"reference":nullable(string())}))
     })));
@@ -142,6 +142,7 @@ fn definitions() -> Map<String, Value> {
         "profiles":{"type":"array","items":object(json!({"alias":text(64),"effort":string(),"supported":boolean()}))},
         "limits":object(json!({"capacity":{"type":"integer","minimum":1,"maximum":8},"repair_attempts":{"type":"integer","minimum":0,"maximum":10},"wall_seconds":{"type":"integer","minimum":30,"maximum":86400}})),
         "observed_routing":{"const":"unverified"},"status_inference_calls":{"const":0},
+        "execution":object(json!({"eligible":{"const":false},"reason":string()})),
         "routing_telemetry":object(json!({"model":string(),"effort":string(),"provider":string()})),
         "control_policy":object(json!({"wire_schema":{"const":1},"sqlite_schema":{"const":2},"managed_admission":string(),"native_child_policy":string(),"semantic_acceptance":string(),"independent_checks":array(string(),32),"native_output_completeness":string(),"native_environment":string(),"delivery_certification":string()})),
         "live_proof":string()
