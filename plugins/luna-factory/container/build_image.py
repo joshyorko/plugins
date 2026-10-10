@@ -39,6 +39,7 @@ ROOT = Path(__file__).resolve().parents[3]
 ALLOWED_RELEASE_DELTA = {
     "docs/superpowers/plans/2026-10-10-luna-factory-oci.md",
     ".agents/plugins/marketplace.json",
+    ".github/workflows/luna-factory.yml",
     ".agents/skills/setup",
     "skills/setup",
     "plugins/luna-factory/.codex-plugin/plugin.json",
@@ -49,6 +50,7 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/docs/package.md",
     "plugins/luna-factory/docs/control-wire.md",
     "plugins/luna-factory/docs/dogfood-findings.md",
+    "plugins/luna-factory/docs/mission-control.md",
     "plugins/luna-factory/server/src/config.rs",
     "plugins/luna-factory/server/src/lib.rs",
     "plugins/luna-factory/server/src/lifecycle.rs",
@@ -68,6 +70,7 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/server/tests/openai_forms.rs",
     "plugins/luna-factory/server/Cargo.lock",
     "plugins/luna-factory/server/Cargo.toml",
+    "plugins/luna-factory/tests/fixtures/github/issue-graph-67.json",
     "plugins/luna-factory/tests/test_container_build.py",
     "plugins/luna-factory/scripts/package_runtime.py",
     "plugins/luna-factory/tests/test_package_runtime.py",

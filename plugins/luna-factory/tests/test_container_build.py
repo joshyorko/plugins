@@ -1,3 +1,4 @@
+import subprocess
 import hashlib
 import importlib.util
 import io
@@ -151,6 +152,18 @@ class ContainerBuildTests(unittest.TestCase):
             source = plugin / "server/src/native.rs"
             source.write_bytes(source.read_bytes() + b"\n")
             self.assertNotEqual(before, BUILD.source_patch_sha256(root))
+
+    def test_current_head_release_delta_is_reviewed(self):
+        """The image builder rejects unlisted paths; catch that in CI instead of at image build time."""
+        root = Path(__file__).resolve().parents[3]
+        known = subprocess.run(["git", "-C", str(root), "cat-file", "-e", f"{BUILD.RELEASE_COMMIT}^{{commit}}"], capture_output=True)
+        if known.returncode != 0:
+            self.skipTest("release commit is not in this checkout's history")
+        changed = subprocess.run(
+            ["git", "-C", str(root), "diff", "--name-only", f"{BUILD.RELEASE_COMMIT}..HEAD"],
+            check=True, capture_output=True, text=True,
+        ).stdout.splitlines()
+        BUILD.validate_release_delta(changed)
 
     def test_release_delta_rejects_unreviewed_rust_source_changes(self):
         with self.assertRaisesRegex(ValueError, "unreviewed release source delta"):
