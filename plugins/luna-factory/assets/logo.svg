@@ -1,6 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Luna Factory">
-  <rect width="512" height="512" rx="112" fill="#7C3AED"/>
-  <g transform="translate(96 96) scale(16)" fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M17.4 13.3A7 7 0 0 1 6.7 2.6 7.5 7.5 0 1 0 17.4 13.3Z"/>
+  <title>Luna Factory</title>
+  <!-- Night tile. The mark below uses the same 20-unit geometry as lunaMark() in ui/src/lunar.ts. -->
+  <rect width="512" height="512" rx="112" fill="#2A2F7A"/>
+  <g transform="translate(36 36) scale(22)">
+    <!-- Orbit in moonlight #4B55C8, open around the satellite. -->
+    <path d="M18 6.84A8.6 8.6 0 1 1 14.79 2.85" fill="none" stroke="#4B55C8" stroke-width="1" stroke-linecap="round"/>
+    <!-- Crescent and satellite in moon white. -->
+    <path d="M12.9 4.2a6.2 6.2 0 1 0 2.9 9.9A5 5 0 0 1 12.9 4.2Z" fill="#F5F3FF"/>
+    <path d="M16.7 3.35a1.25 1.25 0 1 1 0 2.5a1.25 1.25 0 1 1 0-2.5Z" fill="#F5F3FF"/>
   </g>
 </svg>

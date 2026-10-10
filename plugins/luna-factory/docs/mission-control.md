@@ -52,6 +52,18 @@ Home: Needs you · In progress · Planned · not started · History
 
 - **Neutrals** come from host style variables, in light and dark. **Accent (moonlight)**: `#4B55C8`
   light, `#A8B0FF` dark. The manifest `brandColor` matches it.
+- **Brand identity (#72)**: one mark everywhere. `assets/logo.svg` and its 512 by 512 render
+  `assets/logo.png` (logo, composer icon and MCP `serverInfo` icon) draw the `lunaMark` geometry
+  on a flat night-indigo tile:
+  - tile `#2A2F7A`, corner radius 112 of 512
+  - orbit in moonlight `#4B55C8`, open around the satellite
+  - crescent and satellite in moon white `#F5F3FF`
+
+  There are no gradients, filters or text, so the SVG stays within the package validator's
+  `svg`/`rect`/`g`/`path`/`title`/`desc` allowlist. The crescent and satellite carry the mark at
+  16 and 24 px in light and dark hosts, and the orbit recedes. The PNG is rendered from the SVG
+  with headless Chrome. Re-render it and update `SOURCE_LOGO_SHA256` in
+  `container/build_image.py` together, or the OCI build and `test_container_build.py` reject it.
 - **State hues**, always paired with a distinct glyph shape and text:
 
   | State | Color | Glyph |
@@ -64,7 +76,8 @@ Home: Needs you · In progress · Planned · not started · History
   | planned / unknown | faint | dashed ring |
   | needs | coral | diamond, reserved for real decisions |
 - **Glyphs** (`ui/src/lunar.ts`):
-  - `lunaMark`: crescent and orbit.
+  - `lunaMark`: crescent held by an orbit, with one satellite riding the orbit's opening. It
+    uses the same geometry as the app icon, in `currentColor` with a faint orbit.
   - `phaseGlyph`: a moon lit by proven over mandatory criteria. It is always paired with the count
     text and never with a percentage, per `control-wire.md` "No percentage".
   - Coordinator crescent token and numbered worker satellites. Liveness changes the rim only:
@@ -133,7 +146,7 @@ contract** (issue).
 | Sol / Astra treatment | Verified escalation | `route` is reroute-only today | 🔴 | | Neutral. Reroute shown as stop evidence | #80 | `mission.test.ts` reroute |
 | Execution | Start, steer, stop | `capabilities.execution.eligible` (false) | ✅ gated | | Start disabled | #71 | `dogfood.test.ts` |
 | Multiple campaigns per repo | | One claim per repository | 🔴 | | | #82 | |
-| Brand mark asset | Logo and composer icon | `assets/logo.*` (older purple tile) | 🟡 | | | #72 | |
+| Brand mark asset | Logo, composer icon, MCP server icon | `assets/logo.svg`, 512 px `assets/logo.png` (moonlight night tile, `lunaMark` geometry) | ✅ in #72 | Static asset | n/a | none | `test_container_build.py` icon pin, `test_package_runtime.py` branding, `mcp_contract.rs` server icon |
 
 ## Implementation order
 
