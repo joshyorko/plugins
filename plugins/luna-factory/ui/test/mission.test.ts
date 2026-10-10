@@ -67,13 +67,15 @@ describe("agents and lanes", () => {
     ]);
     expect(roster(fixturePlanningRun(), null)).toEqual([]);
   });
-  it("never extends an old record to now and marks per-agent timelines unavailable", () => {
+  it("never extends an old record to now and hatches agent lanes without attributed receipts", () => {
     const run = fixtureSwarmRun();
     const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
     const html = renderLanes(run, roster(run, null), controller.state, (run.updated_at ?? 0) + 30 * 86_400);
     expect(html).toContain("last event");
     expect(html).not.toContain("now-line");
-    expect(html).toContain("Per-agent timeline not reported by this server");
+    expect(html).toContain("No receipts attributed to this agent");
+    const legacy = { ...run, receipts: run.receipts.map(({ thread_id: _thread, ...receipt }) => receipt) };
+    expect(renderLanes(legacy, roster(legacy, null), controller.state)).toContain("Per-agent timeline not reported by this server");
     expect(renderLanes(fixturePlanningRun(), [], controller.state)).toContain("Execution hasn't started on this plan");
   });
 });
