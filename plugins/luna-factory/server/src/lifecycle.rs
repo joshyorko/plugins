@@ -314,6 +314,8 @@ pub struct Factory {
     mutation: Arc<Mutex<()>>,
     monitors: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
     pending_repository_forms: Arc<Mutex<HashMap<String, PendingRepositoryForm>>>,
+    /// Disposable "Observed in Codex" reads; never part of the ledger.
+    timelines: Arc<crate::timeline::AgentTimelines>,
     _lease: Arc<ServiceLease>,
 }
 struct PendingRepositoryForm {
@@ -382,6 +384,50 @@ impl Factory {
             "receipt":receipt,"thread":thread}))
     }
 
+    /// App-only per-agent observation. Only the run's owner or owned/active worker
+    /// threads resolve, and only through the operator's repository -> CAS binding.
+    /// The ledger is read once, without holding its lock across network IO, and is
+    /// never written: observations cannot change state, criteria, claims, attempts,
+    /// budgets, receipts or attention.
+    pub async fn read_agent_timeline(
+        &self,
+        args: crate::timeline::ReadAgentTimeline,
+    ) -> Result<Value> {
+        ensure!(
+            crate::timeline::valid_thread_id(&args.thread_id),
+            "invalid_agent_thread"
+        );
+        if let Some(cursor) = &args.cursor {
+            ensure!(crate::cas::valid_cursor(cursor), "invalid_timeline_cursor");
+        }
+        let run = self.store.lock().await.get(&args.run_id)?;
+        ensure!(
+            crate::timeline::run_owns_thread(&run, &args.thread_id),
+            "agent_thread_not_in_run"
+        );
+        let Some(alias) = self.config.cas_timelines.get(&run.request.repository) else {
+            return Ok(crate::timeline::unavailable(
+                &run.id,
+                &args.thread_id,
+                "cas_timeline_not_configured",
+            ));
+        };
+        let target = self
+            .config
+            .cas_targets
+            .get(alias)
+            .context("cas_target_not_configured")?;
+        self.timelines
+            .read(
+                alias,
+                target,
+                &run.id,
+                &args.thread_id,
+                args.cursor.as_deref(),
+            )
+            .await
+    }
+
     pub fn new(config: Config) -> Result<Self> {
         let mut store = Store::open(&config)?;
         let lease = std::fs::OpenOptions::new()
@@ -401,6 +447,9 @@ impl Factory {
             mutation: Arc::new(Mutex::new(())),
             monitors: Arc::new(Mutex::new(HashMap::new())),
             pending_repository_forms: Arc::new(Mutex::new(HashMap::new())),
+            timelines: Arc::new(crate::timeline::AgentTimelines::new(
+                crate::timeline::FRESH_FOR,
+            )),
             _lease: Arc::new(lease),
         })
     }
@@ -907,6 +956,8 @@ impl Factory {
             "execution":{"eligible":false,"reason":"authentication_entitlement_and_adapter_qualification_unverified"},
             "routing_telemetry":{"model":"turn-bound model/rerouted mismatch notifications only","effort":"unavailable","provider":"configuration only; downstream execution and billing unverified"},
             "control_policy":{"wire_schema":1,"sqlite_schema":2,"managed_admission":"structural","native_child_policy":"cooperative_unverified","semantic_acceptance":"owner_judgment","independent_checks":["file_sha256"],"native_output_completeness":"unverified","native_environment":"unverified","delivery_certification":"unsupported"},
+            "agent_timeline":{"source":crate::timeline::SOURCE,"enabled":!self.config.cas_timelines.is_empty(),
+                "detail":if self.config.cas_timelines.is_empty() {"Codex observation is not configured on this server."} else {"Agent activity is observed in Codex through an operator-configured loopback Codex Action Server. It is never Factory proof."}},
             "live_proof":"Live owner/worker, native ChatGPT and tunnel acceptance must be recorded on the operator runtime."}),
         )
     }

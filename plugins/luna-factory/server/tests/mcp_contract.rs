@@ -19,7 +19,7 @@ fn every_structured_tool_declares_an_object_output_contract() {
 #[test]
 fn graph_catalog_requires_revision_and_is_callable_by_both_audiences() {
     let tools = tool_definitions();
-    assert_eq!(tools.len(), 22);
+    assert_eq!(tools.len(), 23);
     for name in [
         "create_factory_graph",
         "get_factory_graph",
@@ -282,6 +282,14 @@ fn reconciliation_is_callable_in_the_model_filtered_catalog() {
                 .is_none_or(|visibility| visibility.iter().any(|context| context == "model"))
         })
         .collect();
+    // docs/control-wire.md "Tool catalog": 23 tools, 14 model-visible, 9 app-only.
+    assert_eq!(models.len(), 14);
+    assert!(
+        !models
+            .iter()
+            .any(|tool| tool.name == "read_factory_agent_timeline"),
+        "the observed agent timeline is app-only"
+    );
     let reconcile = models
         .iter()
         .find(|tool| tool.name == "reconcile_factory_run")
