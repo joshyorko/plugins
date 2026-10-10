@@ -5,6 +5,8 @@ import { canvasSize, edgePath, fitGeometry, layoutWaves, nodePosition, type MapG
 import { coordinatorToken, icon, taskGlyph, taskTone, taskToneLabel, workerToken } from "./lunar";
 import { renderLanes } from "./lanes";
 
+/** Last rendered state per run task. A difference between two server snapshots is the only motion trigger. */
+const seenStates = new Map<string, string>();
 const esc = (value: string | number): string => String(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const disabled = (condition: boolean) => condition ? " disabled" : "";
 
@@ -90,10 +92,13 @@ function renderMap(tasks: MapTask[], layout: WaveLayout, agents: Agent[], state:
       const task = byId.get(id)!;
       const position = nodePosition(layout, id, g)!;
       const tone = taskTone(task.state);
+      const key = `${state.selectedId}:${id}`;
+      const changed = seenStates.has(key) && seenStates.get(key) !== `${task.state}:${task.owner_thread}`;
+      seenStates.set(key, `${task.state}:${task.owner_thread}`);
       const owner = agents.find(agent => agent.thread === task.owner_thread);
       const prerequisites = task.dependencies.map(dependency => byId.get(dependency)?.title ?? dependency);
       const missing = layout.missing.get(id)?.length ?? 0;
-      return `<li><button type="button" id="node-${esc(id)}" class="map-node tone-${tone}${id === selected ? " selected" : ""}${chain.has(id) ? " chain" : ""}${layout.prerequisitesMet.has(id) ? " met" : ""}${selected && !neighbors.has(id) ? " dim" : ""}" style="--x:${position.x}px;--y:${position.y + 24}px" data-action="graph-node" data-node-id="${esc(id)}" aria-pressed="${id === selected}" aria-describedby="node-state-${esc(id)}">
+      return `<li><button type="button" id="node-${esc(id)}" class="map-node tone-${tone}${changed ? " changed" : ""}${id === selected ? " selected" : ""}${chain.has(id) ? " chain" : ""}${layout.prerequisitesMet.has(id) ? " met" : ""}${selected && !neighbors.has(id) ? " dim" : ""}" style="--x:${position.x}px;--y:${position.y + 24}px" data-action="graph-node" data-node-id="${esc(id)}" aria-pressed="${id === selected}" aria-describedby="node-state-${esc(id)}">
         <span class="node-top">${taskGlyph(tone)}<span class="node-title">${esc(task.title || id)}</span></span>
         <span class="node-meta" id="node-state-${esc(id)}">${id === "objective" ? "Objective · " : ""}${esc(taskToneLabel[tone])}${missing ? ` · ${missing} unknown prerequisite${missing === 1 ? "" : "s"}` : ""}</span>
         <span class="node-after">${prerequisites.length ? `After ${esc(prerequisites.join(", "))}` : "No prerequisites"}</span>

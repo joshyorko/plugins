@@ -13,6 +13,8 @@ export interface WorkbenchOptions {
   canSendFollowUps?: boolean;
   messagePending?: boolean;
   canExpand?: boolean;
+  /** Whether the host itself supports messages; set from the incoming option before view gating. */
+  hostCanMessage?: boolean;
   /** Session-scoped "since you opened Luna Factory" baselines. Absent in tests and fixtures. */
   since?: SinceTracker;
   now?: number;
@@ -47,7 +49,7 @@ function proofLine(run: RunView): string {
 }
 
 export function renderWorkbench(root: HTMLElement, state: ViewState, editor: Editor, preview: boolean, options: WorkbenchOptions = {}): void {
-  options = { ...options, canSendFollowUps: state.connected && options.canSendFollowUps === true && !state.pending && !state.refreshing && !state.graphLoading && !state.graphStale };
+  options = { ...options, hostCanMessage: options.canSendFollowUps === true, canSendFollowUps: state.connected && options.canSendFollowUps === true && !state.pending && !state.refreshing && !state.graphLoading && !state.graphStale };
   options.since?.observe(state.runs);
   const confirmed = root.querySelector<HTMLInputElement>("#confirm-graph-change");
   const confirmationIdentity = confirmed?.checked ? confirmed.dataset.confirmIdentity : undefined;
@@ -203,7 +205,7 @@ function renderInline(state: ViewState, run: RunView | undefined, options: Workb
     <div class="inline-body"><span class="inline-sky">${miniMap(run) || phaseGlyph(run.presentation?.criteria.proven ?? 0, run.presentation?.criteria.mandatory ?? 0, 32)}</span><div><h2 id="inline-title">${escape(run.objective.slice(0, 300))}</h2><p class="inline-now">${escape(nowSentence(run))}</p><p class="inline-proof">${proofLine(run)}</p></div></div>
     ${tier === "needs" ? `<p class="inline-attention">${icon("alert", 14)}<span>${run.pending_decision ? "Answer in Luna Factory or in this chat." : "Answer this approval in native Codex."}</span></p>` : ""}
     <div class="inline-actions"><button id="follow-up-${followKind}-${escape(run.id)}" type="button" class="button quiet" data-action="chat-follow-up" data-kind="${followKind}"${disabled(!options.canSendFollowUps)}${options.messagePending ? ' aria-disabled="true"' : ""}>${icon("chat")}${escape(followLabel)}</button><button class="button primary" type="button" id="action-expand-mode" data-action="expand-mode"${disabled(!options.canExpand || !state.connected)}>Open Luna Factory</button></div>
-    ${!options.canSendFollowUps ? '<p class="inline-hint" role="status">ChatGPT message sending is unavailable in this host.</p>' : options.messagePending ? '<p class="inline-hint" role="status">Sending your message…</p>' : ""}
+    ${!options.hostCanMessage ? '<p class="inline-hint" role="status">ChatGPT message sending is unavailable in this host.</p>' : options.messagePending ? '<p class="inline-hint" role="status">Sending your message…</p>' : !options.canSendFollowUps ? '<p class="inline-hint" role="status">Available once the current read finishes.</p>' : ""}
   </article>`);
 }
 
@@ -212,8 +214,9 @@ function renderFollowUpActions(run: RunView, options: WorkbenchOptions, task?: F
   if (run.blocker || run.remaining_gap || run.pending_decision) actions.push({ kind: "blocker", label: "Ask about the blocker" });
   if (task || run.pending_decision) actions.push({ kind: "choose", label: task ? "Help me choose for this task" : "Help me choose a safe next step" });
   const messageUnavailable = !options.canSendFollowUps;
+  const hostUnavailable = !options.hostCanMessage;
   const buttons = actions.map(action => `<button id="follow-up-${action.kind}-${escape(task?.id ?? run.id)}" type="button" class="ask" data-action="chat-follow-up" data-kind="${action.kind}"${task ? ` data-task-id="${escape(task.id)}"` : ""}${disabled(messageUnavailable)}${options.messagePending ? ' aria-disabled="true"' : ""}>${icon("chat", 14)}${escape(action.label)}</button>`).join("");
-  return `<section class="chat-followups" aria-label="Ask ChatGPT about the selected Factory state"><h4>Ask ChatGPT</h4><div class="asks">${buttons}</div><p class="small muted">Sends this run${task ? " and task" : ""} at its current revision only after your click. Nothing starts.</p>${messageUnavailable ? '<p class="small muted" role="status">ChatGPT message sending is unavailable in this host.</p>' : ""}${options.messagePending ? '<p class="small muted" role="status">Sending your message…</p>' : ""}</section>`;
+  return `<section class="chat-followups" aria-label="Ask ChatGPT about the selected Factory state"><h4>Ask ChatGPT</h4><div class="asks">${buttons}</div><p class="small muted">Sends this run${task ? " and task" : ""} at its current revision only after your click. Nothing starts.</p>${hostUnavailable ? '<p class="small muted" role="status">ChatGPT message sending is unavailable in this host.</p>' : messageUnavailable && !options.messagePending ? '<p class="small muted" role="status">Available once the current read finishes.</p>' : ""}${options.messagePending ? '<p class="small muted" role="status">Sending your message…</p>' : ""}</section>`;
 }
 
 const field = (name: string, label: string, control: string, hint = ""): string => `<div class="field"><label for="${name}">${label}</label>${control}${hint ? `<p class="field-hint" id="${name}-hint">${hint}</p>` : ""}</div>`;

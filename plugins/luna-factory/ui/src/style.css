@@ -244,6 +244,9 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .map-node.tone-done { background: color-mix(in srgb, var(--done) 6%, var(--surface)); }
 .map-node.tone-blocked { background: repeating-linear-gradient(135deg, var(--surface) 0 6px, var(--panel) 6px 12px); }
 .map-node.dim { opacity: .5; }
+/* One-shot settle when the server reports a new state or owner for this task. Never loops. */
+.map-node.changed { animation: settle 900ms var(--ease) 1; }
+@keyframes settle { 0% { box-shadow: 0 0 0 0 var(--luna-glow); transform: translateY(-2px); } 60% { box-shadow: 0 0 0 8px var(--luna-glow); } 100% { box-shadow: 0 0 0 0 transparent; transform: none; } }
 .node-top { display: flex; align-items: flex-start; gap: 7px; min-width: 0; }
 .node-top .task-glyph { margin-top: 2px; }
 .node-title { font-size: 13px; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }

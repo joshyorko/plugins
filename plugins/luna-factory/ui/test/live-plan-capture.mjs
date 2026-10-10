@@ -112,6 +112,7 @@ try {
       assert(frame, "Production App iframe did not mount");
       await frame.locator(".workbench").waitFor();
       if (item.params.node) await frame.locator(`[data-node-id="${item.params.node}"][aria-pressed="true"]`).waitFor();
+      if (item.params.surface === "inline") await frame.locator('[data-action="chat-follow-up"]:enabled').waitFor();
       if (item.lanes) { await frame.locator('[data-action="view-mode"][data-mode="lanes"]').click(); await frame.locator(".lanes").waitFor(); }
       if (item.width >= 1000) await frame.evaluate(() => window.scrollTo(0, 0));
       else if (item.params.node) await frame.locator(`[data-node-id="${item.params.node}"]`).scrollIntoViewIfNeeded();

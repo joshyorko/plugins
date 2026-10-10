@@ -153,3 +153,29 @@ describe("mission control surfaces", () => {
     expect(root.querySelector(".home-head p")?.textContent).toBe("1 needs you · 1 in progress · 1 planned · 1 in history");
   });
 });
+
+describe("motion and message copy", () => {
+  it("marks a task changed only when a later snapshot reports a different state", async () => {
+    const { controller } = await campaignController(fixtureSwarmRun());
+    const root = document.createElement("div");
+    renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector(".map-node.changed")).toBeNull();
+    renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector(".map-node.changed")).toBeNull();
+    controller.state.graph!.nodes.find(node => node.id === "child:child-2")!.state = "done";
+    renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector('[data-node-id="child:child-2"]')?.classList.contains("changed")).toBe(true);
+    expect(root.querySelectorAll(".map-node.changed")).toHaveLength(1);
+  });
+  it("blames the host only when the host cannot send messages", () => {
+    const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
+    controller.receiveInitial({ structuredContent: fixtureCampaignPlan().run }); controller.setConnected(true);
+    const root = document.createElement("div");
+    controller.state.refreshing = true;
+    renderWorkbench(root, controller.state, null, false, { surface: "inline", canSendFollowUps: true, canExpand: true });
+    expect(root.textContent).not.toContain("unavailable in this host");
+    expect(root.textContent).toContain("Available once the current read finishes");
+    renderWorkbench(root, controller.state, null, false, { surface: "inline", canSendFollowUps: false, canExpand: true });
+    expect(root.textContent).toContain("unavailable in this host");
+  });
+});
