@@ -9,6 +9,7 @@ export interface Bridge {
 export type MutationTool = "start_factory" | "steer_factory_run" | "cancel_factory_run" | "resume_factory_run" | "reconcile_factory_run";
 export interface ViewState {
   runs: RunView[]; capabilities: Capabilities | null; settings: Settings;
+  connectionStatus: "connecting" | "connected" | "disconnected";
   selectedId: string | null; initialized: boolean; connected: boolean; refreshing: boolean;
   pending: { tool: string; runId: string | null } | null;
   error: string | null; notice: string | null; contextError: string | null;
@@ -17,7 +18,7 @@ export interface ViewState {
   proposal: GraphEnvelope["proposal"]; backends: BackendCatalog | null;
 }
 export class WorkbenchController {
-  readonly state: ViewState = { runs: [], capabilities: null, settings: {}, selectedId: null, initialized: false, connected: false, refreshing: false, pending: null, error: null, notice: null, contextError: null, discovery: null, discovering: false, graph: null, graphLoading: false, graphStale: false, selectedNodeId: null, proposal: null, backends: null };
+  readonly state: ViewState = { runs: [], capabilities: null, settings: {}, connectionStatus: "connecting", selectedId: null, initialized: false, connected: false, refreshing: false, pending: null, error: null, notice: null, contextError: null, discovery: null, discovering: false, graph: null, graphLoading: false, graphStale: false, selectedNodeId: null, proposal: null, backends: null };
   private initialSeen = false;
   private readVersion = 0;
   private contextVersion = 0;
@@ -30,8 +31,10 @@ export class WorkbenchController {
   private readonly detailsLoaded = new Set<string>();
   constructor(private readonly bridge: Bridge, private readonly changed: () => void) {}
   get selected(): RunView | undefined { return this.state.runs.find(run => run.id === this.state.selectedId); }
-  setConnected(connected: boolean): void { this.state.connected = connected; this.changed(); }
+  setConnected(connected: boolean): void { this.state.connected = connected; this.state.connectionStatus = connected ? "connected" : "connecting"; this.changed(); }
+  setDisconnected(message: string): void { this.state.connected = false; this.state.connectionStatus = "disconnected"; this.state.error = message; this.changed(); }
   reportError(message: string): void { this.state.error = message; this.changed(); }
+  reportNotice(message: string): void { this.state.error = null; this.state.notice = message; this.changed(); }
   receiveInitial(result: unknown): void {
     if (this.initialSeen) return;
     try {
@@ -247,7 +250,7 @@ export class WorkbenchController {
     } catch (error) { this.state.graphStale = true; this.state.error = `${errorMessage(error)} Refresh the graph before changing it.`; }
     finally { this.state.graphLoading = false; this.changed(); this.syncContext(); }
   }
-  async restoreContext(id: string, nodeId?: string): Promise<void> {
+  async restoreContext(id: string, nodeId?: string, expectedRevision?: number): Promise<void> {
     const epoch = this.selectionEpoch + 1;
     ++this.contextVersion;
     this.contextRestoreEpoch = epoch;
@@ -255,7 +258,12 @@ export class WorkbenchController {
       await this.select(id, false);
       if (nodeId && epoch === this.selectionEpoch && this.state.selectedId === id) {
         await this.loadGraph();
-        if (epoch === this.selectionEpoch && this.state.selectedId === id) this.selectNode(nodeId, false);
+        if (epoch === this.selectionEpoch && this.state.selectedId === id) {
+          const graph = this.state.graph;
+          if (expectedRevision !== undefined && graph?.revision !== expectedRevision) this.reportError("This task link is stale. Refresh the run and reopen the task at its current revision.");
+          else if (!graph?.nodes.some(node => node.id === nodeId)) this.reportError("This task is no longer present in the selected run.");
+          else this.selectNode(nodeId, false);
+        }
       }
     } finally {
       if (this.contextRestoreEpoch === epoch) { this.contextRestoreEpoch = null; this.syncContext(); }
@@ -340,6 +348,24 @@ export class WorkbenchController {
       return true;
     } catch (error) { this.state.error = `${errorMessage(error)} Refresh before retrying; the request may have reached the server.`; return false; }
     finally { this.state.pending = null; this.changed(); }
+  }
+  async requestRepositoryWithHostForm(): Promise<boolean> {
+    if (this.state.pending || this.state.discovering) return false;
+    this.state.pending = { tool: "request_factory_repository", runId: null };
+    this.state.error = null;
+    this.state.notice = null;
+    this.changed();
+    try {
+      const parsed = repositoryRegistrationSchema.safeParse(structuredResult(await this.bridge.call("request_factory_repository", {})));
+      if (!parsed.success) throw new Error("The host form result is invalid. Use the accessible repository form below.");
+      const request = parsed.data;
+      if (this.state.discovery) this.state.discovery.requests = [...this.state.discovery.requests.filter(item => item.id !== request.id), request];
+      this.state.notice = request.status === "approved" ? "Repository already approved. Refresh repositories to use its alias." : "Access requested. A local operator must approve it before a run can start.";
+      return true;
+    } catch (error) {
+      this.state.error = `${errorMessage(error)} Use the accessible repository form below if this host cannot display a native form.`;
+      return false;
+    } finally { this.state.pending = null; this.changed(); }
   }
   private syncContext(): void {
     if (this.contextRestoreEpoch !== null) return;

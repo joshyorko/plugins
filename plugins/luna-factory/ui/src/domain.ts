@@ -90,6 +90,31 @@ export const graphEnvelopeSchema = z.object({
 export type GraphEnvelope = z.infer<typeof graphEnvelopeSchema>;
 export type FactoryGraph = GraphEnvelope["graph"];
 export type GraphChange = z.infer<typeof graphChangeSchema>;
+export const UI_VERSION = "0.2.1";
+export type FollowUpKind = "summary" | "blocker" | "choose";
+export type FollowUpTask = Pick<FactoryGraph["nodes"][number], "id" | "title">;
+export function buildFollowUpPrompt(run: RunView, kind: FollowUpKind, task?: FollowUpTask, revision?: number): string {
+  const heading = kind === "summary"
+    ? "Summarize the current Luna Factory run. Do not start work."
+    : kind === "blocker"
+      ? "Analyze the current Luna Factory blocker and suggest a safe next step. Do not approve or dispatch work."
+      : "Help me choose a bounded next step for this Luna Factory task. Do not approve or dispatch work.";
+  const selectedRevision = revision ?? run.control?.revision ?? run.presentation?.revision ?? 0;
+  const identity = [
+    heading,
+    `Run ID: ${run.id}`,
+    `Revision: ${selectedRevision}`,
+    ...(task ? [`Task ID: ${task.id}`, `Task: ${task.title.slice(0, 360)}`] : []),
+  ].join("\n");
+  const context = [
+    `State: ${run.state.slice(0, 64)}`,
+    `Objective: ${run.objective.slice(0, 600)}`,
+    ...(run.blocker ? [`Blocker: ${run.blocker.slice(0, 360)}`] : []),
+    ...(run.remaining_gap ? [`Remaining gap: ${run.remaining_gap.slice(0, 360)}`] : []),
+    ...(run.delta ? [`Latest change: ${run.delta.slice(0, 360)}`] : []),
+  ].join("\n");
+  return `${identity}\n${context.slice(0, Math.max(0, 1800 - identity.length - 1))}`;
+}
 const operationSchema = z.object({ advertised: z.boolean(), enabled: z.boolean(), qualified: z.boolean() });
 export const backendCatalogSchema = z.object({ schema_version: z.literal(1), discovery: z.literal("configuration_only"), policy: z.literal("subscription_only"), targets: z.array(z.object({ id: z.string().max(128), label: z.string().max(160), kind: z.string().max(128), namespace: z.string().max(256), operator_enabled: z.boolean(), planning_eligible: z.boolean(), execution_eligible: z.boolean(), qualification: z.enum(["unverified", "unsupported", "qualified"]), authentication: z.string().max(128), entitlement: z.string().max(128), reason: z.string().max(2000), operations: z.object({ discover: operationSchema, start: operationSchema, observe: operationSchema, steer: operationSchema, stop: operationSchema, reconcile: operationSchema }), limits: z.array(z.string().max(1000)).max(32) })).max(32) });
 export type BackendCatalog = z.infer<typeof backendCatalogSchema>;
@@ -154,6 +179,36 @@ export function parseRunLink(value: string): string | null {
   const match = /^\/runs\/([^/]+)$/.exec(path);
   if (!match?.[1]) return null;
   try { const id = runId.safeParse(decodeURIComponent(match[1])); return id.success ? id.data : null; } catch { return null; }
+}
+export type FactoryLink = { runId: string; taskId?: string; revision?: number };
+export function parseFactoryLink(value: string): FactoryLink | null {
+  if (!value.startsWith("/runs/") || value.includes("#")) return null;
+  const [path, query = ""] = value.split("?");
+  if (!path) return null;
+  const match = /^\/runs\/([^/]+)$/.exec(path);
+  if (!match?.[1]) return null;
+  let decodedRunId: string;
+  try { decodedRunId = decodeURIComponent(match[1]); } catch { return null; }
+  const parsedRunId = runId.safeParse(decodedRunId);
+  if (!parsedRunId.success) return null;
+  if (!query) return { runId: parsedRunId.data };
+  const fields = new Map<string, string>();
+  for (const item of query.split("&")) {
+    const [rawKey, rawValue, extra] = item.split("=");
+    if (!rawKey || rawValue === undefined || extra !== undefined) return null;
+    let key: string; let value: string;
+    try { key = decodeURIComponent(rawKey); value = decodeURIComponent(rawValue); } catch { return null; }
+    if ((key !== "task" && key !== "revision") || fields.has(key)) return null;
+    fields.set(key, value);
+  }
+  const task = fields.get("task");
+  const revisionText = fields.get("revision");
+  if (task === undefined && revisionText === undefined) return null;
+  if (task === undefined || revisionText === undefined || !/^(0|[1-9]\d*)$/.test(revisionText)) return null;
+  const parsedTask = nodeId.safeParse(task);
+  const revision = Number(revisionText);
+  if (!parsedTask.success || !Number.isSafeInteger(revision)) return null;
+  return { runId: parsedRunId.data, taskId: parsedTask.data, revision };
 }
 export function runPath(id: string): string { return `/runs/${encodeURIComponent(id)}`; }
 const bound = (value: string | null, length: number): string | null => value === null ? null : value.slice(0, length);

@@ -1,17 +1,30 @@
 import type { App } from "@modelcontextprotocol/ext-apps";
 import { OpenAIExtensions, type OpenAIModelContextHostState } from "@openai/mcp-extensions/app";
-import { nodeId, parseRunLink, runId } from "./domain";
+import { nodeId, parseFactoryLink, runId } from "./domain";
 import type { Bridge, WorkbenchController } from "./controller";
 
 type ContextWrite =
   | { kind: "clear"; selectionEpoch: number; notificationSeen: boolean }
   | { kind: "publish"; payload: string };
+type HostContext = NonNullable<ReturnType<App["getHostContext"]>>;
+type SurfaceContext = Pick<HostContext, "displayMode"> & {
+  toolInfo?: { tool: Pick<NonNullable<HostContext["toolInfo"]>["tool"], "name"> };
+};
+
+export function surfaceFromHostContext(context: SurfaceContext | undefined): "inline" | "global" | "thread" {
+  const entrypoint = context?.toolInfo?.tool.name;
+  if (entrypoint === "open_factory_panel") return "thread";
+  if (entrypoint === "open_factory") return "global";
+  return context?.displayMode === "inline" ? "inline" : "global";
+}
 
 /** Host routing restores a view; it does not override a removed attachment. */
-export async function applyDeepLink(controller: Pick<WorkbenchController, "select" | "reportError">, url: string): Promise<void> {
-  const id = url === "/" ? null : parseRunLink(url);
-  if (url !== "/" && id === null) { controller.reportError("This exact-run link is invalid"); return; }
-  await controller.select(id, false);
+export async function applyDeepLink(controller: Pick<WorkbenchController, "select" | "restoreContext" | "reportError">, url: string): Promise<void> {
+  if (url === "/") { await controller.select(null, false); return; }
+  const link = parseFactoryLink(url);
+  if (!link) { controller.reportError("This exact run or task link is invalid"); return; }
+  if (link.taskId && link.revision !== undefined) await controller.restoreContext(link.runId, link.taskId, link.revision);
+  else await controller.select(link.runId, false);
 }
 
 /** One bridge per mounted App; context and selection never cross instances. */
@@ -25,9 +38,20 @@ export class HostBridge implements Bridge {
   private inFlight: ContextWrite | null = null;
   private lastHostId: string | null = null;
   private readonly ownIds = new Set<string>();
+  private connected = false;
 
-  constructor(private readonly app: App, private readonly restoreSelection: (id: string, nodeId?: string) => void) {
+  constructor(private readonly app: App, private readonly restoreSelection: (id: string, nodeId?: string) => void, private readonly onDisconnected?: (message: string) => void) {
     this.extensions = new OpenAIExtensions(app);
+    app.onclose = () => {
+      this.connected = false;
+      this.connection = null;
+      this.onDisconnected?.("The MCP Apps host disconnected. Reopen Luna Factory to refresh current state.");
+    };
+    app.onerror = () => {
+      this.connected = false;
+      this.connection = null;
+      this.onDisconnected?.("The MCP Apps connection failed. Reopen Luna Factory to refresh current state.");
+    };
     app.addEventListener("hostcontextchanged", patch => {
       if (Object.hasOwn(patch, "openai/modelContext")) this.receiveContext();
     });
@@ -35,15 +59,33 @@ export class HostBridge implements Bridge {
   async connect(transport?: Parameters<App["connect"]>[0]): Promise<void> {
     this.connection = (async () => {
       await this.app.connect(transport);
+      this.connected = true;
       this.receiveContext();
     })();
     await this.connection;
   }
   async call(tool: string, args: Record<string, unknown>): Promise<unknown> {
-    if (!this.connection) throw new Error("The host is not connected");
+    if (!this.connection || !this.connected) throw new Error("The host is not connected");
     await this.connection;
     if (!this.app.getHostCapabilities()?.serverTools) throw new Error("This host does not support app tool calls");
     return this.app.callServerTool({ name: tool, arguments: args });
+  }
+  canSendFollowUp(): boolean {
+    return Boolean(this.connection && this.connected && this.extensions.message && this.app.getHostCapabilities()?.message?.text);
+  }
+  async sendFollowUp(prompt: string): Promise<void> {
+    if (!this.connection || !this.connected) throw new Error("The host is not connected");
+    await this.connection;
+    const messages = this.extensions.message;
+    if (!messages || !this.app.getHostCapabilities()?.message?.text) {
+      throw new Error("This host does not support ChatGPT messages");
+    }
+    const result = await messages.send({
+      role: "user",
+      content: [{ type: "text", text: prompt }],
+      _meta: { "openai/message": { target: "active", send: true } },
+    });
+    if (result.isError) throw new Error("ChatGPT could not receive this message");
   }
   /** Only explicit navigation/reattachment overrides a user's context removal. */
   selectContext(): void { this.contextCleared = false; ++this.epoch; ++this.selectionEpoch; }

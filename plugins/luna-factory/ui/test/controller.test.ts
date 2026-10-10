@@ -36,6 +36,28 @@ describe("workbench state and MCP lifecycle", () => {
     expect(controller.state.notice).toContain("local operator");
     expect(requests.at(-1)).toEqual({ tool: "request_factory_repository", args: { candidate_id: "a".repeat(64), alias: "sandbox-test", max_finish: "local_candidate" } });
   });
+  it("invokes the negotiated host form with no fabricated repository fields", async () => {
+    const request = { id: "request-form", alias: "sandbox-form", name: "sample", root_alias: "tests", max_finish: "local_candidate", status: "pending" };
+    const call = vi.fn(async (tool: string, args: Record<string, unknown>) => {
+      expect(tool).toBe("request_factory_repository");
+      expect(args).toEqual({});
+      return { structuredContent: request };
+    });
+    const { controller } = setup(call);
+    controller.setConnected(true);
+    expect(await controller.requestRepositoryWithHostForm()).toBe(true);
+    expect(controller.state.discovery?.requests[0]).toBeUndefined();
+    expect(controller.state.notice).toContain("local operator");
+    expect(call).toHaveBeenCalledOnce();
+  });
+  it("keeps the accessible HTML path available when the host rejects form elicitation", async () => {
+    const { controller, call } = setup();
+    call.mockResolvedValue({ isError: true, content: [{ type: "text", text: "This host does not support the repository form request." }] });
+    expect(await controller.requestRepositoryWithHostForm()).toBe(false);
+    expect(call).toHaveBeenCalledWith("request_factory_repository", {});
+    expect(controller.state.error).toContain("accessible repository form below");
+    expect(controller.state.pending).toBeNull();
+  });
   it("rejects discovery responses containing private absolute-path fields", async () => {
     const { controller, call } = setup();
     call.mockResolvedValue({ structuredContent: { candidates: [{ id: "a".repeat(64), name: "sample", root_alias: "tests", max_finish: "local_candidate", path: "/private/operator/root" }], requests: [], approval: "local_operator" } });

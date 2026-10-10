@@ -44,5 +44,10 @@
     "logo": "./assets/logo.png",
     "composerIcon": "./assets/logo.png"
   },
-  "mcpServers": "./.mcp.json"
+  "mcpServers": "./.mcp.json",
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/setup/SKILL.md"
+    }
+  }
 }

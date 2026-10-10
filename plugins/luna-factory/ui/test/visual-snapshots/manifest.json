@@ -1,0 +1,78 @@
+{
+  "expected_ui_version": "0.2.1",
+  "evidence_kind": "synthetic local fixture host; not ChatGPT Desktop acceptance",
+  "captures": [
+    {
+      "file": "inline-needs-input-light.png",
+      "width": 840,
+      "height": 900,
+      "params": {
+        "surface": "inline",
+        "scenario": "needs-input",
+        "theme": "light",
+        "platform": "desktop",
+        "message": "1"
+      }
+    },
+    {
+      "file": "fullscreen-selected-node-light.png",
+      "width": 1440,
+      "height": 1900,
+      "params": {
+        "surface": "global",
+        "scenario": "selected-node",
+        "theme": "light",
+        "platform": "desktop",
+        "message": "1"
+      }
+    },
+    {
+      "file": "thread-blocked-dark.png",
+      "width": 820,
+      "height": 1000,
+      "params": {
+        "surface": "thread",
+        "scenario": "blocked",
+        "theme": "dark",
+        "platform": "desktop",
+        "message": "1"
+      }
+    },
+    {
+      "file": "mobile-disconnected-dark.png",
+      "width": 390,
+      "height": 844,
+      "params": {
+        "surface": "global",
+        "scenario": "disconnected",
+        "theme": "dark",
+        "platform": "mobile",
+        "message": "1"
+      }
+    },
+    {
+      "file": "mobile-inline-disconnected-dark.png",
+      "width": 390,
+      "height": 844,
+      "params": {
+        "surface": "inline",
+        "scenario": "disconnected",
+        "theme": "dark",
+        "platform": "mobile",
+        "message": "1"
+      }
+    },
+    {
+      "file": "fullscreen-error-light.png",
+      "width": 1024,
+      "height": 768,
+      "params": {
+        "surface": "global",
+        "scenario": "error",
+        "theme": "light",
+        "platform": "desktop",
+        "message": "1"
+      }
+    }
+  ]
+}

@@ -5,7 +5,12 @@ use crate::{
 };
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::{Mutex, broadcast};
 
 /// Missing, unloaded, errored or active threads are not stopped-execution proof.
@@ -308,7 +313,12 @@ pub struct Factory {
     // Mutations serialize; status reads use only SQLite and never this lock/native client.
     mutation: Arc<Mutex<()>>,
     monitors: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
+    pending_repository_forms: Arc<Mutex<HashMap<String, PendingRepositoryForm>>>,
     _lease: Arc<ServiceLease>,
+}
+struct PendingRepositoryForm {
+    candidate_ids: BTreeSet<String>,
+    expires_at: Instant,
 }
 impl Factory {
     /// Opt-in read-only CAS observation. Receipt identity is never execution proof.
@@ -390,8 +400,86 @@ impl Factory {
             clients: Arc::new(Mutex::new(HashMap::new())),
             mutation: Arc::new(Mutex::new(())),
             monitors: Arc::new(Mutex::new(HashMap::new())),
+            pending_repository_forms: Arc::new(Mutex::new(HashMap::new())),
             _lease: Arc::new(lease),
         })
+    }
+    pub async fn issue_repository_form_state(&self, candidates: &Value) -> Result<String> {
+        let values = candidates
+            .as_array()
+            .context("repository_candidates_unavailable")?;
+        ensure!(
+            !values.is_empty() && values.len() <= 20,
+            "repository_form_unavailable"
+        );
+        let candidate_ids = values
+            .iter()
+            .map(|candidate| {
+                candidate["id"]
+                    .as_str()
+                    .context("repository_candidate_invalid")
+                    .map(str::to_owned)
+            })
+            .collect::<Result<BTreeSet<_>>>()?;
+        ensure!(
+            candidate_ids.len() == values.len(),
+            "repository_candidate_invalid"
+        );
+        let state = crate::extensions::new_repository_form_state();
+        let now = Instant::now();
+        let mut pending = self.pending_repository_forms.lock().await;
+        pending.retain(|_, request| request.expires_at > now);
+        if pending.len() >= 128 {
+            if let Some(oldest) = pending
+                .iter()
+                .min_by_key(|(_, request)| request.expires_at)
+                .map(|(state, _)| state.clone())
+            {
+                pending.remove(&oldest);
+            }
+        }
+        pending.insert(
+            state.clone(),
+            PendingRepositoryForm {
+                candidate_ids,
+                expires_at: now + Duration::from_secs(300),
+            },
+        );
+        Ok(state)
+    }
+    pub async fn consume_repository_form_state(
+        &self,
+        state: &str,
+        current_candidates: &Value,
+    ) -> Option<Value> {
+        let mut pending = self.pending_repository_forms.lock().await;
+        let request = pending.remove(state)?;
+        if request.expires_at <= Instant::now() {
+            return None;
+        }
+        let candidates = current_candidates.as_array()?;
+        let current_ids = candidates
+            .iter()
+            .filter_map(|candidate| candidate["id"].as_str())
+            .collect::<BTreeSet<_>>();
+        if !request
+            .candidate_ids
+            .iter()
+            .all(|id| current_ids.contains(id.as_str()))
+        {
+            return None;
+        }
+        Some(Value::Array(
+            candidates
+                .iter()
+                .filter(|candidate| {
+                    request
+                        .candidate_ids
+                        .contains(candidate["id"].as_str().unwrap_or_default())
+                })
+                .cloned()
+                .collect(),
+        ))
     }
     /// Creates only ledger metadata; never connects to native Codex or acquires a claim.
     pub async fn create_graph(&self, request: StartRequest) -> Result<Value> {

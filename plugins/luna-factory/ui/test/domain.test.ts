@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boundedContext, classifyRun, parseRunLink, parseToolResult, startRequest } from "../src/domain";
+import { boundedContext, classifyRun, parseFactoryLink, parseRunLink, parseToolResult, startRequest } from "../src/domain";
 import { fixtureRun, fixtureWorkbench } from "./fixtures";
 
 describe("the server boundary", () => {
@@ -82,6 +82,12 @@ describe("exact run links", () => {
   it("accepts only an app-relative exact run route", () => {
     expect(parseRunLink("/runs/run-123")).toBe("run-123");
     expect(parseRunLink("/runs/run-123?view=evidence")).toBe("run-123");
+  });
+  it("restores exact tasks only with a revision fence", () => {
+    expect(parseFactoryLink("/runs/run-123?task=issue-61&revision=7")).toEqual({ runId: "run-123", taskId: "issue-61", revision: 7 });
+    for (const link of ["/runs/run-123?task=issue-61", "/runs/run-123?revision=7", "/runs/run-123?task=issue-61&revision=7&task=issue-62", "/runs/run-123?task=issue-61&revision=9007199254740992", "/runs/run-123?task=issue-61&revision=bad", "/runs/run-123?unknown=1"]) {
+      expect(parseFactoryLink(link)).toBeNull();
+    }
   });
   it.each(["//evil.test/runs/a", "https://evil.test/runs/a", "/runs/a/b", "/runs/a#b", "/runs/%2e%2e", "/runs/a%2Fb", "/runs/", "/runs/aaa%00", "/runs/a/", "/runs/%ZZ"])("rejects invalid or ambiguous route %s", (url) => {
     expect(parseRunLink(url)).toBeNull();

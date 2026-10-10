@@ -52,6 +52,16 @@ fn reference(name: &str) -> Value {
 
 fn definitions() -> Map<String, Value> {
     let mut defs = Map::new();
+    defs.insert(
+        "resource_link".into(),
+        optional(
+            object(json!({
+                "type":{"const":"resource_link"},"uri":text(2048),"name":text(180),
+                "title":text(240),"description":text(240),"mimeType":{"const":"application/json"}
+            })),
+            &["title"],
+        ),
+    );
     defs.insert("criterion".into(),object(json!({
         "id":id(),"description":text(1000),"status":enumeration(&["proven","failed","unproved"]),
         "reason":nullable(string()),"check_refs":array(id(),32)
@@ -179,6 +189,7 @@ pub fn output_schema(tool_name: &str) -> Value {
         | "resume_factory_run"
         | "reconcile_factory_run" => definitions["run"].clone(),
         "list_factory_runs" => object(json!({"runs":array(reference("run"),100)})),
+        "search_factory_mentions" => object(json!({"items":array(reference("resource_link"),12)})),
         "get_factory_capabilities" => definitions["capabilities"].clone(),
         "open_factory" | "open_factory_panel" | "refresh_factory" => object(
             json!({"runs":array(reference("run"),100),"selected_run":nullable(reference("run")),"capabilities":reference("capabilities"),"settings":reference("settings_values")}),

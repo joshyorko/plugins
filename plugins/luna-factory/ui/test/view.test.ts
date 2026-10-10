@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { renderWorkbench, type Editor } from "../src/view";
 import { WorkbenchController } from "../src/controller";
-import { fixtureRun, fixtureWorkbench } from "./fixtures";
+import { fixtureGraph, fixtureRun, fixtureWorkbench } from "./fixtures";
 
 function render(editor: Editor = null, run = fixtureRun()) {
   const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
@@ -20,6 +20,87 @@ describe("accessible workbench", () => {
     expect(main?.textContent?.indexOf("What changed")).toBeLessThan(main?.textContent?.indexOf("Execution evidence") ?? 0);
     expect(root.querySelector('[data-kind="answer"]')).not.toBeNull();
     expect(root.textContent).not.toContain("Force");
+  });
+  it("shows explicit ChatGPT follow-up buttons only when the host advertises message sending", () => {
+    const { root, controller } = render(null, fixtureRun({ state: "NEEDS_INPUT", blocker: "Choose a safe scope", pending_decision: { id: "decision-1", question: "Choose a safe scope" } }));
+    renderWorkbench(root, controller.state, null, false, { surface: "global", canSendFollowUps: true });
+    const buttons = root.querySelectorAll<HTMLButtonElement>('[data-action="chat-follow-up"]');
+    expect(buttons.length).toBeGreaterThanOrEqual(3);
+    expect(root.textContent).toContain("after your click");
+    expect(root.textContent).toContain("does not start Factory work");
+    expect(Array.from(buttons).every(button => !button.disabled)).toBe(true);
+    renderWorkbench(root, controller.state, null, false, { surface: "global", canSendFollowUps: false });
+    expect(Array.from(root.querySelectorAll<HTMLButtonElement>('[data-action="chat-follow-up"]')).every(button => button.disabled)).toBe(true);
+    expect(root.textContent).toContain("unavailable in this host");
+  });
+  it("keeps inline cards glanceable and adapts the same data for the thread inspector", () => {
+    const { root, controller } = render(null, fixtureRun({ state: "NEEDS_INPUT", blocker: "Choose a safe scope" }));
+    renderWorkbench(root, controller.state, null, false, { surface: "inline", displayMode: "inline", canExpand: true });
+    expect(root.querySelector(".inline-card")?.textContent).toContain("Choose a safe scope");
+    expect(root.querySelector(".sidebar")).toBeNull();
+    expect(root.querySelector('[data-action="expand-mode"]')?.textContent).toContain("Review in Luna Factory");
+    renderWorkbench(root, controller.state, null, false, { surface: "thread", displayMode: "fullscreen" });
+    expect(root.querySelector('.workbench[data-surface="thread"]')).not.toBeNull();
+    expect(root.querySelector(".thread-inspector-label")?.textContent).toContain("Thread inspector");
+    expect(root.textContent).toContain("Choose a safe scope");
+  });
+  it("shows inline follow-up status and connection errors", () => {
+    const { root, controller } = render(null, fixtureRun({ state: "NEEDS_INPUT" }));
+    controller.reportError("ChatGPT could not receive this message.");
+    renderWorkbench(root, controller.state, null, false, { surface: "inline", canSendFollowUps: false });
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("could not receive");
+    expect(Array.from(root.querySelectorAll('[data-action="chat-follow-up"]')).every(button => (button as HTMLButtonElement).disabled)).toBe(true);
+    controller.reportNotice("Message sent to the active ChatGPT conversation.");
+    renderWorkbench(root, controller.state, null, false, { surface: "inline", canSendFollowUps: true });
+    expect(root.querySelector('[role="status"]')?.textContent).toContain("Message sent");
+  });
+  it("restores keyboard focus to the same inline follow-up action after rerender", () => {
+    const { root, controller } = render(null, fixtureRun({ state: "NEEDS_INPUT" }));
+    document.body.append(root);
+    renderWorkbench(root, controller.state, null, false, { surface: "inline", canSendFollowUps: true });
+    const button = root.querySelector<HTMLButtonElement>('[data-action="chat-follow-up"][data-kind="blocker"]');
+    if (!button) throw new Error("Missing blocker follow-up button");
+    button.focus();
+    const originalId = button.id;
+    controller.reportNotice("Message sent to the active ChatGPT conversation.");
+    renderWorkbench(root, controller.state, null, false, { surface: "inline", canSendFollowUps: true });
+    expect(document.activeElement?.id).toBe(originalId);
+    root.remove();
+  });
+  it("keeps active follow-up focus while sending and restores it after the result", () => {
+    const { root, controller } = render(null, fixtureRun({ state: "NEEDS_INPUT" }));
+    document.body.append(root);
+    renderWorkbench(root, controller.state, null, false, { surface: "inline", canSendFollowUps: true });
+    const button = root.querySelector<HTMLButtonElement>('[data-action="chat-follow-up"][data-kind="blocker"]');
+    if (!button) throw new Error("Missing blocker follow-up button");
+    button.focus();
+    const originalId = button.id;
+    renderWorkbench(root, controller.state, null, false, { surface: "inline", canSendFollowUps: true, messagePending: true });
+    const pending = Array.from(root.querySelectorAll<HTMLButtonElement>("[id]")).find(candidate => candidate.id === originalId);
+    expect(pending?.disabled).toBe(false);
+    expect(pending?.getAttribute("aria-disabled")).toBe("true");
+    expect(document.activeElement?.id).toBe(originalId);
+    controller.reportNotice("Message sent to the active ChatGPT conversation.");
+    renderWorkbench(root, controller.state, null, false, { surface: "inline", canSendFollowUps: true });
+    expect(document.activeElement?.id).toBe(originalId);
+    root.remove();
+  });
+  it("labels disconnected host state instead of implying an active connection", () => {
+    const { root, controller } = render();
+    controller.setDisconnected("The MCP Apps host is disconnected.");
+    renderWorkbench(root, controller.state, null, false, { surface: "global", canSendFollowUps: true, canExpand: true });
+    expect(root.querySelector(".connection")?.textContent).toContain("Disconnected");
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("disconnected");
+    expect(Array.from(root.querySelectorAll<HTMLButtonElement>('[data-action="chat-follow-up"], [data-action="expand-mode"]')).every(button => button.disabled)).toBe(true);
+  });
+  it("binds a task follow-up to the selected graph node", () => {
+    const { root, controller } = render();
+    const graph = fixtureGraph().graph;
+    controller.state.graph = graph;
+    controller.state.selectedNodeId = graph.nodes[0]?.id ?? null;
+    renderWorkbench(root, controller.state, null, false, { surface: "global", canSendFollowUps: true });
+    const task = root.querySelector<HTMLButtonElement>('[data-action="chat-follow-up"][data-kind="choose"]');
+    expect(task?.dataset.taskId).toBe(graph.nodes[0]?.id);
   });
   it("escapes server and repository strings as text", () => {
     const { root } = render(null, fixtureRun({ objective: '<img src=x onerror="alert(1)">' }));
@@ -90,6 +171,7 @@ describe("accessible workbench", () => {
     controller.state.discovery = { candidates: [{ id: "a".repeat(64), name: "sample", root_alias: "tests", max_finish: "local_candidate" }], requests: [{ id: "request-1", alias: "sandbox-test", name: "sample", root_alias: "tests", max_finish: "local_candidate", status: "pending" }], approval: "local_operator" };
     renderWorkbench(root, controller.state, "repositories", false);
     expect(root.querySelector('form[data-form="repositories"]')).not.toBeNull();
+    expect(root.querySelector('[data-action="chat-repository-form"]')?.textContent).toContain("Choose with a ChatGPT form");
     expect(root.querySelector<HTMLSelectElement>('[name="candidate_id"]')?.value).toBe("a".repeat(64));
     expect(root.querySelector<HTMLSelectElement>('[name="max_finish"]')?.options.length).toBe(1);
     expect(root.querySelector('input[name="path"]')).toBeNull();

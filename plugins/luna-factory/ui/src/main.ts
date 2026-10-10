@@ -1,8 +1,8 @@
 import { App, applyDocumentTheme, applyHostStyleVariables } from "@modelcontextprotocol/ext-apps";
-import { applyDeepLink, HostBridge } from "./bridge";
+import { applyDeepLink, HostBridge, surfaceFromHostContext } from "./bridge";
 import { WorkbenchController, type Bridge } from "./controller";
-import { allowedFinishes, finishLabels, settingsSchema, startRequest } from "./domain";
-import { renderWorkbench, type Editor } from "./view";
+import { allowedFinishes, buildFollowUpPrompt, finishLabels, settingsSchema, startRequest, UI_VERSION, type FollowUpKind } from "./domain";
+import { renderWorkbench, type Editor, type WorkbenchOptions } from "./view";
 import { submitNewRun } from "./submission";
 import "./style.css";
 
@@ -11,11 +11,14 @@ if (!root) throw new Error("Missing application root");
 const mount = root;
 let editor: Editor = null;
 let pendingStart: { fingerprint: string; key: string } | null = null;
+let messagePending = false;
 const fixturePreview = import.meta.env.DEV && new URLSearchParams(location.search).get("preview") === "fixture";
-const app = new App({ name: "Luna Factory", version: "0.2.0" }, { availableDisplayModes: ["inline", "fullscreen"] });
-const hostBridge = new HostBridge(app, (id, nodeId) => { void controller.restoreContext(id, nodeId); });
+const previewParams = new URLSearchParams(location.search);
+const app = new App({ name: "Luna Factory", version: UI_VERSION }, { availableDisplayModes: ["inline", "fullscreen"] });
+const hostBridge = new HostBridge(app, (id, nodeId) => { void controller.restoreContext(id, nodeId); }, message => { controller.setDisconnected(message); applyHostContext(); });
 const extensions = hostBridge.extensions;
 let connection: Promise<void> | null = null;
+let workbenchOptions: WorkbenchOptions = { surface: "global", displayMode: "inline", canSendFollowUps: false };
 const bridge: Bridge = {
   async call(tool, args) {
     if (fixturePreview) throw new Error("Fixture preview is read-only. Open Luna Factory in an MCP Apps host to run actions.");
@@ -26,12 +29,12 @@ const bridge: Bridge = {
   },
   selectContext() { hostBridge.selectContext(); },
 };
-const controller = new WorkbenchController(bridge, () => renderWorkbench(mount, controller.state, editor, fixturePreview));
-renderWorkbench(mount, controller.state, editor, fixturePreview);
+const controller = new WorkbenchController(bridge, () => renderWorkbench(mount, controller.state, editor, fixturePreview, workbenchOptions));
+renderWorkbench(mount, controller.state, editor, fixturePreview, workbenchOptions);
 
 function showEditor(next: Editor): void {
   editor = next;
-  renderWorkbench(mount, controller.state, editor, fixturePreview);
+  renderWorkbench(mount, controller.state, editor, fixturePreview, workbenchOptions);
   mount.querySelector<HTMLElement>("form textarea, form select, form button")?.focus();
 }
 mount.addEventListener("click", event => {
@@ -51,6 +54,7 @@ mount.addEventListener("click", event => {
     case "settings": showEditor("settings"); break;
     case "repositories": showEditor("repositories"); void controller.discoverRepositories(); break;
     case "discover-repositories": void controller.discoverRepositories(); break;
+    case "chat-repository-form": void controller.requestRepositoryWithHostForm(); break;
     case "control": {
       const run = controller.selected;
       const kind = target.dataset.kind;
@@ -69,6 +73,13 @@ mount.addEventListener("click", event => {
       break;
     }
     case "close-editor": showEditor(null); break;
+    case "expand-mode": void requestDisplayMode("fullscreen"); break;
+    case "chat-follow-up": {
+      const kind = target.dataset.kind;
+      if (kind !== "summary" && kind !== "blocker" && kind !== "choose") { controller.reportError("This ChatGPT action is invalid."); break; }
+      void sendFollowUp(kind, target.dataset.taskId);
+      break;
+    }
   }
 });
 mount.addEventListener("change", event => {
@@ -131,6 +142,17 @@ function applyHostContext(): void {
   const context = app.getHostContext();
   if (context?.theme) applyDocumentTheme(context.theme);
   if (context?.styles?.variables) applyHostStyleVariables(context.styles.variables);
+  const surface = surfaceFromHostContext(context);
+  workbenchOptions = {
+    surface,
+    displayMode: context?.displayMode ?? "inline",
+    canSendFollowUps: hostBridge.canSendFollowUp(),
+    messagePending,
+    canExpand: controller.state.connected && context?.displayMode === "inline" && context.availableDisplayModes?.includes("fullscreen") === true,
+  };
+  mount.dataset.surface = surface;
+  mount.dataset.platform = context?.platform ?? "unknown";
+  mount.dataset.displayMode = context?.displayMode ?? "inline";
   const deepLink = extensions.deepLink.getCurrent();
   if (deepLink && deepLink.url !== lastDeepLink) {
     lastDeepLink = deepLink.url;
@@ -140,6 +162,7 @@ function applyHostContext(): void {
   // There is no client-side native form API in the published extension SDK.
   // Keep complete HTML forms on every host, including mobile and hosts without elicitation.
   mount.dataset.nativeForms = "html-fallback";
+  renderWorkbench(mount, controller.state, editor, fixturePreview, workbenchOptions);
 }
 app.ontoolresult = result => controller.receiveInitial(result);
 app.ontoolcancelled = () => controller.reportError("The host cancelled the opening request. Refresh to read the current state.");
@@ -147,25 +170,82 @@ app.addEventListener("hostcontextchanged", applyHostContext);
 
 if (fixturePreview) {
   const { fixtureWorkbench, fixtureRun } = await import("../test/fixtures");
-  controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [
+  const scenarios = [
     fixtureRun({ id: "review-301", pending_decision: { id: "review-301-decision-1", question: "Keep the protected migration local or remove it?" }, objective: "Make review recovery safe after reconnect", state: "NEEDS_INPUT", active_workers: 0, blocker: "The requested scope includes a protected migration. Keep it local or remove the migration?", delta: "Recovery checks pass. One scope decision is holding the final candidate.", remaining_gap: "Resolve the migration scope with the owner." }),
     fixtureRun(),
     fixtureRun({ id: "sample-204", repository: "sample-service", objective: "Preserve job progress across restarts", state: "RUNNING", delta: "The owner reproduced the restart gap. Two bounded workers are testing the fix.", active_workers: 2 }),
     fixtureRun({ id: "friday-41", repository: "friday", objective: "Tighten the nightly handoff", state: "CONVERGED", active_workers: 0, claim_held: false, blocker: null, remaining_gap: null, delta: "Owner accepted the current subject. The requested pull request is ready." }),
-  ] } });
+    fixtureRun({ id: "blocked-77", repository: "sample", objective: "Inspect blocked recovery safely", state: "BLOCKED", active_workers: 0, claim_held: true, blocker: "Native owner liveness is unknown. Keep the claim held." }),
+  ];
+  const scenario = previewParams.get("scenario");
+  const selected = scenario === "blocked" ? scenarios[4] : scenario === "selected-node" ? scenarios[1] : scenarios[0];
+  controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: scenarios, selected_run: selected } });
   controller.setConnected(true);
   mount.dataset.nativeForms = "html-fallback";
+  workbenchOptions = {
+    surface: previewParams.get("surface") === "inline" ? "inline" : previewParams.get("surface") === "thread" ? "thread" : "global",
+    displayMode: previewParams.get("surface") === "inline" ? "inline" : "fullscreen",
+    canSendFollowUps: previewParams.get("message") === "1",
+    canExpand: previewParams.get("surface") === "inline",
+  };
+  mount.dataset.surface = workbenchOptions.surface;
+  mount.dataset.platform = previewParams.get("platform") ?? "desktop";
+  mount.dataset.displayMode = workbenchOptions.displayMode;
+  if (previewParams.get("theme") === "dark") document.documentElement.dataset.theme = "dark";
+  if (scenario === "disconnected") controller.setDisconnected("The MCP Apps host is disconnected. Reopen Luna Factory to refresh current state.");
+  if (scenario === "error") controller.reportError("Synthetic host error: current revision could not be loaded.");
+  if (previewParams.get("scenario") === "selected-node") {
+    const { fixtureGraph } = await import("../test/fixtures");
+    const graph = fixtureGraph().graph;
+    controller.state.graph = graph;
+    controller.state.selectedNodeId = graph.nodes[0]?.id ?? null;
+  }
+  renderWorkbench(mount, controller.state, editor, fixturePreview, workbenchOptions);
 } else {
   connection = hostBridge.connect();
   void connection.then(() => {
     controller.setConnected(true);
     applyHostContext();
     // Single-run tool results render immediately; only fetch missing workbench controls.
-    if (controller.state.initialized && !controller.state.capabilities) void controller.refresh();
-  }).catch(() => controller.reportError("Could not connect to the MCP Apps host. Reopen Luna Factory from the host to reconnect."));
+    if (!controller.state.initialized || !controller.state.capabilities) void controller.refresh();
+  }).catch(() => controller.setDisconnected("Could not connect to the MCP Apps host. Reopen Luna Factory from the host to reconnect."));
   // Read-only status polling. It never starts a model, and pauses while hidden or editing.
   const refreshTimer = window.setInterval(() => {
     if (!document.hidden && controller.state.connected && controller.state.initialized && !controller.state.pending && !controller.state.refreshing && !editor) void controller.refresh();
   }, 30_000);
   window.addEventListener("pagehide", () => window.clearInterval(refreshTimer), { once: true });
+}
+
+async function sendFollowUp(kind: FollowUpKind, taskId?: string): Promise<void> {
+  if (fixturePreview) { controller.reportError("Fixture preview is read-only. No message was sent."); return; }
+  const run = controller.selected;
+  if (messagePending) { controller.reportError("A ChatGPT message is already being sent."); return; }
+  if (!run) { controller.reportError("Select a current run before sending a ChatGPT message."); return; }
+  const task = taskId ? controller.state.graph?.nodes.find(node => node.id === taskId) : undefined;
+  if (taskId && (!task || controller.state.graphStale || controller.state.graph?.run_id !== run.id)) {
+    controller.reportError("The selected task is stale. Refresh the run and graph before sending context.");
+    return;
+  }
+  messagePending = true;
+  applyHostContext();
+  try {
+    const revision = task ? controller.state.graph?.revision : undefined;
+    await hostBridge.sendFollowUp(buildFollowUpPrompt(run, kind, task, revision));
+    controller.reportNotice("Message sent to the active ChatGPT conversation.");
+  } catch (error) {
+    controller.reportError(error instanceof Error ? error.message : "ChatGPT could not receive this message.");
+  } finally {
+    messagePending = false;
+    applyHostContext();
+  }
+}
+
+async function requestDisplayMode(mode: "inline" | "fullscreen"): Promise<void> {
+  if (fixturePreview) { controller.reportError("Fixture preview cannot change ChatGPT display modes."); return; }
+  if (!app.getHostContext()?.availableDisplayModes?.includes(mode)) {
+    controller.reportError(`This host does not support the ${mode} display mode.`);
+    return;
+  }
+  try { await app.requestDisplayMode({ mode }); }
+  catch { controller.reportError("The host could not change the Luna Factory display mode."); }
 }

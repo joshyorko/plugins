@@ -4,7 +4,7 @@ import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { applyDeepLink, HostBridge } from "../src/bridge";
 import { WorkbenchController } from "../src/controller";
-import { fixtureGraph, fixtureRun } from "./fixtures";
+import { fixtureBackends, fixtureGraph, fixtureRun } from "./fixtures";
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { await Promise.all(cleanup.splice(0).map(close => close())); });
@@ -62,6 +62,30 @@ describe("production host bridge", () => {
     expect(updates).toEqual([]);
     await controller.select("run-123");
     await vi.waitFor(() => expect(updates).toHaveLength(1));
+  });
+  it("restores an exact task deep link through the revision-fenced graph", async () => {
+    const { bridge, host } = await setup("structured");
+    const controller = new WorkbenchController(bridge, () => undefined);
+    host.oncalltool = async request => request.name === "get_factory_graph"
+      ? { content: [], structuredContent: { graph: { ...fixtureGraph().graph, run_id: "run-123", revision: 7, nodes: [...fixtureGraph().graph.nodes, { ...fixtureGraph().graph.nodes[0]!, id: "issue-61" }] }, proposal: null } }
+      : { content: [], structuredContent: fixtureRun() };
+    await applyDeepLink(controller, "/runs/run-123?task=issue-61&revision=7");
+    expect(controller.state.selectedId).toBe("run-123");
+    expect(controller.state.selectedNodeId).toBe("issue-61");
+    expect(controller.state.graph?.revision).toBe(7);
+  });
+  it("refuses a task deep link when the graph revision has moved", async () => {
+    const { bridge, host } = await setup("structured");
+    const controller = new WorkbenchController(bridge, () => undefined);
+    host.oncalltool = async request => request.name === "get_factory_graph"
+      ? { content: [], structuredContent: { graph: { ...fixtureGraph().graph, run_id: "run-123", revision: 7, nodes: [...fixtureGraph().graph.nodes, { ...fixtureGraph().graph.nodes[0]!, id: "issue-61" }] }, proposal: null } }
+      : request.name === "get_factory_backends"
+        ? { content: [], structuredContent: fixtureBackends }
+        : { content: [], structuredContent: fixtureRun() };
+    await applyDeepLink(controller, "/runs/run-123?task=issue-61&revision=8");
+    expect(controller.state.selectedId).toBe("run-123");
+    expect(controller.state.selectedNodeId).not.toBe("issue-61");
+    expect(controller.state.error).toContain("task link is stale");
   });
   it("a host clear during graph creation is not undone by its delayed result", async () => {
     const { bridge, host, updates } = await setup();

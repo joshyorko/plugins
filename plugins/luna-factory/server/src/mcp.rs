@@ -9,6 +9,7 @@ pub fn capabilities() -> ServerCapabilities {
         "tools": {}, "resources": {},
         "extensions": {
             "io.modelcontextprotocol/ui": {"mimeTypes":["text/html;profile=mcp-app"]},
+            "openai/mentions": {"searchTool":"search_factory_mentions"},
             "openai/settings": {"readTool":"read_factory_settings","updateTool":"update_factory_settings"}
         }
     })).expect("static MCP capabilities")
@@ -64,6 +65,16 @@ pub fn tool_definitions() -> Vec<Tool> {
             object(
                 json!({"limit":{"type":"integer","minimum":1,"maximum":100}}),
                 &[],
+            ),
+            true,
+        ),
+        definition(
+            "search_factory_mentions",
+            "Search Factory runs and tasks",
+            "Search the currently accessible Factory ledger for exact run or task mentions. This read-only search performs no inference or execution and returns revision-fenced resource links without filesystem paths or private evidence.",
+            object(
+                json!({"query":{"type":"string","maxLength":160}}),
+                &["query"],
             ),
             true,
         ),
@@ -153,7 +164,7 @@ pub fn tool_definitions() -> Vec<Tool> {
     tools.extend([
         definition("reconcile_factory_run","Reconcile native ownership","Observe existing owned native work and current checks without starting, resuming or stopping inference or retrying effects.",object(json!({"run_id":id,"expected_revision":{"type":"integer","minimum":0}}),&["run_id"]),true),
         definition("discover_factory_repositories", "Discover local repositories", "Read a bounded catalog under operator-approved local roots. Returns opaque candidate IDs, never absolute paths or file contents. No inference.", object(json!({}), &[]), true),
-        definition("request_factory_repository", "Request repository access", "Request one discovered repository alias and explicit finish cap. This queues a security-sensitive request; only local operator approval grants access. Never accepts filesystem paths or remote approval.", object(json!({"candidate_id":{"type":"string","pattern":"^[a-f0-9]{64}$"},"alias":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"},"max_finish":{"type":"string","enum":["local_candidate","push","pr"]}}), &["candidate_id","alias","max_finish"]), false),
+        definition("request_factory_repository", "Request repository access", "Request one discovered repository alias and explicit finish cap. With no complete selection, supported ChatGPT hosts may ask through an OpenAI form; otherwise use the accessible Luna Factory Add repository form. This only queues a request; local operator approval is still required. Never accepts filesystem paths or remote approval.", object(json!({"candidate_id":{"type":"string","pattern":"^[a-f0-9]{64}$"},"alias":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,64}$"},"max_finish":{"type":"string","enum":["local_candidate","push","pr"]}}), &[]), false),
     ]);
     let create_schema = serde_json::to_value(&tools[0].input_schema).expect("start schema");
     let node_id = json!({"type":"string","minLength":1,"maxLength":256});
@@ -191,12 +202,22 @@ pub fn tool_definitions() -> Vec<Tool> {
                 meta["openai/ui"] = json!({"entrypoints":[{"type":if name=="open_factory" {"global"} else {"thread"}}]});
             }
             tool.meta = Some(serde_json::from_value(meta).expect("static UI metadata"));
+        } else if name == "search_factory_mentions" {
+            tool.meta = Some(
+                serde_json::from_value(json!({
+                    "ui":{"visibility":["app"]},
+                    "openai/extensions":{"mentions/search":{}}
+                }))
+                .expect("static mention metadata"),
+            );
+        } else if name == "request_factory_repository" {
+            tool.meta = Some(
+                serde_json::from_value(json!({"ui":{"resourceUri":APP_URI,"visibility":["app"]}}))
+                    .expect("static repository fallback UI metadata"),
+            );
         } else if matches!(
             name,
-            "read_factory_settings"
-                | "update_factory_settings"
-                | "discover_factory_repositories"
-                | "request_factory_repository"
+            "read_factory_settings" | "update_factory_settings" | "discover_factory_repositories"
         ) {
             tool.meta = Some(
                 serde_json::from_value(json!({"ui":{"visibility":["app"]}}))
@@ -240,7 +261,10 @@ pub fn app_resource(html: &str) -> ReadResourceResult {
     serde_json::from_value(json!({
         "resultType":"complete","ttlMs":0,"cacheScope":"private",
         "contents":[{"uri":APP_URI,"mimeType":"text/html;profile=mcp-app","text":html,
-            "_meta":{"ui":{"csp":{"connectDomains":[],"resourceDomains":[]}}}}]
+            "_meta":{
+                "ui":{"csp":{"connectDomains":[],"resourceDomains":[]}},
+                "openai/ui":{"availableDisplayModes":["inline","fullscreen"],"preferredDisplayMode":"inline"}
+            }}]
     }))
     .expect("static resource metadata")
 }
