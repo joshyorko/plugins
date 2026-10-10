@@ -3,6 +3,7 @@ import { applyDeepLink, HostBridge, surfaceFromHostContext } from "./bridge";
 import { WorkbenchController, type Bridge } from "./controller";
 import { allowedFinishes, finishLabels, settingsSchema, startRequest, UI_VERSION, type FollowUpKind } from "./domain";
 import { renderWorkbench, type Editor, type WorkbenchOptions } from "./view";
+import { SinceTracker } from "./narrative";
 import { submitNewRun } from "./submission";
 import "./style.css";
 
@@ -18,7 +19,8 @@ const app = new App({ name: "Luna Factory", version: UI_VERSION }, { availableDi
 const hostBridge = new HostBridge(app, (id, nodeId, revision) => { void controller.restoreContext(id, nodeId, revision); }, message => { controller.setDisconnected(message); applyHostContext(); });
 const extensions = hostBridge.extensions;
 let connection: Promise<void> | null = null;
-let workbenchOptions: WorkbenchOptions = { surface: "global", displayMode: "inline", canSendFollowUps: false };
+const since = new SinceTracker();
+let workbenchOptions: WorkbenchOptions = { surface: "global", displayMode: "inline", canSendFollowUps: false, since };
 const bridge: Bridge = {
   async call(tool, args) {
     if (fixturePreview) throw new Error("Fixture preview is read-only. Open Luna Factory in an MCP Apps host to run actions.");
@@ -42,12 +44,14 @@ mount.addEventListener("click", event => {
   const target = event.target.closest<HTMLElement>("[data-action],[data-run-id]");
   if (!target || target instanceof HTMLButtonElement && target.disabled) return;
   event.preventDefault();
-  if (target.dataset.runId) { editor = null; void controller.select(target.dataset.runId); return; }
+  if (target.dataset.runId) { editor = null; void openRun(target.dataset.runId); return; }
   switch (target.dataset.action) {
     case "overview": editor = null; void controller.select(null); break;
     case "refresh": void (async () => { await controller.refresh(); if (controller.state.graph) await controller.loadGraph(); })(); break;
     case "graph": editor = null; void controller.loadGraph(); break;
     case "graph-node": if (target.dataset.nodeId) controller.selectNode(target.dataset.nodeId); break;
+    case "view-mode": if (target.dataset.mode === "map" || target.dataset.mode === "lanes") controller.setViewMode(target.dataset.mode); break;
+    case "select-agent": if (target.dataset.threadId) controller.selectAgent(controller.state.selectedAgent === target.dataset.threadId ? null : target.dataset.threadId); break;
     case "apply-change": void controller.applyChange(mount.querySelector<HTMLInputElement>("#confirm-graph-change")?.checked === true); break;
     case "share-context": void controller.select(controller.state.selectedId); break;
     case "start": showEditor("start"); break;
@@ -150,6 +154,7 @@ function applyHostContext(): void {
   if (context?.styles?.variables) applyHostStyleVariables(context.styles.variables);
   const surface = surfaceFromHostContext(context);
   workbenchOptions = {
+    since,
     surface,
     displayMode: context?.displayMode ?? "inline",
     canSendFollowUps: hostBridge.canSendFollowUp(),
@@ -194,6 +199,7 @@ if (fixturePreview) {
   controller.setConnected(true);
   mount.dataset.nativeForms = "html-fallback";
   workbenchOptions = {
+    since,
     surface: previewParams.get("surface") === "inline" ? "inline" : previewParams.get("surface") === "thread" ? "thread" : "global",
     displayMode: previewParams.get("surface") === "inline" ? "inline" : "fullscreen",
     canSendFollowUps: previewParams.get("message") === "1",
@@ -218,14 +224,34 @@ if (fixturePreview) {
     controller.setConnected(true);
     applyHostContext();
     // Single-run tool results render immediately; only fetch missing workbench controls.
-    if (!controller.state.initialized || !controller.state.capabilities) void controller.refresh();
+    if (!controller.state.initialized || !controller.state.capabilities) void controller.refresh().then(readSelectedPlan);
+    else readSelectedPlan();
   }).catch(() => controller.setDisconnected("Could not connect to the MCP Apps host. Reopen Luna Factory from the host to reconnect."));
   // Read-only status polling. It never starts a model, and pauses while hidden or editing.
   const refreshTimer = window.setInterval(() => {
-    if (!document.hidden && controller.state.connected && controller.state.initialized && !controller.state.pending && !controller.state.refreshing && !editor) void controller.refresh();
+    if (!document.hidden && controller.state.connected && controller.state.initialized && !controller.state.pending && !controller.state.refreshing && !editor) void controller.refresh().then(() => { if (controller.state.graphStale) readSelectedPlan(); });
   }, 30_000);
   window.addEventListener("pagehide", () => window.clearInterval(refreshTimer), { once: true });
 }
+
+/** Opening a run also reads its persisted plan; both are read-only calls. */
+async function openRun(id: string): Promise<void> {
+  await controller.select(id);
+  readSelectedPlan();
+}
+function readSelectedPlan(): void {
+  const { selectedId, graph, graphLoading, pending, connected } = controller.state;
+  if (!connected || !selectedId || pending || graphLoading || graph?.run_id === selectedId && !controller.state.graphStale) return;
+  void controller.loadGraph();
+}
+// Arrow keys move between tasks in reading order; Enter/Space already activate buttons.
+mount.addEventListener("keydown", event => {
+  if (!(event.target instanceof HTMLElement) || !event.target.matches(".map-node") || !["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft"].includes(event.key)) return;
+  const nodes = Array.from(mount.querySelectorAll<HTMLElement>(".map-node"));
+  const index = nodes.indexOf(event.target);
+  const next = nodes[index + (event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : -1)];
+  if (next) { event.preventDefault(); next.focus(); }
+});
 
 async function sendFollowUp(kind: FollowUpKind, taskId?: string): Promise<void> {
   if (fixturePreview) { controller.reportError("Fixture preview is read-only. No message was sent."); return; }

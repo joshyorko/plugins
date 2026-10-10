@@ -20,6 +20,14 @@ const cases = [
   { file: "global-disconnected-mobile.png", width: 360, height: 720, params: { surface: "global", scenario: "planning", platform: "mobile", graph: "1" }, disconnect: true },
   { file: "global-proposal-review.png", width: 480, height: 760, params: { surface: "global", scenario: "planning", graph: "1", proposal: "1" } },
   { file: "global-large-host-font.png", width: 480, height: 760, params: { surface: "global", scenario: "planning", graph: "1", font: "large" } },
+  { file: "campaign-map-light.png", width: 1440, height: 1000, params: { surface: "global", mode: "fullscreen", scenario: "campaign", graph: "1", node: "issue-109" } },
+  { file: "campaign-map-dark.png", width: 1440, height: 1000, params: { surface: "global", mode: "fullscreen", theme: "dark", scenario: "campaign", graph: "1", node: "issue-109" } },
+  { file: "campaign-thread-narrow.png", width: 420, height: 900, params: { surface: "thread", scenario: "campaign", graph: "1", node: "issue-109" } },
+  { file: "campaign-mobile-dark.png", width: 390, height: 844, params: { surface: "global", theme: "dark", platform: "mobile", scenario: "campaign", graph: "1", node: "issue-113" } },
+  { file: "swarm-map-synthetic.png", width: 1280, height: 900, params: { surface: "global", mode: "fullscreen", scenario: "swarm", graph: "1", node: "child:child-1" }, agent: "child-1" },
+  { file: "swarm-lanes-synthetic-dark.png", width: 1280, height: 900, params: { surface: "global", mode: "fullscreen", theme: "dark", scenario: "swarm", graph: "1", node: "child:child-1" }, agent: "child-1", lanes: true },
+  { file: "home-light.png", width: 1280, height: 860, params: { surface: "global", mode: "fullscreen", scenario: "home" } },
+  { file: "inline-campaign-light.png", width: 720, height: 420, params: { surface: "inline", scenario: "campaign" } },
 ];
 const server = await createServer({ root: ui, configFile: join(ui, "vite.config.ts"), server: { host: "127.0.0.1", port: 0, strictPort: true } });
 let browser;
@@ -39,12 +47,25 @@ try {
       assert(frame, "Production App iframe did not mount");
       await frame.locator(".workbench").waitFor();
       if (item.params.graph) {
-        await frame.locator('[data-node-id="task-b"][aria-pressed="true"]').waitFor();
-        await frame.locator('[data-node-id="task-b"]').scrollIntoViewIfNeeded();
-        await frame.locator('[data-node-id="task-b"]').focus();
+        const node = frame.locator(`[data-node-id="${item.params.node ?? "task-b"}"]`);
+        await frame.locator(`[data-node-id="${item.params.node ?? "task-b"}"][aria-pressed="true"]`).waitFor();
+        await node.scrollIntoViewIfNeeded();
+        await node.focus();
         await page.keyboard.press("Tab");
         assert(await frame.evaluate(() => document.activeElement !== document.body), "Keyboard focus escaped the inspector");
       }
+      if (item.agent) {
+        await frame.locator(`.crew [data-thread-id="${item.agent}"]`).click();
+        await frame.locator(`.crew [data-thread-id="${item.agent}"][aria-pressed="true"]`).waitFor();
+        const context = await page.evaluate(() => window.lunaDogfoodHost.contexts.at(-1));
+        assert(JSON.stringify(context).includes("agent_label"), "Agent selection did not reach model context");
+        assert(!/"(?:agent_)?thread(?:_id)?"/.test(JSON.stringify(context)), "Model context carried a raw agent thread field");
+      }
+      if (item.lanes) {
+        await frame.locator('[data-action="view-mode"][data-mode="lanes"]').click();
+        await frame.locator(`.lanes [data-thread-id="${item.agent}"][aria-pressed="true"]`).waitFor();
+      }
+      if (item.width >= 1000) await frame.evaluate(() => window.scrollTo(0, 0));
       if (item.disconnect) {
         await page.evaluate(() => window.lunaDogfoodHost.disconnect());
         await frame.locator('[data-connection="disconnected"]').waitFor();

@@ -7,11 +7,11 @@ import { UI_VERSION } from "../src/domain";
 const directory = new URL("./dogfood-visual-snapshots/", import.meta.url);
 const manifestSchema = z.object({ expected_ui_version: z.string(), evidence_kind: z.string(), ui_source_sha256: z.string(), captures: z.array(z.object({ file: z.string(), width: z.number(), height: z.number(), params: z.record(z.string(), z.string()), layout: z.object({ width: z.number(), scrollWidth: z.number(), overflowingControls: z.number() }), read_only_tool_calls: z.array(z.string()), automatic_messages: z.number() })) });
 describe("dogfood MCP Apps browser simulator evidence", () => {
-  it("binds ten simulator screenshots to the current UI sources and expected version", () => {
+  it("binds the simulator screenshots to the current UI sources and expected version", () => {
     const manifest = manifestSchema.parse(JSON.parse(readFileSync(new URL("manifest.json", directory), "utf8")));
     expect(manifest.expected_ui_version).toBe(UI_VERSION);
     expect(manifest.evidence_kind).toContain("not authenticated ChatGPT Desktop acceptance");
-    expect(manifest.captures).toHaveLength(10);
+    expect(manifest.captures).toHaveLength(18);
     expect(readFileSync(new URL("global-large-host-font.png", directory)).equals(readFileSync(new URL("global-planning-split-light.png", directory)))).toBe(false);
     const source = new URL("../src/", import.meta.url);
     const hash = createHash("sha256");
