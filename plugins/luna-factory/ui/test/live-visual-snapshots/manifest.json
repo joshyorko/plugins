@@ -1,0 +1,158 @@
+{
+  "evidence_kind": "Real disposable luna-factoryd + SQLite + MCP HTTP, recorded GitHub issue snapshot imported through model-visible tools, real browser AppBridge; not authenticated ChatGPT Desktop acceptance",
+  "server_binary_sha256": "3af0c7b5f3bfa1641ccce2d77f61fb9df54472c14db3bfaa7b17db24ffa8de69",
+  "ui_source_sha256": "40c8238575319f97d9317b10f656f3a1ec060393a0ea90794f36e3c795cde7c8",
+  "github_snapshot_sha256": "1c92fec1ad22697e412074feff0b2d3f1fc8f38a1d5f35f946512e535580df83",
+  "graph": {
+    "revision": 4,
+    "nodes": 15,
+    "attempts": 0,
+    "planning_only": true,
+    "claim": {
+      "held": false,
+      "status": "released"
+    }
+  },
+  "captures": [
+    {
+      "file": "live-campaign-map-light.png",
+      "width": 1440,
+      "height": 1000,
+      "params": {
+        "surface": "global",
+        "mode": "fullscreen",
+        "node": "issue-79"
+      },
+      "layout": {
+        "width": 1440,
+        "scrollWidth": 1440,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "open_factory",
+        "refresh_factory",
+        "get_factory_run",
+        "get_factory_graph",
+        "get_factory_backends",
+        "get_factory_graph",
+        "get_factory_backends"
+      ]
+    },
+    {
+      "file": "live-campaign-map-dark.png",
+      "width": 1440,
+      "height": 1000,
+      "params": {
+        "surface": "global",
+        "mode": "fullscreen",
+        "theme": "dark",
+        "node": "issue-81"
+      },
+      "layout": {
+        "width": 1440,
+        "scrollWidth": 1440,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "open_factory",
+        "refresh_factory",
+        "get_factory_run",
+        "get_factory_graph",
+        "get_factory_backends",
+        "get_factory_graph",
+        "get_factory_backends"
+      ]
+    },
+    {
+      "file": "live-campaign-thread.png",
+      "width": 420,
+      "height": 900,
+      "params": {
+        "surface": "thread",
+        "node": "issue-77"
+      },
+      "layout": {
+        "width": 420,
+        "scrollWidth": 420,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "open_factory_panel",
+        "refresh_factory",
+        "get_factory_run",
+        "get_factory_graph",
+        "get_factory_backends",
+        "get_factory_graph",
+        "get_factory_backends"
+      ]
+    },
+    {
+      "file": "live-campaign-mobile-dark.png",
+      "width": 390,
+      "height": 844,
+      "params": {
+        "surface": "global",
+        "theme": "dark",
+        "platform": "mobile",
+        "node": "issue-79"
+      },
+      "layout": {
+        "width": 390,
+        "scrollWidth": 390,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "open_factory",
+        "refresh_factory",
+        "get_factory_run",
+        "get_factory_graph",
+        "get_factory_backends",
+        "get_factory_graph",
+        "get_factory_backends"
+      ]
+    },
+    {
+      "file": "live-lanes-planning.png",
+      "width": 1280,
+      "height": 860,
+      "params": {
+        "surface": "global",
+        "mode": "fullscreen",
+        "node": "issue-79"
+      },
+      "layout": {
+        "width": 1280,
+        "scrollWidth": 1280,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "open_factory",
+        "refresh_factory",
+        "get_factory_run",
+        "get_factory_graph",
+        "get_factory_backends",
+        "get_factory_graph",
+        "get_factory_backends"
+      ]
+    },
+    {
+      "file": "live-inline-light.png",
+      "width": 720,
+      "height": 420,
+      "params": {
+        "surface": "inline"
+      },
+      "layout": {
+        "width": 720,
+        "scrollWidth": 720,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "get_factory_run",
+        "refresh_factory",
+        "get_factory_graph",
+        "get_factory_backends"
+      ]
+    }
+  ]
+}

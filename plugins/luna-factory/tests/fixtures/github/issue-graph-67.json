@@ -1,0 +1,145 @@
+{
+  "source": "GitHub REST snapshot of joshyorko/plugins issue #67 and its sub-issues #69-#82, recorded 2026-10-10",
+  "repository": "joshyorko/plugins",
+  "repository_id": 1148934299,
+  "dependency_rule": "requires = issue numbers named on the body's 'Requires' line, limited to #69-#82",
+  "issues": [
+    {
+      "number": 67,
+      "node_id": "I_kwDORHtYm88AAAABWV0DOg",
+      "github_title": "design(luna-factory): shape conversation-first issue graph and mission control",
+      "title": "Shape conversation-first issue graph and mission control",
+      "requires": [],
+      "updated_at": "2026-10-10T18:47:56Z"
+    },
+    {
+      "number": 69,
+      "node_id": "I_kwDORHtYm88AAAABWWXqmw",
+      "github_title": "contract(luna-factory): attribute receipts to threads and project created_at and source display metadata",
+      "title": "Attribute receipts to threads and project created_at and source display metadata",
+      "requires": [],
+      "updated_at": "2026-10-10T20:03:34Z"
+    },
+    {
+      "number": 70,
+      "node_id": "I_kwDORHtYm88AAAABWWXrKQ",
+      "github_title": "contract(luna-factory): typed blocker categories in the presentation projection",
+      "title": "Typed blocker categories in the presentation projection",
+      "requires": [],
+      "updated_at": "2026-10-10T20:03:35Z"
+    },
+    {
+      "number": 71,
+      "node_id": "I_kwDORHtYm88AAAABWWXrsw",
+      "github_title": "qualify(luna-factory): native Codex execution in the isolated container",
+      "title": "Native Codex execution in the isolated container",
+      "requires": [],
+      "updated_at": "2026-10-10T20:03:36Z"
+    },
+    {
+      "number": 72,
+      "node_id": "I_kwDORHtYm88AAAABWWXsLQ",
+      "github_title": "brand(luna-factory): unify logo assets with the moonlight identity",
+      "title": "Unify logo assets with the moonlight identity",
+      "requires": [],
+      "updated_at": "2026-10-10T20:03:36Z"
+    },
+    {
+      "number": 73,
+      "node_id": "I_kwDORHtYm88AAAABWWXsqg",
+      "github_title": "fix(luna-factory): planning target note cannot be cleared",
+      "title": "Planning target note cannot be cleared",
+      "requires": [],
+      "updated_at": "2026-10-10T20:03:37Z"
+    },
+    {
+      "number": 74,
+      "node_id": "I_kwDORHtYm88AAAABWWXtXg",
+      "github_title": "feat(luna-factory): mission control slice 2 \u2014 ChatGPT handoffs, view tools and mentions",
+      "title": "Mission control slice 2 \u2014 ChatGPT handoffs, view tools and mentions",
+      "requires": [
+        69
+      ],
+      "updated_at": "2026-10-10T20:13:20Z"
+    },
+    {
+      "number": 75,
+      "node_id": "I_kwDORHtYm88AAAABWWXt1Q",
+      "github_title": "feat(luna-factory): read-only CAS agent timeline adapter for Lanes",
+      "title": "Read-only CAS agent timeline adapter for Lanes",
+      "requires": [],
+      "updated_at": "2026-10-10T20:03:39Z"
+    },
+    {
+      "number": 76,
+      "node_id": "I_kwDORHtYm88AAAABWWXuUw",
+      "github_title": "feat(luna-factory): least-privileged GitHub App for source-bound issue graph intake",
+      "title": "Least-privileged GitHub App for source-bound issue graph intake",
+      "requires": [],
+      "updated_at": "2026-10-10T20:03:40Z"
+    },
+    {
+      "number": 77,
+      "node_id": "I_kwDORHtYm88AAAABWWXuzA",
+      "github_title": "feat(luna-factory): campaign entity grouping a parent issue, its plan and its runs",
+      "title": "Campaign entity grouping a parent issue, its plan and its runs",
+      "requires": [
+        69
+      ],
+      "updated_at": "2026-10-10T20:04:41Z"
+    },
+    {
+      "number": 78,
+      "node_id": "I_kwDORHtYm88AAAABWWXvWw",
+      "github_title": "feat(luna-factory): durable PR, check-run, review and diff telemetry per task",
+      "title": "Durable PR, check-run, review and diff telemetry per task",
+      "requires": [
+        76
+      ],
+      "updated_at": "2026-10-10T20:04:42Z"
+    },
+    {
+      "number": 79,
+      "node_id": "I_kwDORHtYm88AAAABWWXvsA",
+      "github_title": "feat(luna-factory): parallel dispatch of independent ready tasks within one campaign",
+      "title": "Parallel dispatch of independent ready tasks within one campaign",
+      "requires": [
+        71,
+        77
+      ],
+      "updated_at": "2026-10-10T20:04:45Z"
+    },
+    {
+      "number": 80,
+      "node_id": "I_kwDORHtYm88AAAABWWXwKw",
+      "github_title": "feat(luna-factory): verified model routing telemetry and an explicit escalation policy",
+      "title": "Verified model routing telemetry and an explicit escalation policy",
+      "requires": [
+        71
+      ],
+      "updated_at": "2026-10-10T20:13:21Z"
+    },
+    {
+      "number": 81,
+      "node_id": "I_kwDORHtYm88AAAABWWXwqA",
+      "github_title": "feat(luna-factory): explicitly authorized integration and merge",
+      "title": "Explicitly authorized integration and merge",
+      "requires": [
+        71,
+        78,
+        79
+      ],
+      "updated_at": "2026-10-10T20:04:49Z"
+    },
+    {
+      "number": 82,
+      "node_id": "I_kwDORHtYm88AAAABWWXxNg",
+      "github_title": "feat(luna-factory): multiple isolated campaigns per repository",
+      "title": "Multiple isolated campaigns per repository",
+      "requires": [
+        79
+      ],
+      "updated_at": "2026-10-10T20:04:51Z"
+    }
+  ]
+}
