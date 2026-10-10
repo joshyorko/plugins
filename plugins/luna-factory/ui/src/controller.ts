@@ -1,5 +1,6 @@
 import { allowedFinishes, boundedContext, buildFollowUpPrompt, finishSchema, parseToolResult, repositoryDiscoverySchema, repositoryRegistrationSchema, runId, settingsSchema, structuredResult, type Capabilities, type FollowUpKind, type RepositoryDiscovery, type RunView, type Settings, type ToolData } from "./domain";
 import { backendCatalogSchema, graphChangeSchema, graphEnvelopeSchema, type BackendCatalog, type FactoryGraph, type GraphChange, type GraphEnvelope } from "./domain";
+import { roster } from "./agents";
 
 export interface Bridge {
   call(tool: string, args: Record<string, unknown>): Promise<unknown>;
@@ -16,9 +17,11 @@ export interface ViewState {
   discovery: RepositoryDiscovery | null; discovering: boolean;
   graph: FactoryGraph | null; graphLoading: boolean; graphStale: boolean; selectedNodeId: string | null;
   proposal: GraphEnvelope["proposal"]; backends: BackendCatalog | null;
+  /** View-only selection shared by Map, Lanes and the inspector. Never mutates the plan. */
+  viewMode: "map" | "lanes"; selectedAgent: string | null;
 }
 export class WorkbenchController {
-  readonly state: ViewState = { runs: [], capabilities: null, settings: {}, connectionStatus: "connecting", selectedId: null, initialized: false, connected: false, refreshing: false, pending: null, error: null, notice: null, contextError: null, discovery: null, discovering: false, graph: null, graphLoading: false, graphStale: false, selectedNodeId: null, proposal: null, backends: null };
+  readonly state: ViewState = { runs: [], capabilities: null, settings: {}, connectionStatus: "connecting", selectedId: null, initialized: false, connected: false, refreshing: false, pending: null, error: null, notice: null, contextError: null, discovery: null, discovering: false, graph: null, graphLoading: false, graphStale: false, selectedNodeId: null, proposal: null, backends: null, viewMode: "map", selectedAgent: null };
   private initialSeen = false;
   private readVersion = 0;
   private contextVersion = 0;
@@ -86,7 +89,7 @@ export class WorkbenchController {
     if (id !== this.state.selectedId) {
       ++this.graphVersion;
       this.state.graph = null; this.state.proposal = null; this.state.selectedNodeId = null; this.state.graphLoading = false;
-      this.state.graphStale = false; this.state.backends = null; this.changeRetry = null;
+      this.state.graphStale = false; this.state.backends = null; this.changeRetry = null; this.state.selectedAgent = null;
     }
     this.state.selectedId = id;
     this.state.error = null;
@@ -283,7 +286,22 @@ export class WorkbenchController {
   selectNode(id: string, explicit = true): void {
     if (!this.state.graph?.nodes.some(node => node.id === id)) return;
     if (explicit) { ++this.selectionEpoch; this.contextRestoreEpoch = null; this.bridge.selectContext?.(); this.lastContext = ""; }
+    // A different task ends an agent selection so the shared context never mixes two subjects.
+    if (this.state.selectedAgent && roster(this.selected, this.state.graph).find(agent => agent.thread === this.state.selectedAgent)?.taskId !== id) this.state.selectedAgent = null;
     this.state.selectedNodeId = id; this.changed(); this.syncContext();
+  }
+  setViewMode(mode: "map" | "lanes"): void {
+    if (this.state.viewMode === mode) return;
+    this.state.viewMode = mode; this.changed();
+  }
+  /** Selecting an agent also selects its persisted task, so one context reaches ChatGPT. */
+  selectAgent(thread: string | null): void {
+    if (thread !== null && !roster(this.selected, this.state.graph).some(agent => agent.thread === thread)) return;
+    ++this.selectionEpoch; this.contextRestoreEpoch = null; this.bridge.selectContext?.(); this.lastContext = "";
+    this.state.selectedAgent = thread;
+    const task = roster(this.selected, this.state.graph).find(agent => agent.thread === thread)?.taskId;
+    if (task && this.state.graph?.nodes.some(node => node.id === task)) this.state.selectedNodeId = task;
+    this.changed(); this.syncContext();
   }
   private acceptGraph(envelope: GraphEnvelope): void {
     const graph = envelope.graph;
@@ -403,8 +421,10 @@ export class WorkbenchController {
     const graph = current && this.state.graph?.run_id === this.state.selectedId ? this.state.graph : null;
     const run = current && this.selected && this.detailsLoaded.has(this.selected.id) && (!graph || this.selected.control?.revision === graph.revision) ? this.selected : undefined;
     const node = graph?.nodes.find(item => item.id === this.state.selectedNodeId);
+    const agent = run ? roster(run, graph).find(item => item.thread === this.state.selectedAgent) : undefined;
     const context = { ...(run ? boundedContext(run) : graph ? { run_id: graph.run_id, revision: graph.revision, repository: graph.repository.alias, state: graph.planning_only ? "PLANNING" : "UNVERIFIED", current_subject: graph.repository.subject.slice(0, 180) } : {}),
       ...(node && graph ? { node_id: node.id, node_title: node.title.slice(0, 300), node_state: node.state, graph_revision: graph.revision } : {}),
+      ...(agent ? { agent_label: agent.label, agent_role: agent.role, agent_liveness: agent.liveness, agent_task_id: agent.taskId } : {}),
     };
     const serialized = JSON.stringify(context);
     if (serialized === this.lastContext) return;

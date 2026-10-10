@@ -17,7 +17,8 @@ describe("accessible workbench", () => {
     const { root } = render(null, fixtureRun({ state: "NEEDS_INPUT", blocker: "Choose whether to reduce the scope", pending_decision: { id: "decision-1", question: "Choose whether to reduce the scope" } }));
     expect(root.textContent).toContain("Choose whether to reduce the scope");
     const main = root.querySelector("main");
-    expect(main?.textContent?.indexOf("What changed")).toBeLessThan(main?.textContent?.indexOf("Execution evidence") ?? 0);
+    expect(main?.querySelector(".story")).not.toBeNull();
+    expect(main?.textContent?.indexOf("Choose whether to reduce the scope")).toBeLessThan(main?.textContent?.indexOf("Evidence and audit") ?? 0);
     expect(root.querySelector('[data-kind="answer"]')).not.toBeNull();
     expect(root.textContent).not.toContain("Force");
   });
@@ -26,8 +27,8 @@ describe("accessible workbench", () => {
     renderWorkbench(root, controller.state, null, false, { surface: "global", canSendFollowUps: true });
     const buttons = root.querySelectorAll<HTMLButtonElement>('[data-action="chat-follow-up"]');
     expect(buttons.length).toBeGreaterThanOrEqual(3);
-    expect(root.textContent).toContain("after your click");
-    expect(root.textContent).toContain("does not start Factory work");
+    expect(root.textContent).toContain("only after your click");
+    expect(root.textContent).toContain("Nothing starts");
     expect(Array.from(buttons).every(button => !button.disabled)).toBe(true);
     renderWorkbench(root, controller.state, null, false, { surface: "global", canSendFollowUps: false });
     expect(Array.from(root.querySelectorAll<HTMLButtonElement>('[data-action="chat-follow-up"]')).every(button => button.disabled)).toBe(true);
@@ -38,10 +39,11 @@ describe("accessible workbench", () => {
     renderWorkbench(root, controller.state, null, false, { surface: "inline", displayMode: "inline", canExpand: true });
     expect(root.querySelector(".inline-card")?.textContent).toContain("Choose a safe scope");
     expect(root.querySelector(".sidebar")).toBeNull();
-    expect(root.querySelector('[data-action="expand-mode"]')?.textContent).toContain("Review in Luna Factory");
+    expect(root.querySelector('[data-action="expand-mode"]')?.textContent).toContain("Open Luna Factory");
+    expect(root.querySelectorAll(".inline-card button")).toHaveLength(2);
     renderWorkbench(root, controller.state, null, false, { surface: "thread", displayMode: "fullscreen" });
     expect(root.querySelector('.workbench[data-surface="thread"]')).not.toBeNull();
-    expect(root.querySelector(".thread-inspector-label")?.textContent).toContain("Thread inspector");
+    expect(root.querySelector(".thread-inspector-label")?.textContent).toContain("This conversation");
     expect(root.textContent).toContain("Choose a safe scope");
   });
   it("shows inline follow-up status and connection errors", () => {
@@ -199,16 +201,16 @@ describe("accessible workbench", () => {
     expect(root.textContent).toContain("owner-123, turn-123");
     expect(root.textContent).toContain("Effort telemetry unavailable");
   });
-  it("puts objective, change, Josh's next action, and proof counts in order", () => {
+  it("puts objective, current story, the decision, and proof counts in order", () => {
     const { root } = render(null, fixtureRun({ state: "NEEDS_INPUT", pending_decision: { id: "decision-1", question: "Keep the migration local?" } }));
     const text = root.querySelector("main")?.textContent ?? "";
-    expect(text.indexOf("Make Luna Factory a first-class workbench")).toBeLessThan(text.indexOf("What changed"));
-    expect(text.indexOf("What changed")).toBeLessThan(text.indexOf("Needs Josh"));
-    expect(text.indexOf("Needs Josh")).toBeLessThan(text.indexOf("Proven"));
-    expect(text).toContain("Proven");
-    expect(text).toContain("Failed");
-    expect(text).toContain("Evidence pending");
-    expect(root.querySelectorAll(".needs-josh .button.primary")).toHaveLength(1);
+    const story = root.querySelector(".story")?.textContent ?? "";
+    expect(story).not.toBe("");
+    expect(text.indexOf("Make Luna Factory a first-class workbench")).toBeLessThan(text.indexOf(story));
+    expect(text.indexOf(story)).toBeLessThan(text.indexOf("Keep the migration local?"));
+    expect(root.querySelector(".decision-panel .eyebrow")?.textContent).toBe("Needs you");
+    expect(text).toContain("1 of 2 criteria proven");
+    expect(root.querySelectorAll(".needs-you .button.primary")).toHaveLength(1);
   });
   it("renders stopped unresolved separately from finished verified and retains unknown liveness", () => {
     const run = fixtureRun({ state: "CANCELLED", active_workers: 0, claim_held: true });
@@ -241,7 +243,7 @@ describe("accessible workbench", () => {
     const steer = { kind: "steer" as const, label: "Correct the owner", reason: "current_owned_turn", tool: "steer_factory_run", allowed: true };
     run.presentation = { ...current, primary_action: wait, actions: [wait, steer] };
     const { root } = render(null, run);
-    expect(root.querySelector(".needs-josh .button.primary")?.textContent).toBe("Wait for observed work");
+    expect(root.querySelector(".decision-panel .button.primary")?.textContent).toBe("Wait for observed work");
     const secondary = root.querySelector('[data-kind="steer"]');
     expect(secondary?.closest("details")?.textContent).toContain("Other available actions");
   });
@@ -258,7 +260,7 @@ describe("accessible workbench", () => {
     delete legacy.presentation;
     const oldRoot = render(null, legacy).root;
     expect(oldRoot.textContent).toContain("Outcome unverified");
-    expect(oldRoot.querySelector(".needs-josh .button.primary")?.textContent).toBe("Refresh current state");
+    expect(oldRoot.querySelector(".decision-panel .button.primary")?.textContent).toBe("Refresh current state");
     expect(oldRoot.querySelector('[data-kind="cancel"]')).toBeNull();
   });
 });
