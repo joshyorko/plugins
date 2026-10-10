@@ -1,6 +1,6 @@
 // Flight Recorder lanes. Only server-reported timestamps are placed on the time axis.
 // Agent ticks are "Observed in Codex": display data only, never proof, attention or plan state.
-import type { ViewState } from "./controller";
+import { MAX_TIMELINE_AGENTS, type ViewState } from "./controller";
 import type { AgentTimeline, RunView } from "./domain";
 import { livenessLabel, type Agent } from "./agents";
 import { coordinatorToken, workerToken } from "./lunar";
@@ -15,10 +15,11 @@ const observedLabel: Record<AgentTimeline["events"][number]["kind"], string> = {
 export const OBSERVED = "Observed in Codex";
 
 /** The observed timeline for an agent, or the reason the server gave for not having one. */
-function observation(run: RunView, agent: Agent, state: ViewState): { timeline: AgentTimeline } | { reason: string } {
+function observation(run: RunView, agent: Agent, index: number, state: ViewState): { timeline: AgentTimeline } | { reason: string } {
   const capability = state.capabilities?.agent_timeline;
   if (!capability) return { reason: "Per-agent timeline not reported by this server" };
   if (!capability.enabled) return { reason: capability.detail };
+  if (index >= MAX_TIMELINE_AGENTS) return { reason: `Not observed: only the first ${MAX_TIMELINE_AGENTS} agents are read.` };
   const view = state.timelineRunId === run.id ? state.timelines[agent.thread] : undefined;
   if (!view) return { reason: "Reading what Codex observed…" };
   if (view.status === "error") return { reason: "Codex observation could not be read for this agent." };
@@ -31,7 +32,8 @@ export function renderLanes(run: RunView, agents: Agent[], state: ViewState, now
   if (!receipts.length && !agents.length) {
     return `<section class="lanes empty" aria-label="Agent lanes"><h3>No activity recorded yet</h3><p>${run.planning_only ? "Execution hasn't started on this plan, so there is nothing to replay." : "This run has no retained receipts and no reported agents."}</p></section>`;
   }
-  const observations = agents.map(agent => ({ agent, observed: observation(run, agent, state) }));
+  // Same order as the controller's roster, so the read bound matches what is shown.
+  const observations = agents.map((agent, index) => ({ agent, observed: observation(run, agent, index, state) }));
   const observedTimes = observations.flatMap(({ observed }) => "timeline" in observed ? observed.timeline.events.map(event => event.at) : []);
   const times = [...receipts.map(receipt => receipt.created_at), ...observedTimes];
   const start = times.length ? Math.min(...times) : run.updated_at ?? now;
