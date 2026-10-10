@@ -1,5 +1,6 @@
 // Opt-in evidence: a disposable compiled luna-factoryd + SQLite + MCP HTTP, a recorded GitHub issue graph
-// imported through model-visible tools, and the production App in a real browser behind a read-only proxy.
+// planned as a campaign for parent #67 and imported through model-visible tools, and the production App
+// in a real browser behind a read-only proxy.
 // Requires LUNA_FACTORY_BINARY. Never connects to live Luna services; native execution is impossible here.
 import { strict as assert } from "node:assert";
 import { execFileSync, spawn } from "node:child_process";
@@ -21,7 +22,7 @@ const output = join(ui, "test/live-visual-snapshots");
 const snapshotPath = resolve(ui, "../tests/fixtures/github/issue-graph-67.json");
 const snapshotBytes = await readFile(snapshotPath, "utf8");
 const snapshot = JSON.parse(snapshotBytes);
-const readOnly = new Set(["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory", "open_factory_panel"]);
+const readOnly = new Set(["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory", "open_factory_panel", "list_factory_campaigns"]);
 
 const directory = await mkdtemp(join(tmpdir(), "luna-live-plan-"));
 const probe = createNetServer(); probe.listen(0, "127.0.0.1"); await once(probe, "listening");
@@ -63,15 +64,24 @@ try {
   // The same model-visible commands ChatGPT would use. Nothing here dispatches native work.
   const parent = snapshot.issues.find(issue => issue.number === 67);
   const children = snapshot.issues.filter(issue => issue.number !== 67);
-  let envelope = await tool("create_factory_graph", {
-    repository: "plugins", objective: `${parent.title} (#67)`, acceptance: ["Every sub-issue is resolved by a verified change"], non_goals: ["No execution from this planning graph"],
-    finish: "local_candidate", profile: "default", capacity: 1, repair_attempts: 0, wall_seconds: 300, idempotency_key: "live-issue-graph-67",
-  });
+  const revisionOf = issue => `sha256:${createHash("sha256").update(JSON.stringify(issue)).digest("hex")}`;
+  // Parent #67 comes from the recorded snapshot; its number and URL are display assertions, not proof.
+  const campaignRequest = {
+    repository: "plugins", title: parent.title,
+    parent: { provider: "github", item_id: `${snapshot.repository_id}:${parent.node_id}`, revision: revisionOf(parent), display: { number: parent.number, url: `https://github.com/${snapshot.repository}/issues/${parent.number}` } },
+    objective: `${parent.title} (#67)`, acceptance: ["Every sub-issue is resolved by a verified change"], non_goals: ["No execution from this planning graph"],
+    finish: "local_candidate", profile: "default", idempotency_key: "live-campaign-67",
+  };
+  const created = await tool("create_factory_campaign", campaignRequest);
+  const campaignId = created.campaign.id;
+  assert.equal(created.campaign.status, "planned"); assert.deepEqual(created.campaign.run_ids, []);
+  let envelope = { graph: created.graph };
   const runId = envelope.graph.run_id;
+  assert.equal(created.campaign.planning_run_id, runId); assert.equal(envelope.graph.planning_only, true);
   const identity = envelope.graph.repository.identity;
   const nodes = children.map(issue => ({
     id: `issue-${issue.number}`, title: issue.title, criterion_ids: ["A1"], dependencies: issue.requires.map(number => `issue-${number}`),
-    source: { provider: "github", repository_id: identity, item_id: `${snapshot.repository_id}:${issue.node_id}`, revision: `sha256:${createHash("sha256").update(JSON.stringify(issue)).digest("hex")}` },
+    source: { provider: "github", repository_id: identity, item_id: `${snapshot.repository_id}:${issue.node_id}`, revision: revisionOf(issue) },
   }));
   envelope = await tool("propose_factory_change", { run_id: runId, expected_revision: envelope.graph.revision, idempotency_key: "live-import-67", change: { kind: "import_candidates", nodes } });
   envelope = await tool("apply_factory_change", { run_id: runId, expected_revision: envelope.graph.revision, change_id: envelope.proposal.id });
@@ -82,8 +92,19 @@ try {
   const graph = (await tool("get_factory_graph", { run_id: runId })).graph;
   assert.equal(graph.nodes.length, children.length + 1);
   assert.equal(graph.attempts.length, 0); assert.equal(graph.claim.held, false); assert.equal(graph.planning_only, true);
+  const campaign = (await tool("get_factory_campaign", { campaign_id: campaignId })).campaign;
+  assert.equal(campaign.planning.revision, graph.revision); assert.equal(campaign.planning.tasks.total, graph.nodes.length);
+  assert.equal(campaign.planning.tasks.candidate, graph.nodes.length); assert.deepEqual(campaign.runs, []);
+  assert.deepEqual(campaign.promotion, { allowed: false, reason: "execution_not_qualified" });
+  assert.deepEqual((await tool("create_factory_campaign", campaignRequest)).campaign, campaign, "campaign replay changed");
+  // Promotion is refused before any write: the graph and campaign are byte-for-byte unchanged.
+  const promotion = await rpc("tools/call", { name: "promote_factory_campaign", arguments: { campaign_id: campaignId, expected_revision: graph.revision, idempotency_key: "live-promote-67" } });
+  assert.equal(promotion.isError, true); assert(JSON.stringify(promotion.content).includes("execution_not_qualified"), "promotion did not fail closed");
+  assert.deepEqual((await tool("get_factory_graph", { run_id: runId })).graph, graph, "promotion changed the graph");
+  assert.deepEqual((await tool("get_factory_campaign", { campaign_id: campaignId })).campaign, campaign, "promotion changed the campaign");
 
   const cases = [
+    { file: "live-home-campaign-light.png", width: 1280, height: 860, params: { surface: "global", mode: "fullscreen" }, home: true },
     { file: "live-campaign-map-light.png", width: 1440, height: 1000, params: { surface: "global", mode: "fullscreen", node: "issue-79" } },
     { file: "live-campaign-map-dark.png", width: 1440, height: 1000, params: { surface: "global", mode: "fullscreen", theme: "dark", node: "issue-81" } },
     { file: "live-campaign-thread.png", width: 420, height: 900, params: { surface: "thread", node: "issue-77" } },
@@ -106,11 +127,18 @@ try {
       return await rpc("tools/call", { name, arguments: args });
     });
     try {
-      await page.goto(`${url}test/live-host.html?${new URLSearchParams({ ...item.params, run: runId, revision: String(graph.revision) })}`);
+      await page.goto(`${url}test/live-host.html?${new URLSearchParams({ ...item.params, run: item.home ? "" : runId, revision: String(graph.revision) })}`);
       await page.waitForFunction(() => window.lunaLiveHost?.initialized);
       const frame = page.frames().find(candidate => candidate.url().endsWith("/index.html"));
       assert(frame, "Production App iframe did not mount");
       await frame.locator(".workbench").waitFor();
+      if (item.home) {
+        const row = frame.locator(`.group-campaigns .campaign-parent-row[data-run-id="${runId}"]`);
+        await row.waitFor();
+        assert((await row.textContent()).includes("GitHub #67 · reported by GitHub"), "Campaign row lost its parent label");
+        await frame.locator(`.group-campaigns .campaign-child[data-run-id="${runId}"]`).waitFor();
+        assert.equal(await frame.locator(`.group-planned [data-run-id="${runId}"]`).count(), 0, "Linked plan was also listed ungrouped");
+      }
       if (item.params.node) await frame.locator(`[data-node-id="${item.params.node}"][aria-pressed="true"]`).waitFor();
       if (item.params.surface === "inline") await frame.locator('[data-action="chat-follow-up"]:enabled').waitFor();
       if (item.lanes) { await frame.locator('[data-action="view-mode"][data-mode="lanes"]').click(); await frame.locator(".lanes").waitFor(); }
@@ -129,14 +157,15 @@ try {
   const source = createHash("sha256");
   for (const name of (await readdir(join(ui, "src"))).sort()) { source.update(name); source.update(await readFile(join(ui, "src", name))); }
   await writeFile(join(output, "manifest.json"), JSON.stringify({
-    evidence_kind: "Real disposable luna-factoryd + SQLite + MCP HTTP, recorded GitHub issue snapshot imported through model-visible tools, real browser AppBridge; not authenticated ChatGPT Desktop acceptance",
+    evidence_kind: "Real disposable luna-factoryd + SQLite + MCP HTTP, recorded GitHub issue snapshot planned as a campaign for parent #67 and imported through model-visible tools, real browser AppBridge; not authenticated ChatGPT Desktop acceptance",
     server_binary_sha256: createHash("sha256").update(await readFile(resolve(binary))).digest("hex"),
     ui_source_sha256: source.digest("hex"),
     github_snapshot_sha256: createHash("sha256").update(snapshotBytes).digest("hex"),
     graph: { revision: graph.revision, nodes: graph.nodes.length, attempts: graph.attempts.length, planning_only: graph.planning_only, claim: graph.claim },
+    campaign: { created_with: "create_factory_campaign", parent: { provider: campaign.parent.provider, number: campaign.parent.display?.number ?? null }, status: campaign.status, planning_revision: campaign.planning.revision, planning_tasks: campaign.planning.tasks.total, run_ids: campaign.run_ids.length, replay: "identical", promotion: "rejected execution_not_qualified; graph and campaign unchanged" },
     captures,
   }, null, 2) + "\n");
-  console.log(`PASS ${captures.length} live-server captures at graph revision ${graph.revision}; read-only proxy; zero native dispatch`);
+  console.log(`PASS ${captures.length} live-server captures at graph revision ${graph.revision}; campaign #67 planned, promotion rejected; read-only proxy; zero native dispatch`);
 } finally {
   await browser?.close(); await vite?.close();
   if (daemon && daemon.exitCode === null) { daemon.kill("SIGTERM"); await once(daemon, "exit").catch(() => undefined); }
