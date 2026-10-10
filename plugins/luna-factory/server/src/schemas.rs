@@ -145,6 +145,7 @@ fn definitions() -> Map<String, Value> {
         "execution":object(json!({"eligible":{"const":false},"reason":string()})),
         "routing_telemetry":object(json!({"model":string(),"effort":string(),"provider":string()})),
         "control_policy":object(json!({"wire_schema":{"const":1},"sqlite_schema":{"const":2},"managed_admission":string(),"native_child_policy":string(),"semantic_acceptance":string(),"independent_checks":array(string(),32),"native_output_completeness":string(),"native_environment":string(),"delivery_certification":string()})),
+        "github":object(json!({"configured":boolean(),"reason":text(128)})),
         "live_proof":string()
     })));
     defs.insert("candidate".into(),object(json!({"id":{"type":"string","pattern":"^[a-f0-9]{64}$"},"name":string(),"root_alias":text(64),"max_finish":finish()})));
@@ -165,6 +166,32 @@ fn definitions() -> Map<String, Value> {
         "run_id":id(),"revision":count(),"repository":object(json!({"alias":text(64),"identity":{"type":"string","pattern":"^[a-f0-9]{64}$"},"base_head":string(),"subject":id()})),
         "planning_only":boolean(),"nodes":array(reference("graph_node"),128),"criteria":array(reference("criterion"),32),"attempts":array(reference("attempt"),256),"claim":reference("claim"),"changes":array(reference("proposal"),128)
     })));
+    defs.insert("github_source".into(),object(json!({
+        "provider":{"const":"github"},"repository_id":{"type":"null"},"repository":text(140),"repository_node_id":text(128),
+        "item_id":id(),"revision":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},
+        "display":object(json!({"number":count(),"url":text(512)}))
+    })));
+    let short = || nullable(text(32));
+    let check_run = object(
+        json!({"name":text(200),"status":short(),"conclusion":short(),"started_at":nullable(count()),"completed_at":nullable(count()),"summary":nullable(text(280))}),
+    );
+    let status_context =
+        object(json!({"context":text(200),"state":short(),"created_at":nullable(count())}));
+    defs.insert("github_pull_request".into(),object(json!({
+        "number":count(),"url":text(512),"state":short(),"draft":boolean(),
+        "head_sha":nullable(json!({"type":"string","pattern":"^[a-fA-F0-9]{40}$"})),"review_decision":short(),
+        "diff":object(json!({"files_changed":nullable(count()),"additions":nullable(count()),"deletions":nullable(count())})),
+        "checks":object(json!({"rollup":short(),"total":count(),"truncated":boolean(),"runs":array(check_run,25),"statuses":array(status_context,25)})),
+        "ready_for_review":boolean(),"merge_authority":{"const":false},"observed_at":count(),"reported_by":{"const":"github"}
+    })));
+    defs.insert("github_delivery_node".into(),optional(object(json!({
+        "node_id":id(),"item_id":id(),"reported_by":{"const":"github"},
+        "status":enumeration(&["observed","unavailable","deferred"]),"freshness":nullable(enumeration(&["fresh","cached","stale"])),
+        "reason":nullable(text(128)),"observed_at":nullable(count()),
+        "issue":nullable(object(json!({"number":count(),"url":text(512),"state":short()}))),
+        "pull_requests":array(reference("github_pull_request"),5),"pull_requests_total":count(),"pull_requests_truncated":boolean(),
+        "cross_repository_pull_requests":count(),"partial":boolean()
+    })),&["cross_repository_pull_requests","partial"]));
     defs.insert(
         "operation".into(),
         object(json!({"advertised":boolean(),"enabled":boolean(),"qualified":boolean()})),
@@ -218,6 +245,28 @@ pub fn output_schema(tool_name: &str) -> Value {
             "qualification":object(json!({"execution_eligible":{"const":false},"blockers":array(text(256),16)})),
             "receipt":nullable(object(json!({"request_id":text(128),"state":enumeration(&["not_found","unknown","in_progress","accepted","created_not_materialized","completed","failed","interrupted"]),"thread_id":nullable(text(512)),"turn_id":nullable(text(512)),"binding_verified":{"const":false},"execution_eligible":{"const":false},"reason":text(256)}))),
             "thread":nullable(object(json!({"target":text(128),"cwd":text(512),"thread_id":text(512),"liveness":enumeration(&["active","idle","unknown"]),"execution_eligible":{"const":false},"reason":text(256)})))
+        })),
+        "inspect_factory_issue_graph" => object(json!({
+            "schema_version":{"const":1},"reported_by":{"const":"github"},"writes":{"const":"none"},
+            "repository":text(140),"parent":count(),"status":enumeration(&["available","unavailable","ineligible"]),
+            "reason":nullable(text(128)),"retry_at":nullable(count()),"observed_at":nullable(count()),
+            "eligibility":object(json!({"eligible":boolean(),"allowed_by_github_app":boolean(),"approved_aliases":array(text(64),8),"reasons":array(text(128),8)})),
+            "forge_repository":nullable(object(json!({"repository":text(140),"repository_id":count(),"node_id":text(128)}))),
+            "parent_issue":nullable(object(json!({"number":count(),"title":text(1000),"github_state":enumeration(&["open","closed"]),"source":reference("github_source")}))),
+            "nodes":array(object(json!({"id":id(),"title":text(1000),"dependencies":array(id(),128),"relation":enumeration(&["sub_issue","task_list"]),"github_state":{"const":"open"},"source":reference("github_source")})),32),
+            "acceptance_candidates":array(object(json!({"id":id(),"node_id":nullable(id()),"text":text(1000),"label":{"const":"derived_from_issue"}})),64),
+            "cycles":array(object(json!({"node_ids":array(id(),32),"status":{"const":"rejected"}})),32),
+            "external_dependencies":array(object(json!({"node_id":id(),"blocked_by":count(),"github_state":enumeration(&["open","closed"]),"imported":{"const":false}})),64),
+            "cross_repository":array(object(json!({"repository":text(140),"number":count(),"relation":enumeration(&["sub_issue","task_list","blocked_by"]),"imported":{"const":false}})),64),
+            "omitted":array(object(json!({"number":count(),"reason":text(64)})),64),
+            "truncated":object(json!({"sub_issues":boolean(),"task_list":boolean(),"dependencies":boolean(),"nodes":boolean()})),
+            "import":object(json!({"ready":boolean(),"blockers":array(text(64),8),"decisions_needed":array(text(64),8),"steps":array(text(64),3),"repository_id":text(240),"confirmation":{"const":"explicit_user_confirmation_required"}}))
+        })),
+        "read_factory_delivery" => object(json!({
+            "schema_version":{"const":1},"run_id":id(),"graph_revision":count(),"reported_by":{"const":"github"},
+            "proof":{"const":"none"},"merge_capability":{"const":"none"},"available":boolean(),
+            "reason":nullable(text(128)),"retry_at":nullable(count()),"min_interval_seconds":{"const":60},
+            "observed_at":count(),"nodes":array(reference("github_delivery_node"),128)
         })),
         _ => panic!("missing output schema for {tool_name}"),
     };

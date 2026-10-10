@@ -189,6 +189,8 @@ pub fn tool_definitions() -> Vec<Tool> {
         definition("get_factory_backends", "Inspect execution capabilities", "Read configuration-only target capabilities and unknown entitlement evidence. Starts no daemon or authentication. A planning preference does not qualify subscription-backed execution.", object(json!({}), &[]), true),
         definition("inspect_factory_cas", "Inspect configured CAS target", "Opt-in read-only CAS inspection. Use an operator-configured target alias. Optionally supply both run_id and an existing durable planning request_id to read its receipt and exact thread. Does not dispatch, retry, authenticate, release claims or certify execution. Missing receipts and subscription entitlement remain unverified.", object(json!({"target_alias":{"type":"string","minLength":1,"maxLength":64},"run_id":id,"request_id":{"type":"string","minLength":1,"maxLength":128}}), &["target_alias"]), true),
         definition("propose_factory_change", "Propose graph change", "Record a source-bound, revision-fenced planning proposal under local operator authority. Imports remain candidates without execution authority. Inspect its returned ID/revision before applying; duplicate keys require identical payloads.", object(json!({"run_id":id,"expected_revision":revision,"idempotency_key":node_id,"change":change}), &["run_id","expected_revision","idempotency_key","change"]), false),
+        definition("inspect_factory_issue_graph", "Inspect GitHub issue graph", "Opt-in read-only intake through Luna's least-privileged GitHub App. Reads one parent issue, its sub-issues, blocked-by relations and same-repository task-list references in an allowlisted, Luna-approved repository. Returns candidate nodes with revisioned sources, derived acceptance candidates labelled derived_from_issue, rejected cycles, unimported cross-repository references and eligibility. Writes nothing: importing still requires create_factory_graph, then propose_factory_change and apply_factory_change with explicit user confirmation. GitHub data is reported, never proof.", object(json!({"repository":{"type":"string","minLength":3,"maxLength":140,"pattern":"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"},"parent":{"type":"integer","minimum":1,"maximum":2_147_483_647_u64}}), &["repository","parent"]), true),
+        definition("read_factory_delivery", "Read GitHub delivery telemetry", "Opt-in read-only telemetry reported by GitHub for graph nodes with GitHub sources: linked pull requests, state, draft, head SHA, check runs, combined status, review decision and diff stats, each with observed_at. Cached per node for at least 60 seconds. Never satisfies criteria, never changes run state, actions or attention, and grants no merge or integration authority.", object(json!({"run_id":id}), &["run_id"]), true),
         definition("apply_factory_change", "Apply graph change", "Apply one inspected proposal at its current revision. Rechecks source, authority and backend preference. Does not dispatch or reassign active/unknown execution. Identical recorded retries do not apply twice.", object(json!({"run_id":id,"change_id":node_id,"expected_revision":revision}), &["run_id","change_id","expected_revision"]), false),
     ]);
     for tool in &mut tools {
@@ -230,6 +232,8 @@ pub fn tool_definitions() -> Vec<Tool> {
                 | "get_factory_graph"
                 | "get_factory_backends"
                 | "inspect_factory_cas"
+                | "inspect_factory_issue_graph"
+                | "read_factory_delivery"
                 | "propose_factory_change"
                 | "apply_factory_change"
         ) {
@@ -242,6 +246,13 @@ pub fn tool_definitions() -> Vec<Tool> {
                 serde_json::from_value(json!({"ui":{"resourceUri":APP_URI}}))
                     .expect("static result metadata"),
             );
+        }
+        if matches!(
+            name,
+            "inspect_factory_issue_graph" | "read_factory_delivery"
+        ) {
+            // Read-only, but it reads an external system (GitHub).
+            tool.annotations = Some(serde_json::from_value(json!({"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":true})).expect("github read annotations"));
         }
         if matches!(
             name,

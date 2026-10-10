@@ -171,6 +171,9 @@ class ContainerBuildTests(unittest.TestCase):
         BUILD.validate_release_delta(
             [
                 "plugins/luna-factory/server/src/config.rs",
+                "plugins/luna-factory/server/src/github.rs",
+                "plugins/luna-factory/server/tests/github_app.rs",
+                "plugins/luna-factory/docs/github-app.md",
                 "plugins/luna-factory/container/Containerfile",
                 "plugins/luna-factory/server/src/extensions.rs",
                 "plugins/luna-factory/server/src/mentions.rs",
@@ -228,7 +231,7 @@ class ContainerBuildTests(unittest.TestCase):
     def test_canary_blocks_execution_and_cas_tool_calls_before_network(self):
         self.assertIn("search_factory_mentions", CANARY.ALLOWED_TOOL_CALLS)
         client = CANARY.McpClient("http://127.0.0.1:1/mcp")
-        for name in ("start_factory", "resume_factory_run", "cancel_factory_run", "inspect_factory_cas"):
+        for name in ("start_factory", "resume_factory_run", "cancel_factory_run", "inspect_factory_cas", "inspect_factory_issue_graph", "read_factory_delivery"):
             with self.assertRaisesRegex(RuntimeError, "policy rejected"):
                 client.call(name)
 

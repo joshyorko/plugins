@@ -1,7 +1,7 @@
 {
   "expected_ui_version": "0.2.1",
   "evidence_kind": "Real browser + MCP Apps AppBridge with synthetic fixtures; not authenticated ChatGPT Desktop acceptance",
-  "ui_source_sha256": "9e1441cadcbed14687d21a4c9c41bf8bfedd96ed35abec62ff2bcd73730dde2d",
+  "ui_source_sha256": "a2f605520de4d28d819559c6acf4a2880ab0ab20e48eccf6d32007b8b7825936",
   "captures": [
     {
       "file": "inline-planning-mobile-light.png",
@@ -234,7 +234,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "read_factory_delivery"
       ],
       "automatic_messages": 0
     },
@@ -258,7 +259,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "read_factory_delivery"
       ],
       "automatic_messages": 0
     },
@@ -280,7 +282,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "read_factory_delivery"
       ],
       "automatic_messages": 0
     },
@@ -304,7 +307,8 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "read_factory_delivery"
       ],
       "automatic_messages": 0
     },
@@ -390,7 +394,56 @@
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
-        "get_factory_backends"
+        "get_factory_backends",
+        "read_factory_delivery"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "campaign-github-ready-light.png",
+      "width": 1440,
+      "height": 1000,
+      "params": {
+        "surface": "global",
+        "mode": "fullscreen",
+        "scenario": "campaign",
+        "graph": "1",
+        "node": "issue-103"
+      },
+      "layout": {
+        "width": 1440,
+        "scrollWidth": 1440,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "get_factory_graph",
+        "get_factory_backends",
+        "read_factory_delivery"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "campaign-github-unavailable-narrow.png",
+      "width": 420,
+      "height": 900,
+      "params": {
+        "surface": "thread",
+        "scenario": "campaign",
+        "graph": "1",
+        "node": "issue-103",
+        "github": "unavailable"
+      },
+      "layout": {
+        "width": 420,
+        "scrollWidth": 420,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "get_factory_graph",
+        "get_factory_backends",
+        "read_factory_delivery"
       ],
       "automatic_messages": 0
     }

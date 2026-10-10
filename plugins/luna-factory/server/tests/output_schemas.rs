@@ -78,7 +78,7 @@ async fn invoke(server: &McpServer, name: &str, args: Value) -> Value {
 #[test]
 fn every_tool_has_a_concrete_valid_schema() {
     let tools = tool_definitions();
-    assert_eq!(tools.len(), 22);
+    assert_eq!(tools.len(), 24);
     for tool in tools {
         let schema = serde_json::to_value(tool.output_schema.as_ref().unwrap()).unwrap();
         assert!(
@@ -121,6 +121,18 @@ async fn read_settings_onboarding_and_graph_responses_match_their_contracts() {
     invoke(&server, "list_factory_runs", json!({})).await;
     invoke(&server, "refresh_factory", json!({"run_id":run_id})).await;
     invoke(&server, "get_factory_graph", json!({"run_id":run_id})).await;
+    // The GitHub reads are disabled by default and still honour their contracts.
+    let intake = invoke(
+        &server,
+        "inspect_factory_issue_graph",
+        json!({"repository":"joshyorko/plugins","parent":67}),
+    )
+    .await;
+    assert_eq!(intake["status"], "unavailable");
+    assert_eq!(intake["reason"], "github_app_not_configured");
+    let delivery = invoke(&server, "read_factory_delivery", json!({"run_id":run_id})).await;
+    assert_eq!(delivery["available"], false);
+    assert_eq!(delivery["reason"], "github_app_not_configured");
     let proposal = invoke(&server,"propose_factory_change",json!({"run_id":run_id,"expected_revision":graph["graph"]["revision"],"idempotency_key":"import","change":{"kind":"import_candidates","nodes":[{"id":"candidate","title":"Check contract","criterion_ids":["A1"],"dependencies":["objective"],"source":{"provider":"local","repository_id":graph["graph"]["repository"]["identity"],"item_id":"candidate","revision":"v1"}}]}})).await;
     let applied = invoke(&server,"apply_factory_change",json!({"run_id":run_id,"change_id":proposal["proposal"]["id"],"expected_revision":proposal["graph"]["revision"]})).await;
     // Mutation tools return this same public run shape; planning cannot dispatch them.

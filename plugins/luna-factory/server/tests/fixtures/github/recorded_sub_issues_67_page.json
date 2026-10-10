@@ -1,0 +1,112 @@
+[
+ {
+  "active_lock_reason": null,
+  "assignee": null,
+  "assignees": [],
+  "author_association": "OWNER",
+  "body": "Part of #67. Additive MCP projection fields that the mission control UI needs today.\n\n## Problem (at `dd304ef`)\n- **No receipt attribution.** Receipts are `{subject, kind, summary, created_at}` with no thread (`store.rs:1050-1065`). Lanes cannot attribute events to an agent.\n- **No `created_at` in the projection.** `Run.created_at` exists (`store.rs:75`) but is not projected. Campaign age and \"started at\" cannot be shown.\n- **Activity misses graph changes.** `updated_at` is not bumped by graph propose/apply (`persist()`), so \"since you last looked\" misses plan changes.\n- **No displayable sourc",
+  "closed_at": null,
+  "comments": 0,
+  "comments_url": "https://api.github.com/repos/joshyorko/plugins/issues/69/comments",
+  "created_at": "2026-10-10T20:03:34Z",
+  "events_url": "https://api.github.com/repos/joshyorko/plugins/issues/69/events",
+  "html_url": "https://github.com/joshyorko/plugins/issues/69",
+  "id": 5794818715,
+  "issue_dependencies_summary": {
+   "blocked_by": 0,
+   "blocking": 0,
+   "total_blocked_by": 0,
+   "total_blocking": 0
+  },
+  "labels": [],
+  "labels_url": "https://api.github.com/repos/joshyorko/plugins/issues/69/labels{/name}",
+  "locked": false,
+  "milestone": null,
+  "node_id": "I_kwDORHtYm88AAAABWWXqmw",
+  "number": 69,
+  "parent_issue_url": "https://api.github.com/repos/joshyorko/plugins/issues/67",
+  "performed_via_github_app": null,
+  "pinned_comment": null,
+  "repository": {
+   "full_name": "joshyorko/plugins",
+   "html_url": "https://github.com/joshyorko/plugins",
+   "id": 1148934299,
+   "name": "plugins",
+   "node_id": "R_kgDORHtYmw",
+   "private": false,
+   "url": "https://api.github.com/repos/joshyorko/plugins"
+  },
+  "repository_url": "https://api.github.com/repos/joshyorko/plugins",
+  "state": "open",
+  "state_reason": null,
+  "sub_issues_summary": {
+   "completed": 0,
+   "percent_completed": 0,
+   "total": 0
+  },
+  "timeline_url": "https://api.github.com/repos/joshyorko/plugins/issues/69/timeline",
+  "title": "contract(luna-factory): attribute receipts to threads and project created_at and source display metadata",
+  "updated_at": "2026-10-10T20:03:34Z",
+  "url": "https://api.github.com/repos/joshyorko/plugins/issues/69",
+  "user": {
+   "id": 54248591,
+   "login": "joshyorko",
+   "type": "User"
+  }
+ },
+ {
+  "active_lock_reason": null,
+  "assignee": null,
+  "assignees": [],
+  "author_association": "OWNER",
+  "body": "Part of #67.\n\n## Problem\nBlockers are free text plus stable reason strings (`presentation.rs`, `lifecycle.rs`). The UI cannot separate these four cases without parsing prose:\n- a protected resource\n- an authority ceiling\n- an external wait, such as a runner queue with a retry time\n- an exhausted budget\n\n## Scope\n- Add `presentation.blocker_kind`, one of:\n  - `protected_resource{path, permission}`\n  - `authority_ceiling{requested, allowed}`\n  - `external_dependency{kind, retry_at?}`\n  - `budget_exhausted{budget}`\n  - `diagnosis_required`\n  - `unknown`\n- `needs` attention is unchanged. It is sti",
+  "closed_at": null,
+  "comments": 0,
+  "comments_url": "https://api.github.com/repos/joshyorko/plugins/issues/70/comments",
+  "created_at": "2026-10-10T20:03:35Z",
+  "events_url": "https://api.github.com/repos/joshyorko/plugins/issues/70/events",
+  "html_url": "https://github.com/joshyorko/plugins/issues/70",
+  "id": 5794818857,
+  "issue_dependencies_summary": {
+   "blocked_by": 0,
+   "blocking": 0,
+   "total_blocked_by": 0,
+   "total_blocking": 0
+  },
+  "labels": [],
+  "labels_url": "https://api.github.com/repos/joshyorko/plugins/issues/70/labels{/name}",
+  "locked": false,
+  "milestone": null,
+  "node_id": "I_kwDORHtYm88AAAABWWXrKQ",
+  "number": 70,
+  "parent_issue_url": "https://api.github.com/repos/joshyorko/plugins/issues/67",
+  "performed_via_github_app": null,
+  "pinned_comment": null,
+  "repository": {
+   "full_name": "joshyorko/plugins",
+   "html_url": "https://github.com/joshyorko/plugins",
+   "id": 1148934299,
+   "name": "plugins",
+   "node_id": "R_kgDORHtYmw",
+   "private": false,
+   "url": "https://api.github.com/repos/joshyorko/plugins"
+  },
+  "repository_url": "https://api.github.com/repos/joshyorko/plugins",
+  "state": "open",
+  "state_reason": null,
+  "sub_issues_summary": {
+   "completed": 0,
+   "percent_completed": 0,
+   "total": 0
+  },
+  "timeline_url": "https://api.github.com/repos/joshyorko/plugins/issues/70/timeline",
+  "title": "contract(luna-factory): typed blocker categories in the presentation projection",
+  "updated_at": "2026-10-10T20:03:35Z",
+  "url": "https://api.github.com/repos/joshyorko/plugins/issues/70",
+  "user": {
+   "id": 54248591,
+   "login": "joshyorko",
+   "type": "User"
+  }
+ }
+]

@@ -4,6 +4,7 @@ import { roster, livenessLabel, type Agent } from "./agents";
 import { canvasSize, edgePath, fitGeometry, layoutWaves, nodePosition, type MapGeometry, type MapNode, type WaveLayout } from "./campaign-map";
 import { coordinatorToken, icon, taskGlyph, taskTone, taskToneLabel, workerToken } from "./lunar";
 import { renderLanes } from "./lanes";
+import { deliveryChip, deliverySection } from "./delivery-view";
 
 /** Last rendered state per run task. A difference between two server snapshots is the only motion trigger. */
 const seenStates = new Map<string, string>();
@@ -101,6 +102,7 @@ function renderMap(tasks: MapTask[], layout: WaveLayout, agents: Agent[], state:
       return `<li><button type="button" id="node-${esc(id)}" class="map-node tone-${tone}${changed ? " changed" : ""}${id === selected ? " selected" : ""}${chain.has(id) ? " chain" : ""}${layout.prerequisitesMet.has(id) ? " met" : ""}${selected && !neighbors.has(id) ? " dim" : ""}" style="--x:${position.x}px;--y:${position.y + 24}px" data-action="graph-node" data-node-id="${esc(id)}" aria-pressed="${id === selected}" aria-describedby="node-state-${esc(id)}">
         <span class="node-top">${taskGlyph(tone)}<span class="node-title">${esc(task.title || id)}</span></span>
         <span class="node-meta" id="node-state-${esc(id)}">${id === "objective" ? "Objective · " : ""}${esc(taskToneLabel[tone])}${missing ? ` · ${missing} unknown prerequisite${missing === 1 ? "" : "s"}` : ""}</span>
+        ${deliveryChip(state, state.selectedId ?? undefined, id)}
         <span class="node-after">${prerequisites.length ? `After ${esc(prerequisites.join(", "))}` : "No prerequisites"}</span>
         ${owner ? `<span class="dock" title="${esc(owner.label)} · ${esc(livenessLabel[owner.liveness])}">${agentToken(owner, 20)}<span class="sr-only">Owned by ${esc(owner.label)}</span></span>` : ""}
       </button></li>`;
@@ -143,6 +145,7 @@ function renderInspector(state: ViewState, run: RunView, tasks: MapTask[], graph
     <h4>Waits on</h4>${list(selected.dependencies, "No prerequisites.")}
     <h4>Unblocks</h4>${list(unblocks, "Nothing in this plan waits on it.")}
     <h4>Proof</h4>${proof ? `<ul class="graph-proof">${proof}</ul>` : '<p class="small muted">No criterion bindings.</p>'}
+    ${selected.source?.provider === "github" ? deliverySection(state, run.id, selected.id) : ""}
     ${followUps({ id: selected.id, title: selected.title })}
     ${taskAttempts.length ? `<h4>Attempts</h4><ul class="attempt-list">${taskAttempts.map(attempt => `<li><strong>${esc(attempt.status.replaceAll("_", " "))}</strong><span>${esc(agents.find(item => item.thread === attempt.thread_id)?.label ?? "Unlisted agent")}</span></li>`).join("")}</ul>` : ""}
     ${graphNode ? renderPlanEditor(state, graph!, graphNode) : ""}
