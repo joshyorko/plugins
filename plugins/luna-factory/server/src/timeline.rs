@@ -20,7 +20,7 @@ pub const MAX_CHILDREN: usize = 64;
 pub const SUMMARY_LIMIT: usize = 160;
 /// Reads inside this window are answered from memory without any CAS request.
 pub const FRESH_FOR: Duration = Duration::from_secs(20);
-const CACHED_THREADS: usize = 64;
+pub const CACHED_THREADS: usize = 64;
 const CACHED_OLDER_PAGES: usize = 4;
 pub const KINDS: [&str; 10] = [
     "assigned",
@@ -140,45 +140,58 @@ impl AgentTimelines {
         let key = (alias.to_owned(), thread_id.to_owned());
         let now = Instant::now();
         let (revision, prior) = {
+            // Look up without inserting: only a completed read creates an entry,
+            // so the thread cap below is enforced against real entries.
             let mut entries = self.entries.lock().await;
-            let entry = entries.entry(key.clone()).or_default();
-            entry.used = Some(now);
+            let entry = entries.get_mut(&key);
             if let Some(cursor) = cursor {
-                ensure!(entry.issued(cursor), "timeline_cursor_not_issued");
+                ensure!(
+                    entry.as_ref().is_some_and(|entry| entry.issued(cursor)),
+                    "timeline_cursor_not_issued"
+                );
             }
-            if let Some((at, reason)) = entry.failure
-                && now.duration_since(at) < self.fresh_for
-            {
-                return Ok(unavailable(run_id, thread_id, reason));
-            }
-            let cached = match cursor {
-                None => entry.head.as_ref(),
-                Some(cursor) => entry
-                    .older
-                    .iter()
-                    .find(|(key, _)| key == cursor)
-                    .map(|(_, page)| page),
-            };
-            if let Some(page) =
-                cached.filter(|page| now.duration_since(page.fetched) < self.fresh_for)
-            {
-                return Ok(observed(run_id, thread_id, page, "hit"));
-            }
-            match (cursor, &entry.head) {
-                (None, Some(head)) => (entry.revision.clone(), Some(head.clone())),
-                _ => (None, None),
+            match entry {
+                None => (None, None),
+                Some(entry) => {
+                    entry.used = Some(now);
+                    if let Some((at, reason)) = entry.failure
+                        && now.duration_since(at) < self.fresh_for
+                    {
+                        return Ok(unavailable(run_id, thread_id, reason));
+                    }
+                    let cached = match cursor {
+                        None => entry.head.as_ref(),
+                        Some(cursor) => entry
+                            .older
+                            .iter()
+                            .find(|(key, _)| key == cursor)
+                            .map(|(_, page)| page),
+                    };
+                    if let Some(page) =
+                        cached.filter(|page| now.duration_since(page.fetched) < self.fresh_for)
+                    {
+                        return Ok(observed(run_id, thread_id, page, "hit"));
+                    }
+                    match (cursor, &entry.head) {
+                        (None, Some(head)) => (entry.revision.clone(), Some(head.clone())),
+                        _ => (None, None),
+                    }
+                }
             }
         };
         let outcome = fetch(target, thread_id, cursor, revision.as_deref()).await;
         let mut entries = self.entries.lock().await;
-        if entries.len() >= CACHED_THREADS
-            && !entries.contains_key(&key)
-            && let Some(oldest) = entries
-                .iter()
-                .min_by_key(|(_, entry)| entry.used)
-                .map(|(key, _)| key.clone())
-        {
-            entries.remove(&oldest);
+        if !entries.contains_key(&key) {
+            while entries.len() >= CACHED_THREADS {
+                let Some(oldest) = entries
+                    .iter()
+                    .min_by_key(|(_, entry)| entry.used)
+                    .map(|(key, _)| key.clone())
+                else {
+                    break;
+                };
+                entries.remove(&oldest);
+            }
         }
         let entry = entries.entry(key).or_default();
         entry.used = Some(Instant::now());
@@ -189,7 +202,6 @@ impl AgentTimelines {
                 Ok(unavailable(run_id, thread_id, reason))
             }
             Ok(Fetched::Unchanged) => {
-                entry.failure = None;
                 let Some(mut page) = prior else {
                     entry.failure = Some((Instant::now(), "cas_invalid_response"));
                     return Ok(unavailable(run_id, thread_id, "cas_invalid_response"));
@@ -197,7 +209,12 @@ impl AgentTimelines {
                 page.fetched = Instant::now();
                 page.observed_at = crate::store::now();
                 let value = observed(run_id, thread_id, &page, "revalidated");
-                entry.head = Some(page);
+                // A concurrent read may have stored a newer head meanwhile; only
+                // refresh the head this revision check actually confirmed.
+                if entry.revision == revision {
+                    entry.failure = None;
+                    entry.head = Some(page);
+                }
                 Ok(value)
             }
             Ok(Fetched::Page(revision, page)) => {
@@ -219,6 +236,10 @@ impl AgentTimelines {
                 Ok(value)
             }
         }
+    }
+    /// Number of cached threads; bounded by the thread cap.
+    pub async fn cached_threads(&self) -> usize {
+        self.entries.lock().await.len()
     }
 }
 
@@ -454,24 +475,38 @@ fn describe(item: &Value) -> Option<(&'static str, String)> {
     })
 }
 
+/// Same wording as the shared `safe_summary` redaction.
+const WITHHELD: &str = "Sensitive details withheld. Review the native owner thread locally.";
+/// Credential shapes the shared markers miss: query tokens, Slack tokens, JWTs and AWS key IDs.
+fn credential_marker(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    ["token=", "xox"]
+        .iter()
+        .any(|marker| lower.contains(marker))
+        || ["eyJ", "AKIA"].iter().any(|marker| text.contains(marker))
+}
 fn bounded(text: &str) -> String {
-    // Long opaque tokens look like credentials; withhold them before the shared redaction.
-    let text = text
-        .split_whitespace()
-        .map(|word| {
-            if word.len() >= 32
-                && word.bytes().all(|b| {
-                    b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=' | b'_' | b'-')
-                })
-            {
-                "[withheld]"
-            } else {
-                word
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    let safe = safe_summary(&text, SUMMARY_LIMIT + 1);
+    if credential_marker(text) {
+        return WITHHELD.into();
+    }
+    // Withhold every run of 32+ token characters, however punctuation splits the words.
+    let token = |c: char| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '=' | '_' | '-');
+    let mut text_out = String::new();
+    let mut run = String::new();
+    let flush = |out: &mut String, run: &mut String| {
+        out.push_str(if run.len() >= 32 { "[withheld]" } else { run });
+        run.clear();
+    };
+    for c in text.chars() {
+        if token(c) {
+            run.push(c);
+        } else {
+            flush(&mut text_out, &mut run);
+            text_out.push(c);
+        }
+    }
+    flush(&mut text_out, &mut run);
+    let safe = safe_summary(&text_out, SUMMARY_LIMIT + 1);
     if safe.chars().count() > SUMMARY_LIMIT {
         safe.chars().take(SUMMARY_LIMIT - 1).chain(['…']).collect()
     } else {
@@ -560,35 +595,166 @@ fn program(segment: &[String]) -> Option<String> {
     let name = segment.first()?.rsplit('/').next()?.to_owned();
     simple(&name, 32).then_some(name)
 }
-/// Only these tools show a subcommand; for anything else an argument could be private.
-const SUBCOMMAND_TOOLS: [&str; 20] = [
-    "cargo", "git", "gh", "npm", "pnpm", "yarn", "bun", "npx", "go", "make", "uv", "pip", "pip3",
-    "docker", "podman", "kubectl", "rustup", "deno", "just", "poetry",
+/// Closed allowlists of displayable subcommands. Anything else (targets, scripts,
+/// pod names, branches, paths) could be private and is never shown.
+fn safe_subcommand(tool: &str, word: &str) -> bool {
+    let allowed: &[&str] = match tool {
+        "cargo" => &[
+            "build", "check", "clippy", "doc", "fmt", "nextest", "run", "test", "update",
+        ],
+        "git" => &[
+            "add",
+            "apply",
+            "branch",
+            "checkout",
+            "cherry-pick",
+            "clone",
+            "commit",
+            "diff",
+            "fetch",
+            "init",
+            "log",
+            "merge",
+            "pull",
+            "push",
+            "rebase",
+            "reset",
+            "restore",
+            "rev-parse",
+            "rm",
+            "show",
+            "stash",
+            "status",
+            "switch",
+            "tag",
+            "worktree",
+        ],
+        "gh" => &["api", "auth", "issue", "pr", "release", "repo", "run"],
+        "npm" | "pnpm" | "yarn" | "bun" => &[
+            "add", "audit", "build", "ci", "exec", "install", "run", "test",
+        ],
+        "npx" => &["eslint", "jest", "playwright", "prettier", "tsc", "vitest"],
+        "go" => &["build", "fmt", "generate", "mod", "run", "test", "vet"],
+        "make" | "just" => &[
+            "all", "build", "check", "clean", "fmt", "format", "lint", "test",
+        ],
+        "uv" | "poetry" => &["add", "build", "install", "lock", "pip", "run", "sync"],
+        "pip" | "pip3" => &["freeze", "install", "list", "show"],
+        "docker" | "podman" => &[
+            "build", "compose", "exec", "images", "inspect", "logs", "ps", "pull", "push", "run",
+        ],
+        "kubectl" => &[
+            "apply", "config", "delete", "describe", "exec", "get", "logs", "rollout",
+        ],
+        "rustup" => &["component", "show", "target", "toolchain", "update"],
+        "deno" => &["check", "fmt", "lint", "run", "task", "test"],
+        "python" | "python3" => &["-m"],
+        _ => &[],
+    };
+    allowed.contains(&word)
+}
+fn safe_third(tool: &str, sub: &str, word: &str) -> bool {
+    let allowed: &[&str] = match (tool, sub) {
+        ("npm" | "pnpm" | "yarn" | "bun", "run") => &[
+            "build",
+            "check",
+            "dev",
+            "format",
+            "lint",
+            "test",
+            "typecheck",
+        ],
+        ("uv" | "poetry", "run") => &["mypy", "pytest", "python", "ruff"],
+        ("gh", "pr") => &[
+            "checkout", "checks", "create", "diff", "edit", "list", "merge", "review", "status",
+            "view",
+        ],
+        ("gh", "issue") => &["close", "comment", "create", "edit", "list", "view"],
+        ("gh", "run") => &["list", "rerun", "view", "watch"],
+        ("python" | "python3", "-m") => &[
+            "black", "build", "mypy", "pip", "pytest", "ruff", "unittest", "venv",
+        ],
+        _ => &[],
+    };
+    allowed.contains(&word)
+}
+/// Programs whose name is safe to show. A script or binary name outside this list
+/// (for example `./deploy-customer-x.sh`) could itself be private.
+const KNOWN_PROGRAMS: [&str; 64] = [
+    "apply_patch",
+    "awk",
+    "bash",
+    "black",
+    "bun",
+    "cargo",
+    "cat",
+    "check",
+    "chmod",
+    "cp",
+    "curl",
+    "deno",
+    "diff",
+    "docker",
+    "echo",
+    "eslint",
+    "fd",
+    "find",
+    "flake8",
+    "gh",
+    "git",
+    "go",
+    "grep",
+    "head",
+    "helm",
+    "jest",
+    "jq",
+    "just",
+    "kubectl",
+    "ls",
+    "make",
+    "mkdir",
+    "mv",
+    "mypy",
+    "node",
+    "npm",
+    "npx",
+    "patch",
+    "pip",
+    "pip3",
+    "pnpm",
+    "podman",
+    "poetry",
+    "prettier",
+    "printf",
+    "pytest",
+    "python",
+    "python3",
+    "rg",
+    "rm",
+    "ruff",
+    "rustc",
+    "rustup",
+    "sed",
+    "sh",
+    "shellcheck",
+    "sort",
+    "tail",
+    "tar",
+    "tsc",
+    "uv",
+    "vitest",
+    "wc",
+    "yarn",
 ];
 fn label(segment: &[String]) -> String {
-    let Some(name) = program(segment) else {
+    let Some(name) = program(segment).filter(|name| KNOWN_PROGRAMS.contains(&name.as_str())) else {
         return "a command".into();
     };
-    let mut parts = vec![name.clone()];
-    let next = segment.get(1).map(String::as_str);
-    if matches!(name.as_str(), "python" | "python3") {
-        // Only `python -m <module>` is shown; a script path could be private.
-        if next == Some("-m")
-            && let Some(module) = segment.get(2).filter(|word| simple(word, 24))
-        {
-            parts.extend(["-m".to_owned(), module.clone()]);
-        }
-        return parts.join(" ");
-    }
-    if !SUBCOMMAND_TOOLS.contains(&name.as_str()) {
-        return name;
-    }
-    if let Some(sub) = next.filter(|word| simple(word, 24)) {
-        parts.push(sub.into());
-        if matches!(sub, "run" | "exec" | "pr" | "x")
-            && let Some(third) = segment.get(2).filter(|word| simple(word, 24))
-        {
-            parts.push(third.clone());
+    let mut parts = vec![name.as_str()];
+    if let Some(sub) = segment.get(1).filter(|word| safe_subcommand(&name, word)) {
+        parts.push(sub);
+        if let Some(third) = segment.get(2).filter(|word| safe_third(&name, sub, word)) {
+            parts.push(third);
         }
     }
     parts.join(" ")
@@ -743,6 +909,63 @@ mod tests {
         ] {
             assert!(!summary.contains("private"), "{summary}");
         }
+    }
+    #[test]
+    fn labels_show_only_allowlisted_programs_and_subcommands() {
+        for (command, shown) in [
+            ("uv run private.py", "Ran uv run (exit 0)"),
+            ("kubectl exec prod-db-0 -- sh", "Ran kubectl exec (exit 0)"),
+            ("make deploy-customer-x", "Ran make (exit 0)"),
+            ("npm run deploy-secret", "Ran npm run (exit 0)"),
+            ("git checkout private-branch", "Ran git checkout (exit 0)"),
+            ("gh pr view 123", "Ran gh pr view (exit 0)"),
+            (
+                "docker run registry.invalid/private:1.2",
+                "Ran docker run (exit 0)",
+            ),
+            ("/usr/bin/git status --short", "Ran git status (exit 0)"),
+            ("./deploy-customer-x.sh --prod", "Ran a command (exit 0)"),
+            ("private-tool sub", "Ran a command (exit 0)"),
+            ("python3 -m http.server 8000", "Ran python3 -m (exit 0)"),
+        ] {
+            assert_eq!(
+                cmd(command, "completed", Some(0)),
+                ("command", shown.into()),
+                "{command}"
+            );
+        }
+        assert_eq!(
+            cmd("uv run pytest -q", "completed", Some(0)).1,
+            "Ran uv run pytest (exit 0)"
+        );
+    }
+    #[test]
+    fn credential_shapes_are_withheld_even_inside_punctuation() {
+        for text in [
+            "Use key `AKIAABCDEFGHIJKLMNOP`.",
+            "Bearer-less eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJlLXNlbnRpbmVs works",
+            "Fetched https://h.invalid/x?token=abc123&y=1 fine",
+            "Slack xoxb-1234-5678-abcdef posted",
+        ] {
+            assert_eq!(message(text), WITHHELD, "{text}");
+        }
+        let opaque = "a".repeat(20) + "Z9" + &"b".repeat(20);
+        for text in [
+            format!("key `{opaque}`."),
+            format!("value \"{opaque}\", then more"),
+            format!("path /{opaque}/x"),
+            format!("dotted {opaque}.{opaque}"),
+        ] {
+            let summary = message(&text);
+            assert!(
+                summary.contains("[withheld]") && !summary.contains(&opaque),
+                "{text} -> {summary}"
+            );
+        }
+        assert_eq!(
+            message("short words stay visible."),
+            "short words stay visible."
+        );
     }
     #[test]
     fn messages_are_single_line_bounded_and_redacted() {

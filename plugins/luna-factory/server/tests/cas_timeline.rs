@@ -778,3 +778,40 @@ async fn observations_never_write_run_state_criteria_claims_attempts_budgets_or_
     assert_eq!(run_after["presentation"], run_before["presentation"]);
     cas.assert_read_only();
 }
+
+#[tokio::test]
+async fn the_per_thread_cache_never_exceeds_its_thread_cap() {
+    // No fixture replies: every snapshot is a 404, cached as an unavailable entry.
+    let cas = CasFixture::start().await;
+    let temp = tempfile::tempdir().unwrap();
+    let config = config(&cas, &temp, true);
+    let target = &config.cas_targets["fixture"];
+    let timelines = AgentTimelines::new(Duration::from_secs(60));
+    let cap = luna_factoryd::timeline::CACHED_THREADS;
+    for index in 0..=cap {
+        let output = timelines
+            .read("fixture", target, "run", &format!("thread-{index}"), None)
+            .await
+            .unwrap();
+        assert_eq!(output["reason"], "cas_unavailable");
+        assert!(
+            timelines.cached_threads().await <= cap,
+            "cap exceeded at {index}"
+        );
+    }
+    assert_eq!(timelines.cached_threads().await, cap);
+    assert_eq!(cas.calls().len(), cap + 1);
+    // The newest thread is still cached; the least recently used one was evicted.
+    timelines
+        .read("fixture", target, "run", &format!("thread-{cap}"), None)
+        .await
+        .unwrap();
+    assert_eq!(cas.calls().len(), cap + 1);
+    timelines
+        .read("fixture", target, "run", "thread-0", None)
+        .await
+        .unwrap();
+    assert_eq!(cas.calls().len(), cap + 2);
+    assert_eq!(timelines.cached_threads().await, cap);
+    cas.assert_read_only();
+}
