@@ -37,6 +37,9 @@ FORBIDDEN_TOOL_CALLS = {
     "steer_factory_run",
     "reconcile_factory_run",
     "inspect_factory_cas",
+    # Opt-in GitHub App reads: present in the catalog, never called by a canary.
+    "inspect_factory_issue_graph",
+    "read_factory_delivery",
 }
 
 
@@ -105,7 +108,7 @@ def run(url: str, mode: str, expected_ui_sha256: str = RELEASE_UI_SHA256) -> dic
     tools = client.request("tools/list").get("tools", [])
     names = {tool.get("name") for tool in tools}
     if (
-        len(tools) != 22
+        len(tools) != 24
         or not ALLOWED_TOOL_CALLS.issubset(names)
         or not FORBIDDEN_TOOL_CALLS.issubset(names)
     ):
