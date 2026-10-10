@@ -51,7 +51,7 @@ try {
         assert(await frame.locator('[data-action="chat-follow-up"]:enabled').count() === 0, "Disconnected host left message controls enabled");
       }
       if (item.params.proposal) await frame.locator('[aria-label="Review graph change"]').scrollIntoViewIfNeeded();
-      if (item.params.font) assert(await frame.locator(".graph-section .button").first().evaluate(element => parseFloat(getComputedStyle(element).fontSize)) >= 18, "Host font size was ignored");
+      if (item.params.font) assert(await frame.locator(".graph-inspector .route-list dd").first().evaluate(element => parseFloat(getComputedStyle(element).fontSize)) >= 18, "Host font size was ignored");
       const host = await page.evaluate(() => ({ calls: window.lunaDogfoodHost.calls, messages: window.lunaDogfoodHost.messages.length }));
       assert(host.calls.every(name => ["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory"].includes(name)), "Visual capture attempted mutation or execution");
       assert.equal(host.messages, 0, "Message sent without a user click");

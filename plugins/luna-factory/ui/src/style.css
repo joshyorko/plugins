@@ -130,10 +130,15 @@ body { background: var(--surface); }
 }
 
 body { font-size: var(--font-text-md-size, 14px); }
-.button, .field input, .field select, .field textarea { font-size: var(--font-text-sm-size, 13px); }
+.button { font-size: var(--font-text-sm-size, 13px); }
+.field input, .field select, .field textarea { font-size: max(16px, var(--font-text-sm-size, 13px)); }
 .graph-node strong { font-size: var(--font-text-md-size, 14px); }
 
 .badge.planning, .badge.unverified { color: var(--muted); background: var(--panel); }
 .badge.planning span, .badge.unverified span, .state-dot.planning, .state-dot.unverified { background: var(--muted); }
 .badge.stopped { color: var(--amber); background: var(--amber-soft); }
 .badge.stopped span, .state-dot.stopped { background: var(--amber); }
+
+.graph-caption, .graph-node span, .graph-proof, .graph-inspector h4, .graph-review p,
+.graph-inspector .route-list dt, .graph-inspector .route-list dd { font-size: var(--font-text-sm-size, 12px); }
+.graph-inspector h3 { font-size: var(--font-text-md-size, 18px); }
