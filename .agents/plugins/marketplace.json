@@ -128,7 +128,7 @@
           "Use the Luna Factory runtime to start a bounded run in an approved repository.",
           "Open Luna Factory and show my active runs and any decision that needs me."
         ],
-        "brandColor": "#365A43",
+        "brandColor": "#4B55C8",
         "logo": "./assets/logo.png",
         "composerIcon": "./assets/logo.png"
       },
