@@ -347,44 +347,105 @@ claim or qualifies execution.
 
 | Tool | Input | Result |
 | --- | --- | --- |
-| `create_factory_campaign` | `repository`, `parent:{provider,item_id,revision,display?:{number?,url?}}`, `title`, `objective`, `acceptance` (1 to 32), `non_goals`, `finish`, `profile`, `idempotency_key` | `{campaign, graph}`. The graph is created by the same planning admission as `create_factory_graph` and is planning-only. |
-| `list_factory_campaigns` | optional `limit` (1 to 100, default 20) | `{campaigns}`, newest first. Read-only. |
+| `create_factory_campaign` | `repository`, `parent:{forge:{provider,repository,number,node_id?},revision,display?:{url?}}`, `title`, `objective`, `acceptance` (1 to 32), `non_goals`, `finish`, `profile`, `idempotency_key` | `{campaign, graph}`. The graph is created by the same planning admission as `create_factory_graph` and is planning-only. |
+| `list_factory_campaigns` | optional `limit` (1 to 100, default 20) | `{campaigns, skipped}`, newest first. Read-only. |
 | `get_factory_campaign` | `campaign_id` | `{campaign}`. Read-only. |
-| `promote_factory_campaign` | `campaign_id`, `expected_revision`, `idempotency_key` | Always an `execution_not_qualified` tool error in this version. |
+| `promote_factory_campaign` | `campaign_id`, `expected_revision`, `idempotency_key` | Input is validated first; a valid request is then always an `execution_not_qualified` tool error in this version. |
+
+### Identity
+
+The campaign keeps two identities apart. Neither is ever derived from the other.
+
+- **Forge identity** (shared with #76) names the parent item:
+  `parent.forge = {provider, repository, number, node_id?}`.
+  - `provider` is the lowercase enum `github | local | fixture`. Any other spelling,
+    including `GitHub`, is rejected.
+  - `repository` is `owner/repo`, stored lowercase. Each segment is 1 to 100 bytes of
+    `[a-z0-9._-]` and does not start with `.`.
+  - `number` is a positive safe integer. `node_id` is optional.
+  - The canonical key is `provider:owner/repo#number`, for example
+    `github:joshyorko/plugins#77`. The projection returns it as `parent.key`.
+  - Blank or whitespace-only `repository`, `revision`, `node_id`, `title` and
+    `idempotency_key` values are rejected with a typed reason before any write.
+- **Physical identity** is the approved repository alias plus the graph's opaque local
+  repository identity (the same value as `graph.repository.identity`). It is projected
+  as `repository:{alias, identity}`, is never a filesystem path, and never comes from
+  the caller. A different clone or a replaced root is a different identity.
+
+Uniqueness is per forge identity plus physical identity: one campaign per
+(`repository_identity`, forge key). The same forge item may have a campaign in two
+different local repositories.
+
+### Provenance
+
+Every parent carries explicit `parent.provenance`:
+
+- `supplied`: the caller (or ChatGPT) asserted the parent. Luna has not fetched or
+  verified it. Every parent is `supplied` in this version, and the UI labels it
+  "supplied, not verified".
+- `github_app`: reserved for data Luna itself fetches with the GitHub App (#76).
+  Nothing in this version produces it, so a stored record that claims it is
+  `campaign_record_corrupt`.
+
+Supplied data is never labelled "reported by GitHub". It grants no authority, never
+satisfies a criterion and never creates "Needs you" attention.
+
+### Display URL
+
+`parent.display.url` is optional. It is parsed as a URL and accepted only when it:
+
+- uses `https` and has a host;
+- carries no userinfo (no user name and no password);
+- is already in canonical form (the parsed URL serializes back to the same string);
+- for `github`, is exactly `https://github.com/{owner}/{repo}/issues/{number}` for the
+  forge identity, with no port, query or fragment.
+
+An invalid URL is refused with `invalid_campaign_parent_display` alone; the URL is
+never echoed in the error. A valid URL that carries a credential-like marker is
+stored as supplied but projected as `null`.
 
 ### Record
 
 Campaigns persist in a new SQLite `campaigns` table, added with the store's
 existing `CREATE TABLE IF NOT EXISTS` style. The schema version stays 2, and an
 older binary ignores the table. The table keeps the idempotency key unique, the
-planning run unique (a foreign key to `runs`), and the triple (repository
-identity, parent provider, parent item) unique.
+planning run unique (a foreign key to `runs`), and the pair (repository identity,
+forge key) unique.
 
-- `repository` is the approved alias. `repository_identity` is the graph's
-  opaque local identity (the same value as `graph.repository.identity`), never a
-  filesystem path. A different clone or a replaced root is a different identity.
-- `parent` is validated and bounded like graph sources: `provider`, `item_id` and
-  `revision` are bounded IDs. `display.number` is a positive safe integer and
-  `display.url` is an `https://` URL of at most 2048 bytes. These are supplied
-  source assertions: they grant no authority and never satisfy a criterion.
-- `planning_run_id` is the planning graph. `run_ids` (at most 64) lists execution
-  runs and is empty today.
-- `finish` is capped by the repository's `max_finish`.
-- `status` is `planned | promoted | finished | stopped`. Only `planned` is
-  reachable. Because no promotion transition exists, this version refuses to read
-  a record with another status or with `run_ids` (`campaign_record_corrupt`), and
-  it also rejects a record whose indexed columns disagree with its payload.
+The record is a thin reference: the parent assertion, the physical identity, the
+title, `planning_run_id` (the canonical plan) and `run_ids` (at most 64 execution
+runs, empty today). Plan content (objective, criteria, finish, tasks) lives only in
+the planning run and is read from there.
+
+`status` is `planned | promoted | finished | stopped`. Only `planned` is reachable.
+Because no promotion transition exists, this version treats a record with another
+status, with `run_ids`, or with `github_app` provenance as `campaign_record_corrupt`.
+So is a payload that does not decode (including a newer or unknown shape) or whose
+indexed columns disagree with it. `get_factory_campaign` and a replayed create fail
+with that typed reason, never a raw decode error. `list_factory_campaigns` skips the
+row and reports it in `skipped:[{id, reason}]`, so one corrupt row does not fail the
+list. A row whose planning run cannot be read is skipped as
+`campaign_planning_run_unavailable`.
+
+### Atomic admission
+
+The campaign is inserted inside the planning admission's IMMEDIATE transaction,
+after the planning run and its admission event and before commit. Any failure,
+including the campaign insert itself, rolls back the planning graph, so no orphan
+graph is left behind. The physical identity is prechecked for a precise reason, then
+compared inside the transaction with the identity admission actually recorded. A
+repository replaced between the precheck and admission fails with
+`repository_identity_changed` and admits nothing.
 
 ### Determinism
 
-The fingerprint is the SHA-256 of the typed request. An empty `display` is the
-same as an absent one. The same key with the same fingerprint replays the
-recorded campaign: it reruns the planning admission's replay checks (alias remap,
-repository identity) and never admits a second graph. The same key with a
-different fingerprint fails with `campaign_idempotency_conflict`. Any other key for
-an existing (repository identity, provider, item) fails with
-`campaign_parent_exists`. That check runs before any write, so a rejected request
-leaves no orphan planning graph and no journal event.
+The fingerprint is the SHA-256 of the typed, normalized request. An empty `display`
+is the same as an absent one, and the forge repository is lowercased first. The same
+key with the same fingerprint replays the recorded campaign: it reruns the planning
+admission's replay checks (alias remap, repository identity) and never admits a
+second graph. The same key with a different fingerprint fails with
+`campaign_idempotency_conflict`. Any other key for an existing (repository identity,
+forge key) fails with `campaign_parent_exists`.
 
 The planning graph uses the derived key `campaign-plan-<sha256(key)>` and a fixed
 inert budget: capacity 1, no repairs and a 30 second window. That budget is always
@@ -393,8 +454,10 @@ so execution runs will carry their own budgets.
 
 ### Projection
 
-A campaign result contains the record fields above, without the key or the
-fingerprint, plus:
+A campaign result contains `id`, `repository:{alias, identity}`,
+`parent:{forge, key, revision, display, provenance}`, `title`, `finish` (read from
+the planning run), `status`, `planning_run_id`, `run_ids`, `created_at` and
+`updated_at`, without the idempotency key or the fingerprint, plus:
 
 - `planning`: `{run_id, revision, planning_only: true, tasks:{total, candidate, ready, running, verify, done, blocked}}`,
   read from the recorded ledger. A campaign read never writes and never refreshes the source.
@@ -403,21 +466,28 @@ fingerprint, plus:
 
 The output schema pins `planning.planning_only` to `true` and `promotion.allowed`
 to `false`, so the projection cannot claim execution. The title goes through
-`safe_summary` redaction. A display URL that carries a credential-like marker is
-omitted. The UI labels the parent number "reported by GitHub".
+`safe_summary` redaction.
 
 ### Promotion
 
-`expected_revision` is the planning graph's control revision (`planning.revision`).
-The command rejects with `execution_not_qualified` while
-`capabilities.execution.eligible` is false, and one shared function feeds both
-values. That is always the case in this version. The check runs before any campaign,
-graph or journal state is read, so promotion writes no event, changes no revision
-and records no key. It never upgrades the planning graph. If eligibility were
-enabled without a promotion transition, the command would still fail closed with
-`campaign_promotion_unavailable`. Duplicate-promotion replay and the stale-revision
-fencing of a successful promotion are deferred to #71. Today every attempt is the
-same write-free rejection.
+Promotion stays a fail-closed stub. The command first validates its input (a schema
+error, or `invalid_campaign_promotion` for a blank key or an out-of-range
+revision). A valid request then fails with `execution_not_qualified` while
+`capabilities.execution.eligible` is false; one shared function feeds both values,
+and that is always the case in this version. No campaign, graph or journal state is
+read or written: promotion writes no event, changes no revision and records no key.
+It never upgrades the planning graph. If eligibility were enabled without a
+promotion transition, the command would still fail closed with
+`campaign_promotion_unavailable`.
+
+Deferred to #71, which qualifies execution:
+
+- a successful promotion that creates a NEW executable run from one exact approved
+  plan revision, never flipping the planning run;
+- duplicate-promotion replay;
+- stale-revision rejection (`expected_revision` is the planning graph's
+  `planning.revision`);
+- acceptance-contract references on the promoted run.
 
 Revision fencing, claims, evidence and the run and replay contracts are unchanged.
 A campaign's graph is an ordinary planning graph: `propose_factory_change` and
@@ -425,6 +495,6 @@ A campaign's graph is an ordinary planning graph: `propose_factory_change` and
 
 Deployed host handoff: the toolkit and deployed host pins must move to 26 total and
 18 model-visible tools. The OCI canaries (`container/acceptance_canary.py`,
-`container/planning_graph_canary.py`) still pin the released 0.2.1 catalog of 22
-tools and its UI hash. A release that ships this slice must update them. This
-slice does not change them or any deployed service.
+`container/planning_graph_canary.py`) expect 26 tools and assert that every campaign
+tool is model- and app-visible and that only the two campaign reads are read-only.
+They still pin the released UI hash. This slice changes no deployed service.
