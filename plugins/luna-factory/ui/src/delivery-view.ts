@@ -128,5 +128,7 @@ export function deliverySection(state: ViewState, runId: string | undefined, nod
   }).join("");
   const none = node.pull_requests.length ? "" : '<p class="small muted">GitHub reports no linked pull request for this issue.</p>';
   const more = node.pull_requests_truncated ? `<p class="small muted">Showing ${node.pull_requests.length} of ${node.pull_requests_total} linked pull requests.</p>` : "";
-  return `<section class="github-report" aria-label="Reported by GitHub">${header}${freshness}${issue}${pulls}${none}${more}${caveat}</section>`;
+  // Only an explicit `complete: false` from the server marks a partial read; stale data already says so.
+  const partial = node.complete === false && !stale ? '<p class="small muted">Partial read: GitHub did not return every linked pull request or check.</p>' : "";
+  return `<section class="github-report" aria-label="Reported by GitHub">${header}${freshness}${issue}${pulls}${none}${more}${partial}${caveat}</section>`;
 }

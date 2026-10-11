@@ -172,14 +172,14 @@ function fixturePull(number: number, overrides: Partial<DeliveryPull> = {}, obse
       { name: "unit (ubuntu-latest)", status: "completed", conclusion: "success", started_at: observedAt - 900, completed_at: observedAt - 600, summary: null },
       { name: "build (windows-latest)", status: "completed", conclusion: "success", started_at: observedAt - 900, completed_at: observedAt - 540, summary: null },
     ] },
-    ready_for_review: true, merge_authority: false, observed_at: observedAt, reported_by: "github",
+    ready_for_review: true, merge_authority: false, observed_at: observedAt, reported_by: "github", provenance: "github_app",
     ...overrides,
   };
 }
 function fixtureDeliveryNode(id: string, overrides: Partial<DeliveryNode> = {}): DeliveryNode {
   const number = Number(id.slice(-3));
   return {
-    node_id: id, item_id: `1148934299:I_kwDOsynthetic${id.slice(-3)}`, reported_by: "github", status: "observed", freshness: "cached", reason: null,
+    node_id: id, item_id: `1148934299:I_kwDOsynthetic${id.slice(-3)}`, reported_by: "github", provenance: "github_app", complete: true, status: "observed", freshness: "cached", reason: null,
     observed_at: deliveryReadAt - 30, issue: { number, url: `https://github.com/joshyorko/actions/issues/${number}`, state: "open" },
     pull_requests: [], pull_requests_total: 0, pull_requests_truncated: false, ...overrides,
   };
@@ -198,11 +198,11 @@ export function fixtureDelivery(runId = "campaign-actions-v2"): Delivery {
         { name: "holotree cache (windows-latest)", status: "completed", conclusion: "failure", started_at: deliveryReadAt - 700, completed_at: deliveryReadAt - 420, summary: "Cache key mismatch on windows-latest" },
         { name: "unit (ubuntu-latest)", status: "completed", conclusion: "success", started_at: deliveryReadAt - 700, completed_at: deliveryReadAt - 500, summary: null },
       ] } })], pull_requests_total: 1 },
-    "issue-111": { freshness: "stale", reason: "polling_budget_deferred", observed_at: deliveryReadAt - 1200, pull_requests: [fixturePull(133, {}, deliveryReadAt - 1200)], pull_requests_total: 1 },
+    "issue-111": { complete: false, freshness: "stale", reason: "polling_budget_deferred", observed_at: deliveryReadAt - 1200, pull_requests: [fixturePull(133, {}, deliveryReadAt - 1200)], pull_requests_total: 1 },
   };
   return {
-    schema_version: 1, run_id: runId, graph_revision: 6, reported_by: "github", proof: "none", merge_capability: "none",
-    available: true, reason: null, retry_at: null, min_interval_seconds: 60, observed_at: deliveryReadAt,
+    schema_version: 1, run_id: runId, graph_revision: 6, reported_by: "github", provenance: "github_app", proof: "none", merge_capability: "none",
+    available: true, complete: true, reason: null, retry_at: null, min_interval_seconds: 60, observed_at: deliveryReadAt,
     nodes: ids.map(id => fixtureDeliveryNode(id, special[id])),
   };
 }
@@ -210,9 +210,9 @@ export function fixtureDelivery(runId = "campaign-actions-v2"): Delivery {
 export function fixtureDeliveryUnavailable(runId = "campaign-actions-v2"): Delivery {
   const healthy = fixtureDelivery(runId);
   return {
-    ...healthy, available: false, reason: "rate_limited", retry_at: deliveryReadAt + 900,
+    ...healthy, available: false, complete: false, reason: "rate_limited", retry_at: deliveryReadAt + 900,
     nodes: healthy.nodes.map(node => node.node_id === "issue-103"
-      ? { ...node, freshness: "stale", reason: "rate_limited", observed_at: deliveryReadAt - 600 }
-      : { ...node, status: "unavailable", freshness: null, reason: "rate_limited", observed_at: null, issue: null, pull_requests: [], pull_requests_total: 0 }),
+      ? { ...node, complete: false, freshness: "stale", reason: "rate_limited", observed_at: deliveryReadAt - 600 }
+      : { ...node, complete: false, status: "unavailable", freshness: null, reason: "rate_limited", observed_at: null, issue: null, pull_requests: [], pull_requests_total: 0 }),
   };
 }

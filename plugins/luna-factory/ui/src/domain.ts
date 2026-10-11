@@ -127,9 +127,12 @@ const deliveryPullSchema = z.object({
     statuses: z.array(z.object({ context: githubText(200), state: shortCode, created_at: timestamp.nullable() })).max(25),
   }),
   ready_for_review: z.boolean(), merge_authority: z.literal(false), observed_at: timestamp, reported_by: z.literal("github"),
+  provenance: z.literal("github_app").optional(),
 });
 const deliveryNodeSchema = z.object({
-  node_id: nodeId, item_id: nodeId, reported_by: z.literal("github"),
+  node_id: nodeId, item_id: nodeId, reported_by: z.literal("github"), provenance: z.literal("github_app").optional(),
+  /** False when GitHub did not return every linked pull request or check context. Optional for older servers. */
+  complete: z.boolean().optional(),
   status: z.enum(["observed", "unavailable", "deferred"]), freshness: z.enum(["fresh", "cached", "stale"]).nullable(),
   reason: z.string().max(128).nullable(), observed_at: timestamp.nullable(),
   issue: z.object({ number: z.number().int().positive(), url: githubText(512), state: shortCode }).nullable(),
@@ -139,6 +142,7 @@ const deliveryNodeSchema = z.object({
 export const deliverySchema = z.object({
   schema_version: z.literal(1), run_id: runId, graph_revision: revision, reported_by: z.literal("github"),
   proof: z.literal("none"), merge_capability: z.literal("none"), available: z.boolean(),
+  provenance: z.literal("github_app").optional(), complete: z.boolean().optional(),
   reason: z.string().max(128).nullable(), retry_at: timestamp.nullable(), min_interval_seconds: z.literal(60),
   observed_at: timestamp, nodes: z.array(deliveryNodeSchema).max(128),
 });

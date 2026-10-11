@@ -257,8 +257,9 @@ cannot enter new automatic continuation. Planning-only records never dispatch.
 
 ## Projection additions (#69, #70)
 
-All fields are additive. No MCP tool is added (the catalog stays at the 22 tools
-asserted in `server/tests/mcp_contract.rs`), and no revision, fencing, claim,
+All fields are additive. This slice adds no MCP tool (it left the catalog at 22;
+the GitHub App reads below bring it to the 24 asserted in
+`server/tests/mcp_contract.rs`), and no revision, fencing, claim,
 evidence or action semantics change. Older clients ignore the fields; the UI
 treats them as optional so older servers still parse.
 

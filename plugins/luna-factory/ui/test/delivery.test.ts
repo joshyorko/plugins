@@ -129,7 +129,21 @@ describe("GitHub-reported delivery contract", () => {
     expect(unavailable.textContent).not.toContain("rate_limited");
     const kept = render(limited.controller, "issue-103").querySelector<HTMLElement>(".github-report")!;
     expect(kept.textContent).toContain("Stale · observed 10 min ago");
+    expect(kept.textContent).not.toContain("Partial read");
     expect(limited.controller.state.error).toBeNull();
+  });
+
+  it("labels an incomplete read as partial, and only when the server says so", async () => {
+    const delivery = fixtureDelivery();
+    expect(delivery.provenance).toBe("github_app");
+    const partial = { ...delivery, complete: false, nodes: delivery.nodes.map(node => node.node_id === "issue-103" ? { ...node, complete: false } : node) };
+    const { controller } = await campaign({ delivery: partial });
+    expect(render(controller, "issue-103").querySelector(".github-report")?.textContent).toContain("Partial read: GitHub did not return every linked pull request or check.");
+    expect(render(controller, "issue-109").querySelector(".github-report")?.textContent).not.toContain("Partial read");
+    // Older servers omit the flag: nothing is claimed either way.
+    const legacy = { ...delivery, nodes: delivery.nodes.map(({ complete: _complete, provenance: _provenance, ...node }) => node) };
+    expect(deliverySchema.safeParse(legacy).success).toBe(true);
+    expect(deliverySchema.safeParse({ ...delivery, provenance: "supplied" }).success).toBe(false);
   });
 
   it("drops the report when another run is selected", async () => {
