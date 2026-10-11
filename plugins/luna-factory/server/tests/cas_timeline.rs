@@ -813,5 +813,45 @@ async fn the_per_thread_cache_never_exceeds_its_thread_cap() {
         .unwrap();
     assert_eq!(cas.calls().len(), cap + 2);
     assert_eq!(timelines.cached_threads().await, cap);
+    // A rejected cursor read on an uncached thread creates no entry and makes no request.
+    let calls = cas.calls().len();
+    assert!(
+        timelines
+            .read("fixture", target, "run", "thread-uncached", Some("forged"))
+            .await
+            .is_err()
+    );
+    assert_eq!(timelines.cached_threads().await, cap);
+    assert_eq!(cas.calls().len(), calls);
+    cas.assert_read_only();
+}
+
+#[tokio::test]
+async fn an_unchanged_snapshot_for_a_different_revision_is_withheld() {
+    let cas = CasFixture::start().await;
+    cas.json(SNAPSHOT, snapshot("owner-thread", 'a', false));
+    cas.json(ITEMS, items(None));
+    let temp = tempfile::tempdir().unwrap();
+    let config = config(&cas, &temp, true);
+    let target = &config.cas_targets["fixture"];
+    let timelines = AgentTimelines::new(Duration::ZERO);
+    let fresh = timelines
+        .read("fixture", target, "run", "owner-thread", None)
+        .await
+        .unwrap();
+    assert_eq!(fresh["freshness"]["cache"], "miss");
+    // CAS answers "unchanged" but echoes a revision this read never sent.
+    cas.json(SNAPSHOT, unchanged("owner-thread", 'b'));
+    let mismatch = timelines
+        .read("fixture", target, "run", "owner-thread", None)
+        .await
+        .unwrap();
+    validate(&mismatch);
+    assert_eq!(mismatch["status"], "unavailable");
+    assert_eq!(mismatch["reason"], "cas_invalid_response");
+    assert_eq!(
+        cas.calls().last().unwrap().body["payload"]["revision"],
+        "a".repeat(64)
+    );
     cas.assert_read_only();
 }

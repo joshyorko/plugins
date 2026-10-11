@@ -181,65 +181,88 @@ impl AgentTimelines {
         };
         let outcome = fetch(target, thread_id, cursor, revision.as_deref()).await;
         let mut entries = self.entries.lock().await;
-        if !entries.contains_key(&key) {
-            while entries.len() >= CACHED_THREADS {
-                let Some(oldest) = entries
-                    .iter()
-                    .min_by_key(|(_, entry)| entry.used)
-                    .map(|(key, _)| key.clone())
-                else {
-                    break;
-                };
-                entries.remove(&oldest);
-            }
-        }
-        let entry = entries.entry(key).or_default();
-        entry.used = Some(Instant::now());
-        match outcome {
-            Err(error) => {
-                let reason = reason(&error);
-                entry.failure = Some((Instant::now(), reason));
-                Ok(unavailable(run_id, thread_id, reason))
-            }
-            Ok(Fetched::Unchanged) => {
-                let Some(mut page) = prior else {
-                    entry.failure = Some((Instant::now(), "cas_invalid_response"));
-                    return Ok(unavailable(run_id, thread_id, "cas_invalid_response"));
-                };
-                page.fetched = Instant::now();
-                page.observed_at = crate::store::now();
-                let value = observed(run_id, thread_id, &page, "revalidated");
-                // A concurrent read may have stored a newer head meanwhile; only
-                // refresh the head this revision check actually confirmed.
-                if entry.revision == revision {
-                    entry.failure = None;
-                    entry.head = Some(page);
-                }
-                Ok(value)
-            }
-            Ok(Fetched::Page(revision, page)) => {
-                entry.failure = None;
-                let value = observed(run_id, thread_id, &page, "miss");
-                match cursor {
-                    None => {
-                        entry.revision = Some(revision);
-                        entry.head = Some(page);
-                    }
-                    Some(cursor) => {
-                        entry.older.retain(|(key, _)| key != cursor);
-                        if entry.older.len() >= CACHED_OLDER_PAGES {
-                            entry.older.remove(0);
-                        }
-                        entry.older.push((cursor.to_owned(), page));
-                    }
-                }
-                Ok(value)
-            }
-        }
+        Ok(settle(
+            &mut entries,
+            key,
+            run_id,
+            cursor,
+            revision,
+            prior,
+            outcome,
+        ))
     }
     /// Number of cached threads; bounded by the thread cap.
     pub async fn cached_threads(&self) -> usize {
         self.entries.lock().await.len()
+    }
+}
+
+/// Record one completed read. Only here does an entry get created, and only after
+/// evicting the least recently used threads down to the cap.
+fn settle(
+    entries: &mut HashMap<(String, String), Entry>,
+    key: (String, String),
+    run_id: &str,
+    cursor: Option<&str>,
+    revision: Option<String>,
+    prior: Option<Page>,
+    outcome: Result<Fetched>,
+) -> Value {
+    let thread_id = key.1.clone();
+    if !entries.contains_key(&key) {
+        while entries.len() >= CACHED_THREADS {
+            let Some(oldest) = entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.used)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            entries.remove(&oldest);
+        }
+    }
+    let entry = entries.entry(key).or_default();
+    entry.used = Some(Instant::now());
+    match outcome {
+        Err(error) => {
+            let reason = reason(&error);
+            entry.failure = Some((Instant::now(), reason));
+            unavailable(run_id, &thread_id, reason)
+        }
+        Ok(Fetched::Unchanged) => {
+            let Some(mut page) = prior else {
+                entry.failure = Some((Instant::now(), "cas_invalid_response"));
+                return unavailable(run_id, &thread_id, "cas_invalid_response");
+            };
+            page.fetched = Instant::now();
+            page.observed_at = crate::store::now();
+            let value = observed(run_id, &thread_id, &page, "revalidated");
+            // A concurrent read may have stored a newer head (or the entry was
+            // evicted) meanwhile; only refresh the head this revision check confirmed.
+            if revision.is_some() && entry.revision == revision {
+                entry.failure = None;
+                entry.head = Some(page);
+            }
+            value
+        }
+        Ok(Fetched::Page(revision, page)) => {
+            entry.failure = None;
+            let value = observed(run_id, &thread_id, &page, "miss");
+            match cursor {
+                None => {
+                    entry.revision = Some(revision);
+                    entry.head = Some(page);
+                }
+                Some(cursor) => {
+                    entry.older.retain(|(key, _)| key != cursor);
+                    if entry.older.len() >= CACHED_OLDER_PAGES {
+                        entry.older.remove(0);
+                    }
+                    entry.older.push((cursor.to_owned(), page));
+                }
+            }
+            value
+        }
     }
 }
 
@@ -252,7 +275,11 @@ async fn fetch(
     let client = CasClient::new(target.clone())?;
     let status = client.thread_snapshot(thread_id, revision).await?;
     if !status.changed {
-        ensure!(revision.is_some(), "cas_invalid_snapshot");
+        // "Unchanged" is only meaningful for the exact revision this read sent.
+        ensure!(
+            revision == Some(status.revision.as_str()),
+            "cas_invalid_snapshot"
+        );
         return Ok(Fetched::Unchanged);
     }
     let items = client.thread_items(thread_id, cursor).await?;
@@ -966,6 +993,180 @@ mod tests {
             message("short words stay visible."),
             "short words stay visible."
         );
+    }
+    #[test]
+    fn credential_markers_withhold_the_whole_summary() {
+        for text in [
+            "Calling https://h.invalid/cb?token=abc",
+            "Set ACCESS_TOKEN=short",
+            "Read id_token=x from the callback",
+            "Slack xoxb-1-2 ok",
+            "Slack XOXP-9 here",
+            "JWT eyJhbGciOi.short",
+            "AWS AKIAABCD",
+        ] {
+            assert_eq!(message(text), WITHHELD, "{text}");
+        }
+        // The JWT marker is case-sensitive, so ordinary words stay visible.
+        assert_eq!(message("Heyjude played"), "Heyjude played");
+    }
+    #[test]
+    fn opaque_runs_split_on_every_non_token_character_including_dots() {
+        let a = "a".repeat(20);
+        let b = "b".repeat(20);
+        // '.' is outside the token set, so two short dotted runs stay visible.
+        assert_eq!(
+            message(&format!("see {a}.{b} now")),
+            format!("see {a}.{b} now")
+        );
+        let long = "Q".repeat(32);
+        for sep in [
+            '.', ',', ':', '@', '!', '?', '#', '%', '&', '*', '~', '|', '\\', '`', '\'', '"', '(',
+            ')', '[', ']', '{', '}', '<', '>', ';', ' ', '\u{e9}',
+        ] {
+            assert_eq!(
+                message(&format!("x{sep}{long}{sep}y")),
+                format!("x{sep}[withheld]{sep}y"),
+                "{sep:?}"
+            );
+        }
+        assert_eq!(message(&format!("{long}.rs")), "[withheld].rs");
+        // Boundary: 31 token characters stay, 32 are withheld, and + / = _ - extend a run.
+        let thirty_one = "c".repeat(31);
+        assert_eq!(
+            message(&format!("run {thirty_one} ok")),
+            format!("run {thirty_one} ok")
+        );
+        assert_eq!(
+            message(&format!("run {}+/=_-{} ok", "d".repeat(14), "e".repeat(13))),
+            "run [withheld] ok"
+        );
+    }
+    #[test]
+    fn command_labels_never_reveal_arguments_paths_or_resource_names() {
+        for (command, shown) in [
+            ("uv run x.py", "Ran uv run (exit 0)"),
+            ("kubectl exec prod-db-0", "Ran kubectl exec (exit 0)"),
+            ("make deploy-x", "Ran make (exit 0)"),
+            (
+                "kubectl get secret prod-db-creds -n prod",
+                "Ran kubectl get (exit 0)",
+            ),
+            ("kubectl -n prod exec prod-db-0", "Ran kubectl (exit 0)"),
+            ("cargo run --bin private-bin", "Ran cargo run (exit 0)"),
+            ("npx private-cli --flag", "Ran npx (exit 0)"),
+            ("python3 /srv/private/x.py", "Ran python3 (exit 0)"),
+            ("helm upgrade customer-x ./chart", "Ran helm (exit 0)"),
+            ("cat /etc/private.conf | grep secret", "Ran cat (exit 0)"),
+            ("git push origin private-branch", "Ran git push (exit 0)"),
+            (
+                "gh api repos/private-org/private-repo",
+                "Ran gh api (exit 0)",
+            ),
+            (
+                "docker compose -f private.yml up",
+                "Ran docker compose (exit 0)",
+            ),
+            ("uv run deploy-x", "Ran uv run (exit 0)"),
+            ("npm run deploy-x", "Ran npm run (exit 0)"),
+            ("/opt/private/bin/x deploy", "Ran a command (exit 0)"),
+            ("cd /srv/x && make deploy-x", "Ran make (exit 0)"),
+        ] {
+            let (kind, summary) = cmd(command, "completed", Some(0));
+            assert_eq!((kind, summary.as_str()), ("command", shown), "{command}");
+            for private in [
+                "x.py", "prod", "deploy", "private", "customer", "secret", "chart", "/",
+            ] {
+                assert!(!summary.contains(private), "{command} -> {summary}");
+            }
+        }
+        // Checks keep the closed vocabulary too.
+        assert_eq!(
+            cmd(
+                "pytest tests/private_test.py -k secret",
+                "completed",
+                Some(1)
+            )
+            .1,
+            "Check failed: pytest (exit 1)"
+        );
+        assert_eq!(
+            cmd("make test-private", "completed", Some(0)).1,
+            "Ran make (exit 0)"
+        );
+    }
+    fn page(events: usize) -> Page {
+        Page {
+            fetched: Instant::now(),
+            observed_at: 1,
+            thread_status: "active",
+            native_updated_at: None,
+            events: (0..events)
+                .map(|index| Event {
+                    at: index as u64,
+                    kind: "message",
+                    summary: "observed".into(),
+                    thread_id: "t".into(),
+                })
+                .collect(),
+            children: vec![],
+            omitted: 0,
+            next_cursor: None,
+        }
+    }
+    #[test]
+    fn unchanged_revalidation_refreshes_only_the_head_its_revision_confirmed() {
+        let (a, b) = ("a".repeat(64), "b".repeat(64));
+        let key = ("alias".to_owned(), "t".to_owned());
+        let mut entries = HashMap::new();
+        // A concurrent read already stored revision b with two events.
+        settle(
+            &mut entries,
+            key.clone(),
+            "run",
+            None,
+            None,
+            None,
+            Ok(Fetched::Page(b.clone(), page(2))),
+        );
+        // A slower read that sent revision a now learns "unchanged" for a.
+        let stale = settle(
+            &mut entries,
+            key.clone(),
+            "run",
+            None,
+            Some(a.clone()),
+            Some(page(1)),
+            Ok(Fetched::Unchanged),
+        );
+        assert_eq!(stale["freshness"]["cache"], "revalidated");
+        assert_eq!(stale["events"].as_array().unwrap().len(), 1);
+        assert_eq!(entries[&key].revision.as_deref(), Some(b.as_str()));
+        assert_eq!(entries[&key].head.as_ref().unwrap().events.len(), 2);
+        // The matching revision does refresh the head.
+        settle(
+            &mut entries,
+            key.clone(),
+            "run",
+            None,
+            Some(b.clone()),
+            Some(page(3)),
+            Ok(Fetched::Unchanged),
+        );
+        assert_eq!(entries[&key].revision.as_deref(), Some(b.as_str()));
+        assert_eq!(entries[&key].head.as_ref().unwrap().events.len(), 3);
+        // An entry evicted meanwhile is recreated empty and never adopts an unconfirmed head.
+        let evicted = ("alias".to_owned(), "u".to_owned());
+        settle(
+            &mut entries,
+            evicted.clone(),
+            "run",
+            None,
+            Some(a),
+            Some(page(1)),
+            Ok(Fetched::Unchanged),
+        );
+        assert!(entries[&evicted].head.is_none() && entries[&evicted].revision.is_none());
     }
     #[test]
     fn messages_are_single_line_bounded_and_redacted() {

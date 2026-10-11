@@ -290,6 +290,13 @@ fn reconciliation_is_callable_in_the_model_filtered_catalog() {
             .any(|tool| tool.name == "read_factory_agent_timeline"),
         "the observed agent timeline is app-only"
     );
+    let timeline = tool_definitions()
+        .into_iter()
+        .find(|tool| tool.name == "read_factory_agent_timeline")
+        .expect("the Lanes timeline tool is listed for the app");
+    let timeline = serde_json::to_value(timeline).unwrap();
+    assert_eq!(timeline["_meta"]["ui"]["visibility"], json!(["app"]));
+    assert_eq!(timeline["annotations"]["readOnlyHint"], true);
     let reconcile = models
         .iter()
         .find(|tool| tool.name == "reconcile_factory_run")

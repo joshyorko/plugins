@@ -53,7 +53,9 @@ Receipt observations never write run state, acceptance, audit revisions, attempt
 1. `get-thread-snapshot` checks the echoed target, CWD and thread ID client-side and reads status, waiting flags, the latest turn's error code, `native_updated_at` and the snapshot `revision`. The latest item's text is never read.
 2. `list-thread-items` reads one newest-first page (`limit: 100`, `sort_direction: "desc"`), only when the snapshot changed.
 
-`list-thread-turns` and `list-thread-timeline` are allowlisted, with strict parsers and unit tests, but Lanes does not call them. Timeline item entries carry no per-item timestamps, and CAS gates `thread/timeline/list` to native 0.160.1. Item entries carry `startedAtMs`/`completedAtMs`.
+`list-thread-turns` and `list-thread-timeline` are allowlisted, with strict parsers and unit tests, but Lanes does not call them. Timeline entries carry no per-item timestamps; item entries carry `startedAtMs`/`completedAtMs`.
+
+**Native version gating is method-specific.** At CAS [`75acbaa`](https://github.com/joshyorko/codex-action-server/blob/75acbaac83095f2dd49c2e1d432e4f553f7c0c7f/src/codex_rpc.py), `thread/timeline/list` is an experimental native method reviewed only for Codex 0.160.1. CAS rejects it on 0.161.0, 0.162.0 and 0.162.1, so `list-thread-timeline` is unavailable there. The Lanes path uses `get-thread-snapshot` (native `thread/read` and `thread/turns/list`) and `list-thread-items` (`thread/items/list`). None of those is experimental-gated in that map. This slice has not run any of these reads against a live native server, so per-version availability on the operator runtime is still unverified.
 
 **Vocabulary.** Each event is `{at, kind, summary, thread_id}`. `at` is Unix seconds from the item's `completedAtMs`, or `startedAtMs` when that is absent. `kind` is one of `assigned`, `command`, `file_change`, `commit`, `pr_opened`, `check_result`, `subagent_spawned`, `message`, `waiting` or `error`. `summary` is at most 160 characters and passes through `safe_summary`.
 
