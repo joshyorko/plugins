@@ -349,14 +349,23 @@ operator runbook, permissions and egress decision are in [GitHub App](github-app
 
 | Tool | Input | Result |
 | --- | --- | --- |
-| `inspect_factory_issue_graph` | `repository` (`owner/repo`), `parent` (issue number) | `status` (`available`, `unavailable` or `ineligible`), `reason`, `retry_at`, `eligibility`, candidate `nodes` with GitHub sources, `acceptance_candidates` labelled `derived_from_issue`, rejected `cycles`, `external_dependencies`, `cross_repository`, `omitted`, `truncated` and `import` guidance. Writes nothing |
-| `read_factory_delivery` | `run_id` | `reported_by: "github"`, `proof: "none"`, `merge_capability: "none"`, `available`, `reason`, `retry_at`, `min_interval_seconds: 60` and per-node `{status, freshness, observed_at, issue, pull_requests[]}` with checks, combined rollup, review decision, diff stats and `ready_for_review` |
+| `inspect_factory_issue_graph` | `repository` (`owner/repo`), `parent` (issue number), optional `repository_alias` | `provenance: "github_app"`, `status` (`complete`, `incomplete`, `unavailable` or `ineligible`), `reason`, `retry_at`, `eligibility`, `graph_repository`, `forge_repository`, candidate `nodes` (forge identity, graph-bound `source`, `derivation` `native` or `parsed`, `dependency_evidence` `native` or `documented_not_native`), `acceptance_candidates` labelled `derived_from_issue`, rejected `cycles`, `external_dependencies`, `cross_repository`, `omitted`, `truncated` and `import` guidance. Writes nothing |
+| `read_factory_delivery` | `run_id` | `reported_by: "github"`, `provenance: "github_app"`, `proof: "none"`, `merge_capability: "none"`, `available`, `complete`, `reason`, `retry_at`, `min_interval_seconds: 60` and per-node `{status, complete, freshness, observed_at, issue, pull_requests[]}` with checks, combined rollup, review decision, diff stats and `ready_for_review` |
 
-- **Intake sources.** Candidate sources carry `repository_id: null`. The caller sets it to
-  `graph.repository.identity` when it proposes `import_candidates`. The existing graph rules are
-  unchanged: `foreign_graph_source`, `duplicate_graph_source` and replay-safe proposals.
-  `item_id` is `"<numeric repository id>:<issue node id>"`, the immutable forge repository ID
-  qualifier described above.
+- **Forge identity and graph source are separate.** Each node carries a forge identity
+  `{provider: "github", repository: "owner/repo" (lowercase), number, node_id}` with canonical key
+  `github:owner/repo#<number>`, and a `source` bound to the physical graph identity:
+  `{provider, repository_id: graph_repository.identity, item_id, revision, display{number,url}}`.
+  `graph_repository.identity` is the value `create_factory_graph` reports as
+  `graph.repository.identity` for the same alias, so sources are proposed unchanged. The existing
+  graph rules are unchanged: `foreign_graph_source`, `duplicate_graph_source` and replay-safe
+  proposals. `item_id` is `"<numeric repository id>:<issue node id>"`, the immutable forge
+  repository ID qualifier described above.
+- **Native versus parsed.** Sub-issues and GitHub `blocked_by` relations are `native`. Task-list
+  references, acceptance candidates and prose dependencies are `parsed`. A dependency documented
+  in prose but not recorded by GitHub is kept as `documented_not_native`, never dropped.
+- **Incomplete is explicit.** Any truncated or page-limited read returns `incomplete` (intake) or
+  `complete: false` (delivery), never complete.
 - **Delivery is in memory and display only.** It's cached per node, with a minimum interval of 60
   seconds. It never enters control, criteria, presentation `result` or `actions`, `deliverable`,
   receipts or **Needs you**. Contract tests compare those fields before and after a GitHub

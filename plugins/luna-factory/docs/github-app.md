@@ -88,9 +88,13 @@ widen what Luna reads.
    ```sh
    install -m 600 ~/Downloads/<app>.private-key.pem "$LUNA_CONFIG_DIR/luna-github-app.pem"
    ```
-   - The file must be a regular file, not a symlink, owned by the service user (the container
-     runs as `65532:65532` with `keep-id`). It must not be group- or world-readable, otherwise:
+   - The file must be a regular file owned by the service user (the container runs as
+     `65532:65532` with `keep-id`). It must not be group- or world-readable, otherwise:
      `github_app_key_permissions_too_open`.
+   - The configured path must be canonical: neither the file nor any parent directory may be a
+     symlink, otherwise `github_app_key_symlinked`. The file is opened with `O_NOFOLLOW` and
+     rechecked through the open handle. On hosts where `/home` is a symlink (for example
+     `/var/home` on Fedora Atomic), use the `realpath` of the key.
    - Don't commit it, paste it into chat or pass it as an environment variable.
 3. **Install the app** on the repositories Luna should read. "Only select repositories" is
    recommended.
@@ -146,7 +150,10 @@ Until the owner chooses, leave `github_app` unset in the OCI `operator.json`.
 
 ## `inspect_factory_issue_graph` (#76)
 
-Input: `{repository: "owner/repo", parent: <issue number>}`. Read-only, model and app.
+Input: `{repository: "owner/repo", parent: <issue number>, repository_alias?}`. Read-only, model
+and app. `repository_alias` is needed only when more than one approved Luna repository has a
+remote naming the same GitHub repository; otherwise the single match is used. The API base, key
+path and credentials are operator configuration only and can't be passed as arguments.
 
 It reads:
 
@@ -156,31 +163,54 @@ It reads:
   skipped when GitHub's `issue_dependencies_summary` reports none.
 - **Task-list references** (`- [ ] #12`, `owner/repo#3`, issue URLs) in the parent body, within
   the same repository. At most 16 are fetched.
+- **Documented dependencies** in each candidate body: references after "blocked by", "blocked
+  on" or "depends on", and list items under a "Dependencies" or "Blocked by" heading. These are
+  parsed prose, not GitHub relations.
+
+Everything returned was fetched by Luna with the GitHub App, so the result and every node,
+parent and acceptance candidate carry `provenance: "github_app"`. Caller-supplied metadata is
+never labelled that way.
 
 It returns:
 
+- **`status`.** `complete` only when every page, relation and body was read in full. Any
+  truncation, page limit, missing dependencies API, short dependency page, cut body or
+  unrecognized item makes it `incomplete`, never `complete`. `unavailable` and `ineligible`
+  carry a `reason`.
+- **`graph_repository`.** `{alias, identity}`: the approved alias and the same opaque local
+  identity `create_factory_graph` reports as `graph.repository.identity`. Never a path.
+- **`forge_repository`.** `{provider: "github", repository: "owner/repo" (lowercase),
+  repository_id, node_id}`.
 - **`nodes`.** At most 32, open issues only, `id: "issue-<n>"`, with `title`, `dependencies`
   (only edges between candidates) and `relation` (`sub_issue` or `task_list`). Each also has:
-  - `source.provider`: `"github"`.
-  - `source.repository_id`: `null`, because the graph identity is assigned at import.
-  - `source.repository`: `owner/repo`.
-  - `source.repository_node_id`: the repository's node ID.
-  - `source.item_id`: `"<numeric repository id>:<issue node id>"`.
-  - `source.revision`: `sha256:` of the bounded issue fields (number, node ID, title, state and
-    the first 64 KiB of the body).
-  - `source.display`: `{number, url}`.
+  - `derivation`: `native` for GitHub sub-issues, `parsed` for task-list references.
+  - `dependency_evidence`: per dependency, `{node_id, native, documented, status}`, where
+    `status` is `native` (GitHub records it) or `documented_not_native` (only the issue prose
+    says so). An absent GitHub `blocked_by` record never erases a documented dependency.
+  - `forge`: the forge identity `{provider: "github", repository: "owner/repo" (lowercase),
+    number, node_id}`, and `forge_key`: `github:owner/repo#<number>`.
+  - `source`: the physical graph binding, kept apart from the forge identity:
+    - `provider`: `"github"`.
+    - `repository_id`: `graph_repository.identity`.
+    - `item_id`: `"<numeric repository id>:<issue node id>"`.
+    - `revision`: `sha256:` of the bounded issue fields (number, node ID, title, state and the
+      first 64 KiB of the body).
+    - `display`: `{number, url}`.
 - **`acceptance_candidates`.** List items under an "Acceptance" heading in the parent or a
-  candidate body, labelled `derived_from_issue`. Text is redacted with the same `safe_summary`
+  candidate body, labelled `derived_from_issue` with `derivation: "parsed"`. Text is redacted with the same `safe_summary`
   rule as other summaries: items that look like credentials are dropped.
 - **`cycles`.** Strongly connected dependency groups, each `status: "rejected"`. Edges are never
   dropped silently. `import.ready` is false until the user decides which edge to break.
 - **`external_dependencies`.** Blockers in the same repository that aren't candidates, for
-  example closed issues. Not imported.
+  example closed issues. Each has `derivation` and `status` (`native`, or `documented_not_native`
+  with `github_state: null`). Not imported.
 - **`cross_repository`.** Sub-issues, task-list references and blockers in other repositories.
   Reported, never imported.
 - **`omitted`.** Closed issues, pull requests, deleted or moved issues (`issue_unavailable`,
   `issue_moved`) and anything over a limit.
-- **`truncated`.** Flags for `sub_issues`, `task_list`, `dependencies` and `nodes`.
+- **`truncated`.** Flags for `sub_issues`, `task_list`, `dependencies`, `nodes`, `acceptance`,
+  `bodies`, `reported` (a reporting list overflowed) and `unrecognized`. Any flag means
+  `status: "incomplete"` and the `results_incomplete` decision.
 - **`eligibility`.** `{eligible, allowed_by_github_app, approved_aliases, reasons}`.
 - **`import`.** `{ready, blockers, decisions_needed, steps, repository_id,
   confirmation: "explicit_user_confirmation_required"}`.
@@ -191,10 +221,11 @@ It returns:
 2. It summarises the nodes, cycles, external and cross-repository references, and derived
    acceptance, and it names the decisions needed.
 3. It then proposes the import:
-   1. `create_factory_graph` on an `approved_aliases` entry, with acceptance the user confirms.
-   2. `propose_factory_change` with `import_candidates`. Each source becomes
-      `{provider, repository_id: graph.repository.identity, item_id, revision}`, and `display` is
-      dropped.
+   1. `create_factory_graph` with `repository: graph_repository.alias`, with acceptance the user
+      confirms.
+   2. `propose_factory_change` with `import_candidates`. Each source is copied unchanged: it is
+      already bound to `graph.repository.identity`. Parsed task-list nodes and
+      `documented_not_native` dependencies are named as decisions for the user to confirm.
    3. After the user confirms, `apply_factory_change`.
 
 It's never an implicit apply. The existing graph rules still hold:
@@ -271,8 +302,8 @@ The result also carries `proof: "none"` and `merge_capability: "none"`.
 | --- | --- |
 | `github_app_not_configured` | No `github_app` block. Default. |
 | `github_app_config_invalid`, `github_client_unavailable` | The block failed validation at use, or the HTTPS client couldn't be built |
-| `github_app_key_unreadable`, `github_app_key_not_regular_file`, `github_app_key_permissions_too_open`, `github_app_key_invalid`, `github_app_key_format_unsupported` | Fix the key file (see step 2) |
-| `repository_not_in_github_app_allowlist`, `repository_not_approved_in_luna` | Ineligible. No request was made |
+| `github_app_key_unreadable`, `github_app_key_not_regular_file`, `github_app_key_symlinked`, `github_app_key_permissions_too_open`, `github_app_key_invalid`, `github_app_key_format_unsupported` | Fix the key file (see step 2) |
+| `repository_not_in_github_app_allowlist`, `repository_not_approved_in_luna`, `repository_alias_required`, `repository_alias_not_bound_to_github_repository`, `repository_identity_unavailable` | Ineligible. No request was made |
 | `github_unreachable`, `github_timeout` | No route to GitHub, for example the OCI internal network (see Egress) |
 | `rate_limited` | Wait until `retry_at` |
 | `github_app_not_installed`, `github_installation_mismatch`, `github_app_not_read_only`, `github_token_scope_mismatch` | Installation or permission problem. Fix it in the app settings |
