@@ -241,6 +241,27 @@ class ContainerBuildTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "policy rejected"):
                 client.call(name)
 
+    def test_canaries_expect_the_timeline_tool_app_only_and_never_call_it(self):
+        self.assertIn("read_factory_agent_timeline", CANARY.FORBIDDEN_TOOL_CALLS)
+        self.assertNotIn("read_factory_agent_timeline", CANARY.ALLOWED_TOOL_CALLS)
+        with self.assertRaisesRegex(RuntimeError, "policy rejected"):
+            CANARY.McpClient("http://127.0.0.1:1/mcp").call("read_factory_agent_timeline")
+        for path in (CONTAINER_DIR / "acceptance_canary.py", CONTAINER_DIR / "planning_graph_canary.py"):
+            source = path.read_text()
+            self.assertIn("len(tools) != 23" if path.name == "acceptance_canary.py" else "len(tools) == 23", source)
+            self.assertIn("require_app_only_timeline(tools)", source)
+        app_only = {"name": "read_factory_agent_timeline", "annotations": {"readOnlyHint": True}, "_meta": {"ui": {"visibility": ["app"]}}}
+        CANARY.require_app_only_timeline([app_only])
+        for broken in (
+            [],
+            [{**app_only, "_meta": {"ui": {"visibility": ["model", "app"]}}}],
+            [{**app_only, "_meta": {}}],
+            [{**app_only, "annotations": {"readOnlyHint": False}}],
+            [app_only, app_only],
+        ):
+            with self.assertRaisesRegex(RuntimeError, "app-only"):
+                CANARY.require_app_only_timeline(broken)
+
     def test_planning_graph_canary_uses_only_planning_tools(self):
         self.assertTrue({"create_factory_graph", "get_factory_graph", "propose_factory_change", "apply_factory_change"}.issubset(CANARY.ALLOWED_TOOL_CALLS))
         client = CANARY.McpClient("http://127.0.0.1:1/mcp")
