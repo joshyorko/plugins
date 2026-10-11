@@ -243,6 +243,23 @@ describe("observed agent timelines", () => {
     expect(root.querySelector(".observed-events")?.textContent).toContain("Spawned in Codex: Worker 1, Worker 2");
     expect(root.textContent).not.toMatch(/cas_|child-1|owner-a/);
   });
+  it("keeps attributed Factory receipts beside observed ticks on the same agent lane", async () => {
+    const { controller, run } = await observedController();
+    controller.setViewMode("lanes");
+    await vi.waitFor(() => expect(Object.keys(controller.state.timelines)).toHaveLength(3));
+    const root = document.createElement("div");
+    root.innerHTML = renderLanes(run, roster(run, controller.state.graph), controller.state, (run.updated_at ?? 0) + 60);
+    const lanes = Array.from(root.querySelectorAll(".lane-list > li"));
+    const count = (index: number, selector: string) => lanes[index]?.querySelectorAll(selector).length;
+    expect(lanes.map(lane => lane.querySelector("strong")?.textContent)).toEqual(["Run receipts", "Luna", "Worker 1", "Worker 2"]);
+    // Receipt ticks follow the recorded thread_id; observed ticks are separate and never move a receipt.
+    expect([count(1, ".tick:not(.observed)"), count(2, ".tick:not(.observed)"), count(3, ".tick:not(.observed)")]).toEqual([2, 2, 0]);
+    expect([count(1, ".tick.observed"), count(2, ".tick.observed")]).toEqual([6, 7]);
+    expect(lanes[2]?.querySelector("small")?.textContent).toContain("2 receipts");
+    expect(lanes[3]?.querySelector(".lane-track.unavailable")?.textContent).toContain("declined this read");
+    expect(root.querySelector(".lanes-note")?.textContent).toContain("recorded on that agent's thread");
+    expect(root.querySelector(".lanes-note")?.textContent).toContain("not Factory proof");
+  });
   it("labels every no-observation state with a server-supplied reason", async () => {
     // Receipts without a recorded thread, so every agent lane depends on the observation alone.
     const run = fixtureSwarmRun();
