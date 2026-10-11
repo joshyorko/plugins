@@ -958,14 +958,45 @@ impl Factory {
         if allowed.is_none() {
             reasons.push("repository_not_in_github_app_allowlist");
         }
+        if let Some(alias) = &args.repository_alias {
+            ensure!(
+                crate::config::valid_alias(alias),
+                "invalid_repository_alias"
+            );
+        }
+        let config = self.effective_config().await?;
         let approved_aliases = if allowed.is_some() {
-            let config = self.effective_config().await?;
             crate::github::approved_aliases(&config, &repository, self.github.web_host())
         } else {
             Vec::new()
         };
         if allowed.is_some() && approved_aliases.is_empty() {
             reasons.push("repository_not_approved_in_luna");
+        }
+        // Physical binding: the graph identity create_factory_graph will report for
+        // the chosen alias. Decided locally, before any network request.
+        let mut graph_repository = None;
+        if reasons.is_empty() {
+            let alias = match &args.repository_alias {
+                Some(alias) if approved_aliases.contains(alias) => Some(alias.clone()),
+                Some(_) => {
+                    reasons.push("repository_alias_not_bound_to_github_repository");
+                    None
+                }
+                None if approved_aliases.len() == 1 => approved_aliases.first().cloned(),
+                None => {
+                    reasons.push("repository_alias_required");
+                    None
+                }
+            };
+            if let Some(alias) = alias {
+                match Self::graph_repository_identity(&config.repositories[&alias].root) {
+                    Ok(identity) => {
+                        graph_repository = Some(crate::github::GraphRepository { alias, identity })
+                    }
+                    Err(_) => reasons.push("repository_identity_unavailable"),
+                }
+            }
         }
         let eligibility = crate::github::Eligibility {
             eligible: reasons.is_empty(),
@@ -975,8 +1006,30 @@ impl Factory {
         };
         Ok(self
             .github
-            .inspect(repository, args.parent, eligibility)
+            .inspect(repository, args.parent, eligibility, graph_repository)
             .await)
+    }
+    /// The opaque identity `create_factory_graph` assigns for an approved root:
+    /// the same stamp as admission, so intake sources need no rewriting.
+    fn graph_repository_identity(root: &Path) -> Result<String> {
+        ensure!(
+            root.canonicalize()? == *root,
+            "repository_alias_was_remapped"
+        );
+        let top = crate::store::git(root, &["rev-parse", "--show-toplevel"])?;
+        ensure!(
+            Path::new(&top).canonicalize()? == *root,
+            "repository_root_mismatch"
+        );
+        let identity = crate::store::git(
+            root,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?;
+        let identity = Path::new(&identity)
+            .canonicalize()?
+            .to_string_lossy()
+            .into_owned();
+        crate::graph::repository_stamp(root, &identity)
     }
     /// #78: GitHub-reported PR/check/review/diff telemetry for graph nodes with
     /// GitHub sources. In-memory only: it never enters control, criteria,

@@ -85,6 +85,7 @@ fn github_reads_are_read_only_open_world_and_callable_by_both_audiences() {
         assert_eq!(value["inputSchema"]["additionalProperties"], false);
         let output = &value["outputSchema"]["properties"];
         assert_eq!(output["reported_by"]["const"], "github");
+        assert_eq!(output["provenance"]["const"], "github_app");
     }
     let inspect = tools
         .iter()
@@ -94,11 +95,16 @@ fn github_reads_are_read_only_open_world_and_callable_by_both_audiences() {
     assert_eq!(input["required"], json!(["repository", "parent"]));
     let validator = jsonschema::validator_for(&input).unwrap();
     assert!(validator.is_valid(&json!({"repository":"joshyorko/plugins","parent":67})));
+    assert!(validator.is_valid(
+        &json!({"repository":"joshyorko/plugins","parent":67,"repository_alias":"plugins"})
+    ));
     for bad in [
         json!({"repository":"joshyorko/plugins#67","parent":67}),
         json!({"repository":"../plugins","parent":67}),
         json!({"repository":"joshyorko/plugins","parent":0}),
         json!({"repository":"joshyorko/plugins","parent":67,"token":"x"}),
+        json!({"repository":"joshyorko/plugins","parent":67,"api_base":"https://attacker.example"}),
+        json!({"repository":"joshyorko/plugins","parent":67,"repository_alias":"../x"}),
     ] {
         assert!(!validator.is_valid(&bad), "{bad}");
     }

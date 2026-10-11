@@ -171,9 +171,13 @@ struct ApiBase {
     web_host: String,
 }
 impl ApiBase {
-    /// HTTPS origins only. Literal loopback HTTP exists solely for recorded-fixture
-    /// servers in tests; it is never a production endpoint.
+    /// HTTPS origins only. Release builds accept nothing else. Debug builds, which
+    /// run the recorded-fixture tests, additionally accept plain HTTP to a literal
+    /// loopback IP with an explicit port; that is never a production endpoint.
     fn parse(value: &str) -> Result<Self> {
+        Self::parse_with(value, cfg!(debug_assertions))
+    }
+    fn parse_with(value: &str, loopback_fixture: bool) -> Result<Self> {
         ensure!(
             value.len() <= 256 && !value.chars().any(|c| c.is_control() || c == ' '),
             "invalid_github_api_base"
@@ -197,7 +201,7 @@ impl ApiBase {
         match url.scheme() {
             "https" => ensure!(!host.is_empty(), "invalid_github_api_base"),
             "http" => ensure!(
-                literal_loopback && url.port().is_some(),
+                loopback_fixture && literal_loopback && url.port().is_some(),
                 "github_api_base_https_required"
             ),
             _ => bail!("github_api_base_https_required"),
@@ -281,6 +285,7 @@ impl Failure {
                         | "github_app_key_unreadable"
                         | "github_app_key_permissions_too_open"
                         | "github_app_key_not_regular_file"
+                        | "github_app_key_symlinked"
                         | "github_app_key_invalid"
                         | "github_service_unavailable"
                 )
@@ -320,19 +325,15 @@ struct AppClaims {
     iss: String,
 }
 
-/// Validate operator key placement without reading its contents.
-fn key_metadata(path: &Path) -> Outcome<()> {
-    let link = std::fs::symlink_metadata(path)
-        .map_err(|_| Failure::Unavailable("github_app_key_unreadable"))?;
-    if !link.file_type().is_file() {
-        return Err(Failure::Unavailable("github_app_key_not_regular_file"));
+/// Placement checks shared by the capability report and by every key read.
+/// The key must be a regular file reached without any symlink (neither the file
+/// nor any ancestor directory), readable by its owner only, and bounded in size.
+fn check_key_metadata(metadata: &std::fs::Metadata) -> Outcome<()> {
+    if metadata.file_type().is_symlink() {
+        return Err(Failure::Unavailable("github_app_key_symlinked"));
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if link.permissions().mode() & 0o077 != 0 {
-            return Err(Failure::Unavailable("github_app_key_permissions_too_open"));
-        }
+    if !metadata.file_type().is_file() {
+        return Err(Failure::Unavailable("github_app_key_not_regular_file"));
     }
     #[cfg(not(unix))]
     return Err(Failure::Unavailable(
@@ -340,20 +341,61 @@ fn key_metadata(path: &Path) -> Outcome<()> {
     ));
     #[cfg(unix)]
     {
-        if link.len() == 0 || link.len() > MAX_KEY_BYTES {
-            return Err(Failure::Unavailable("github_app_key_invalid"));
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(Failure::Unavailable("github_app_key_permissions_too_open"));
         }
-        Ok(())
     }
+    if metadata.len() == 0 || metadata.len() > MAX_KEY_BYTES {
+        return Err(Failure::Unavailable("github_app_key_invalid"));
+    }
+    Ok(())
+}
+/// Validate operator key placement without reading its contents.
+fn key_metadata(path: &Path) -> Outcome<()> {
+    let link = std::fs::symlink_metadata(path)
+        .map_err(|_| Failure::Unavailable("github_app_key_unreadable"))?;
+    check_key_metadata(&link)?;
+    // A symlinked ancestor directory is refused too: the configured path must
+    // already be canonical, so the operator sees exactly which file is read.
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|_| Failure::Unavailable("github_app_key_unreadable"))?;
+    if canonical != path {
+        return Err(Failure::Unavailable("github_app_key_symlinked"));
+    }
+    Ok(())
 }
 
 /// GitHub generates PKCS#1 PEM (`BEGIN RSA PRIVATE KEY`). The key is reread for
 /// every JWT so rotation needs no restart, and it is never cached or logged.
+/// The file is opened without following a final symlink and re-checked through
+/// the opened handle, so a swap between the check and the read is refused.
 fn signing_key(path: &Path) -> Outcome<jsonwebtoken::EncodingKey> {
     use base64::Engine;
+    use std::io::Read;
     key_metadata(path)?;
-    let bytes =
-        std::fs::read(path).map_err(|_| Failure::Unavailable("github_app_key_unreadable"))?;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+    }
+    let file = options.open(path).map_err(|error| {
+        Failure::Unavailable(if cfg!(unix) && error.raw_os_error() == Some(libc::ELOOP) {
+            "github_app_key_symlinked"
+        } else {
+            "github_app_key_unreadable"
+        })
+    })?;
+    let opened = file
+        .metadata()
+        .map_err(|_| Failure::Unavailable("github_app_key_unreadable"))?;
+    check_key_metadata(&opened)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_KEY_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| Failure::Unavailable("github_app_key_unreadable"))?;
     if bytes.len() as u64 > MAX_KEY_BYTES {
         return Err(Failure::Unavailable("github_app_key_invalid"));
     }
@@ -1030,6 +1072,10 @@ impl GithubReader {
 pub struct InspectIssueGraph {
     pub repository: String,
     pub parent: u64,
+    /// Approved Luna alias to bind sources to. Required only when more than one
+    /// approved repository's remote names the same GitHub repository.
+    #[serde(default)]
+    pub repository_alias: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1042,6 +1088,8 @@ struct Issue {
     repository: Option<RepoName>,
     pull_request: bool,
     blocked_by_total: Option<u64>,
+    /// The body exceeded the bound and was cut, so prose parsed from it may be incomplete.
+    body_truncated: bool,
 }
 fn repository_from_api_url(value: &str) -> Option<RepoName> {
     let (_, tail) = value.rsplit_once("/repos/")?;
@@ -1059,11 +1107,13 @@ fn issue(value: &Value) -> Option<Issue> {
     let title = value["title"].as_str()?;
     let state = value["state"].as_str()?;
     let summary = &value["issue_dependencies_summary"];
+    let body = value["body"].as_str().unwrap_or_default();
     Some(Issue {
         node_id: node_id.into(),
         number,
         title: bounded_prefix(title, 1024).into(),
-        body: bounded_prefix(value["body"].as_str().unwrap_or_default(), MAX_BODY_BYTES).into(),
+        body: bounded_prefix(body, MAX_BODY_BYTES).into(),
+        body_truncated: body.len() > MAX_BODY_BYTES,
         open: state == "open",
         repository: value["repository_url"]
             .as_str()
@@ -1215,6 +1265,48 @@ pub fn acceptance_lines(body: &str) -> Vec<String> {
     }
     out
 }
+/// Dependencies documented in prose: references after "blocked by", "blocked on" or
+/// "depends on" on the same line, and list items under a "Dependencies" or
+/// "Blocked by" heading. These are parsed, not GitHub relations, and are reported
+/// as `documented_not_native` unless GitHub also records the relation.
+pub fn documented_dependencies(body: &str, web_host: &str) -> Vec<TaskReference> {
+    const PHRASES: [&str; 3] = ["blocked by", "blocked on", "depends on"];
+    let mut found = Vec::new();
+    let mut inside = false;
+    for line in body.lines().take(1000) {
+        let trimmed = line.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        let heading = trimmed.starts_with('#')
+            || (trimmed.starts_with("**") && trimmed.ends_with("**") && trimmed.len() > 4);
+        let mut texts: Vec<&str> = Vec::new();
+        if heading {
+            inside = lower.contains("dependenc") || lower.contains("blocked by");
+        } else if inside
+            && let Some(item) = ["- ", "* ", "+ "]
+                .iter()
+                .find_map(|m| trimmed.strip_prefix(m))
+        {
+            texts.push(item);
+        }
+        for phrase in PHRASES {
+            // ASCII lowercasing preserves byte offsets into `trimmed`.
+            if let Some(at) = lower.find(phrase) {
+                texts.push(&trimmed[at + phrase.len()..]);
+            }
+        }
+        for text in texts {
+            for reference in references(text, web_host) {
+                if !reference.pull_request && !found.contains(&reference) {
+                    found.push(reference);
+                }
+                if found.len() >= MAX_REPORTED_ITEMS {
+                    return found;
+                }
+            }
+        }
+    }
+    found
+}
 /// Strongly connected components of size > 1, plus self-dependencies.
 fn cycles(nodes: &[String], edges: &BTreeMap<String, Vec<String>>) -> Vec<Vec<String>> {
     let index: HashMap<&str, usize> = nodes
@@ -1261,43 +1353,113 @@ fn cycles(nodes: &[String], edges: &BTreeMap<String, Vec<String>>) -> Vec<Vec<St
     out
 }
 
+/// Physical graph binding for intake sources: the graph's opaque local repository
+/// identity (what `create_factory_graph` reports as `graph.repository.identity`)
+/// plus the approved alias it was computed from. Never a filesystem path.
+#[derive(Debug, Clone, Serialize)]
+pub struct GraphRepository {
+    pub alias: String,
+    pub identity: String,
+}
+
+/// Forge identity of a GitHub item, kept apart from the physical source binding.
+fn forge(repository: &RepoName, issue: &Issue) -> Value {
+    json!({"provider":"github","repository":repository.key(),"number":issue.number,"node_id":issue.node_id})
+}
+/// Canonical forge key, `github:owner/repo#N` (lowercase repository).
+pub fn forge_key(repository: &RepoName, number: u64) -> String {
+    format!("github:{}#{number}", repository.key())
+}
+/// Append without duplicates up to the reporting bound; overflow is recorded so
+/// the read is never reported as complete.
+fn push_bounded(list: &mut Vec<Value>, overflow: &mut bool, entry: Value) {
+    if list.contains(&entry) {
+        return;
+    }
+    if list.len() < MAX_REPORTED_ITEMS {
+        list.push(entry);
+    } else {
+        *overflow = true;
+    }
+}
+
+/// Every way an intake read can be incomplete. Any flag makes the status `incomplete`.
+#[derive(Default)]
+struct Truncation {
+    sub_issues: bool,
+    task_list: bool,
+    dependencies: bool,
+    nodes: bool,
+    acceptance: bool,
+    bodies: bool,
+    reported: bool,
+    unrecognized: bool,
+}
+impl Truncation {
+    fn any(&self) -> bool {
+        self.sub_issues
+            || self.task_list
+            || self.dependencies
+            || self.nodes
+            || self.acceptance
+            || self.bodies
+            || self.reported
+            || self.unrecognized
+    }
+    fn json(&self) -> Value {
+        json!({"sub_issues":self.sub_issues,"task_list":self.task_list,"dependencies":self.dependencies,
+            "nodes":self.nodes,"acceptance":self.acceptance,"bodies":self.bodies,
+            "reported":self.reported,"unrecognized":self.unrecognized})
+    }
+}
+
 impl GithubReader {
     pub async fn inspect(
         &self,
         repository: RepoName,
         parent: u64,
         eligibility: Eligibility,
+        graph_repository: Option<GraphRepository>,
     ) -> Value {
         let display = self
             .allowed(&repository)
             .unwrap_or_else(|| repository.clone());
         let mut result = json!({
-            "schema_version":1,"reported_by":"github","writes":"none",
+            "schema_version":1,"reported_by":"github","provenance":"github_app","writes":"none",
             "repository":display.full(),"parent":parent,
             "status":"unavailable","reason":null,"retry_at":null,"observed_at":null,
-            "eligibility":eligibility,"forge_repository":null,"parent_issue":null,
+            "eligibility":eligibility,"graph_repository":graph_repository,
+            "forge_repository":null,"parent_issue":null,
             "nodes":[],"acceptance_candidates":[],"cycles":[],"external_dependencies":[],
             "cross_repository":[],"omitted":[],
-            "truncated":{"sub_issues":false,"task_list":false,"dependencies":false,"nodes":false},
+            "truncated":Truncation::default().json(),
             "import":self.import_guidance(false, &["inspection_unavailable"]),
         });
         if let Some(reason) = self.unconfigured_reason() {
             result["reason"] = json!(reason);
             return result;
         }
-        if !eligibility.eligible {
-            result["status"] = json!("ineligible");
-            result["reason"] = json!(eligibility.reasons.first().copied().unwrap_or("ineligible"));
-            result["import"] = self.import_guidance(false, &["repository_ineligible"]);
-            return result;
-        }
-        match self.read_intake(&display, parent).await {
+        let graph = match graph_repository {
+            Some(graph) if eligibility.eligible => graph,
+            _ => {
+                result["status"] = json!("ineligible");
+                result["reason"] = json!(
+                    eligibility
+                        .reasons
+                        .first()
+                        .copied()
+                        .unwrap_or("repository_identity_unavailable")
+                );
+                result["import"] = self.import_guidance(false, &["repository_ineligible"]);
+                return result;
+            }
+        };
+        match self.read_intake(&display, parent, &graph).await {
             Ok(intake) => {
                 let object = result.as_object_mut().expect("intake object");
                 for (key, value) in intake.as_object().expect("intake fields") {
                     object.insert(key.clone(), value.clone());
                 }
-                object.insert("status".into(), json!("available"));
             }
             Err(failure) => {
                 result["reason"] = json!(failure.reason());
@@ -1310,11 +1472,16 @@ impl GithubReader {
         json!({
             "ready":ready,"blockers":blockers,"decisions_needed":[],
             "steps":["create_factory_graph","propose_factory_change","apply_factory_change"],
-            "repository_id":"Set every source.repository_id to graph.repository.identity from create_factory_graph; drop display before proposing.",
+            "repository_id":"Sources are already bound to graph_repository.identity: create the graph with repository = graph_repository.alias and copy each source unchanged.",
             "confirmation":"explicit_user_confirmation_required"
         })
     }
-    async fn read_intake(&self, repository: &RepoName, parent: u64) -> Outcome<Value> {
+    async fn read_intake(
+        &self,
+        repository: &RepoName,
+        parent: u64,
+        graph: &GraphRepository,
+    ) -> Outcome<Value> {
         let base = self.base()?.clone();
         let mut budget = CallBudget::new(INTAKE_REQUEST_BUDGET);
         let scope = Scope::Intake;
@@ -1345,23 +1512,16 @@ impl GithubReader {
             return Err(Failure::Unavailable("parent_issue_moved"));
         }
 
-        let mut truncated =
-            json!({"sub_issues":false,"task_list":false,"dependencies":false,"nodes":false});
+        let mut truncated = Truncation {
+            bodies: parent_issue.body_truncated,
+            ..Truncation::default()
+        };
         let mut candidates: Vec<(Issue, &'static str)> = Vec::new();
         let mut cross = Vec::<Value>::new();
         let mut omitted = Vec::<Value>::new();
         let mut seen = BTreeSet::from([parent]);
-        let push_cross = |cross: &mut Vec<Value>, repo: &RepoName, number: u64, relation: &str| {
-            let entry = json!({"repository":repo.full(),"number":number,"relation":relation,"imported":false});
-            if cross.len() < MAX_REPORTED_ITEMS && !cross.contains(&entry) {
-                cross.push(entry);
-            }
-        };
-        let push_omitted = |omitted: &mut Vec<Value>, number: u64, reason: &str| {
-            if omitted.len() < MAX_REPORTED_ITEMS {
-                omitted.push(json!({"number":number,"reason":reason}));
-            }
-        };
+        let cross_entry = |repo: &RepoName, number: u64, relation: &str| json!({"repository":repo.full(),"number":number,"relation":relation,"imported":false});
+        let omitted_entry = |number: u64, reason: &str| json!({"number":number,"reason":reason});
 
         // Sub-issues: page-numbered requests only; server-supplied Link URLs are never followed.
         for page in 1..=MAX_SUB_ISSUE_PAGES {
@@ -1379,6 +1539,8 @@ impl GithubReader {
                 )
                 .await?;
             if reply.status == StatusCode::NOT_FOUND && page == 1 {
+                // No sub-issue record is not the same as no sub-issues.
+                truncated.sub_issues = true;
                 break;
             }
             let reply = reply.ok()?;
@@ -1388,6 +1550,7 @@ impl GithubReader {
                 .ok_or(Failure::Unavailable("github_invalid_response"))?;
             for item in items {
                 let Some(child) = issue(item) else {
+                    truncated.unrecognized = true;
                     continue;
                 };
                 if let Some(other) = child
@@ -1395,14 +1558,26 @@ impl GithubReader {
                     .as_ref()
                     .filter(|r| r.key() != repository.key())
                 {
-                    push_cross(&mut cross, other, child.number, "sub_issue");
+                    push_bounded(
+                        &mut cross,
+                        &mut truncated.reported,
+                        cross_entry(other, child.number, "sub_issue"),
+                    );
                 } else if !seen.insert(child.number) {
                     continue;
                 } else if !child.open {
-                    push_omitted(&mut omitted, child.number, "closed_on_github");
+                    push_bounded(
+                        &mut omitted,
+                        &mut truncated.reported,
+                        omitted_entry(child.number, "closed_on_github"),
+                    );
                 } else if candidates.len() >= MAX_CANDIDATE_NODES {
-                    truncated["nodes"] = json!(true);
-                    push_omitted(&mut omitted, child.number, "node_limit");
+                    truncated.nodes = true;
+                    push_bounded(
+                        &mut omitted,
+                        &mut truncated.reported,
+                        omitted_entry(child.number, "node_limit"),
+                    );
                 } else {
                     candidates.push((child, "sub_issue"));
                 }
@@ -1411,12 +1586,15 @@ impl GithubReader {
                 break;
             }
             if page == MAX_SUB_ISSUE_PAGES {
-                truncated["sub_issues"] = json!(true);
+                truncated.sub_issues = true;
             }
         }
 
-        // Same-repository task-list references in the parent body.
+        // Same-repository task-list references in the parent body. Parsed, not native.
         let references = task_list_references(&parent_issue.body, &base.web_host);
+        if references.len() >= MAX_REPORTED_ITEMS {
+            truncated.task_list = true;
+        }
         let mut fetched = 0;
         for reference in references {
             if let Some(other) = reference
@@ -1424,19 +1602,31 @@ impl GithubReader {
                 .as_ref()
                 .filter(|r| r.key() != repository.key())
             {
-                push_cross(&mut cross, other, reference.number, "task_list");
+                push_bounded(
+                    &mut cross,
+                    &mut truncated.reported,
+                    cross_entry(other, reference.number, "task_list"),
+                );
                 continue;
             }
             if reference.pull_request {
-                push_omitted(&mut omitted, reference.number, "pull_request_not_imported");
+                push_bounded(
+                    &mut omitted,
+                    &mut truncated.reported,
+                    omitted_entry(reference.number, "pull_request_not_imported"),
+                );
                 continue;
             }
             if !seen.insert(reference.number) {
                 continue;
             }
             if fetched >= MAX_TASK_LIST_FETCHES {
-                truncated["task_list"] = json!(true);
-                push_omitted(&mut omitted, reference.number, "task_list_limit");
+                truncated.task_list = true;
+                push_bounded(
+                    &mut omitted,
+                    &mut truncated.reported,
+                    omitted_entry(reference.number, "task_list_limit"),
+                );
                 continue;
             }
             fetched += 1;
@@ -1450,80 +1640,162 @@ impl GithubReader {
                     &[],
                 )
                 .await?;
-            if matches!(reply.status.as_u16(), 301 | 404 | 410) {
-                push_omitted(&mut omitted, reference.number, "issue_unavailable");
-                continue;
-            }
-            let Some(child) = issue(&reply.ok()?.body) else {
-                push_omitted(&mut omitted, reference.number, "issue_unavailable");
-                continue;
-            };
-            if child.pull_request {
-                push_omitted(&mut omitted, child.number, "pull_request_not_imported");
-            } else if !same(&child.repository) {
-                push_omitted(&mut omitted, child.number, "issue_moved");
-            } else if !child.open {
-                push_omitted(&mut omitted, child.number, "closed_on_github");
-            } else if candidates.len() >= MAX_CANDIDATE_NODES {
-                truncated["nodes"] = json!(true);
-                push_omitted(&mut omitted, child.number, "node_limit");
+            let child = if matches!(reply.status.as_u16(), 301 | 404 | 410) {
+                None
             } else {
-                candidates.push((child, "task_list"));
+                issue(&reply.ok()?.body)
+            };
+            let reason = match &child {
+                None => Some("issue_unavailable"),
+                Some(child) if child.pull_request => Some("pull_request_not_imported"),
+                Some(child) if !same(&child.repository) => Some("issue_moved"),
+                Some(child) if !child.open => Some("closed_on_github"),
+                Some(_) if candidates.len() >= MAX_CANDIDATE_NODES => {
+                    truncated.nodes = true;
+                    Some("node_limit")
+                }
+                Some(_) => None,
+            };
+            match (child, reason) {
+                (Some(child), None) => candidates.push((child, "task_list")),
+                (child, reason) => push_bounded(
+                    &mut omitted,
+                    &mut truncated.reported,
+                    omitted_entry(
+                        child.map_or(reference.number, |c| c.number),
+                        reason.unwrap_or("issue_unavailable"),
+                    ),
+                ),
             }
         }
 
-        // "Blocked by" relations, where GitHub exposes them.
+        // Dependencies: native "blocked by" relations where GitHub exposes them, plus
+        // dependencies documented in issue prose. An absent native record never erases
+        // a documented dependency; it is reported as `documented_not_native` instead.
         let numbers: BTreeSet<u64> = candidates.iter().map(|(i, _)| i.number).collect();
-        let mut dependencies: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut native: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut documented: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut external = Vec::<Value>::new();
         let mut dependency_api = true;
         for (child, _) in &candidates {
             let id = format!("issue-{}", child.number);
-            dependencies.entry(id.clone()).or_default();
-            if child.blocked_by_total == Some(0) || !dependency_api {
-                continue;
-            }
-            let reply = self
-                .get(
-                    &mut budget,
-                    repository,
-                    scope,
-                    &token,
-                    &format!("{issues_path}/{}/dependencies/blocked_by", child.number),
-                    &[("per_page", DEPENDENCIES_PER_PAGE.to_string())],
-                )
-                .await?;
-            if reply.status == StatusCode::NOT_FOUND {
-                dependency_api = false;
-                truncated["dependencies"] = json!(true);
-                continue;
-            }
-            let reply = reply.ok()?;
-            if reply.has_next {
-                truncated["dependencies"] = json!(true);
-            }
-            for blocker in reply.body.as_array().into_iter().flatten() {
-                let Some(blocker) = issue(blocker) else {
-                    continue;
-                };
-                if let Some(other) = blocker
-                    .repository
-                    .as_ref()
-                    .filter(|r| r.key() != repository.key())
-                {
-                    push_cross(&mut cross, other, blocker.number, "blocked_by");
-                } else if numbers.contains(&blocker.number) {
-                    let deps = dependencies.entry(id.clone()).or_default();
-                    let dep = format!("issue-{}", blocker.number);
-                    if !deps.contains(&dep) {
-                        deps.push(dep);
+            truncated.bodies |= child.body_truncated;
+            let natives = native.entry(id.clone()).or_default();
+            let mut native_external = BTreeSet::new();
+            if !dependency_api {
+                truncated.dependencies = true;
+            } else if child.blocked_by_total != Some(0) {
+                let reply = self
+                    .get(
+                        &mut budget,
+                        repository,
+                        scope,
+                        &token,
+                        &format!("{issues_path}/{}/dependencies/blocked_by", child.number),
+                        &[("per_page", DEPENDENCIES_PER_PAGE.to_string())],
+                    )
+                    .await?;
+                if reply.status == StatusCode::NOT_FOUND {
+                    dependency_api = false;
+                    truncated.dependencies = true;
+                } else {
+                    let reply = reply.ok()?;
+                    let blockers = reply.body.as_array();
+                    if reply.has_next
+                        || blockers.is_none()
+                        || child
+                            .blocked_by_total
+                            .is_some_and(|total| total > blockers.map_or(0, |b| b.len() as u64))
+                    {
+                        truncated.dependencies = true;
                     }
-                } else if external.len() < MAX_REPORTED_ITEMS {
-                    external.push(json!({"node_id":id,"blocked_by":blocker.number,
-                        "github_state":if blocker.open {"open"} else {"closed"},"imported":false}));
+                    for blocker in blockers.into_iter().flatten() {
+                        let Some(blocker) = issue(blocker) else {
+                            truncated.unrecognized = true;
+                            continue;
+                        };
+                        if let Some(other) = blocker
+                            .repository
+                            .as_ref()
+                            .filter(|r| r.key() != repository.key())
+                        {
+                            push_bounded(
+                                &mut cross,
+                                &mut truncated.reported,
+                                cross_entry(other, blocker.number, "blocked_by"),
+                            );
+                        } else if numbers.contains(&blocker.number) {
+                            let dep = format!("issue-{}", blocker.number);
+                            if !natives.contains(&dep) {
+                                natives.push(dep);
+                            }
+                        } else {
+                            native_external.insert(blocker.number);
+                            push_bounded(
+                                &mut external,
+                                &mut truncated.reported,
+                                json!({"node_id":id,"blocked_by":blocker.number,
+                                    "github_state":if blocker.open {"open"} else {"closed"},
+                                    "imported":false,"derivation":"native","status":"native"}),
+                            );
+                        }
+                    }
+                }
+            }
+            let docs = documented.entry(id.clone()).or_default();
+            let prose = documented_dependencies(&child.body, &base.web_host);
+            if prose.len() >= MAX_REPORTED_ITEMS {
+                truncated.dependencies = true;
+            }
+            for reference in prose {
+                match reference.repository.as_ref() {
+                    Some(other) if other.key() != repository.key() => push_bounded(
+                        &mut cross,
+                        &mut truncated.reported,
+                        cross_entry(other, reference.number, "documented_dependency"),
+                    ),
+                    _ if reference.number == child.number => {}
+                    _ if numbers.contains(&reference.number) => {
+                        let dep = format!("issue-{}", reference.number);
+                        if !docs.contains(&dep) {
+                            docs.push(dep);
+                        }
+                    }
+                    _ if native_external.contains(&reference.number) => {}
+                    _ => push_bounded(
+                        &mut external,
+                        &mut truncated.reported,
+                        json!({"node_id":id,"blocked_by":reference.number,"github_state":null,
+                            "imported":false,"derivation":"parsed","status":"documented_not_native"}),
+                    ),
                 }
             }
         }
+        let mut dependencies: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut evidence: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        let mut documented_not_native = false;
+        for (child, _) in &candidates {
+            let id = format!("issue-{}", child.number);
+            let natives = native.get(&id).cloned().unwrap_or_default();
+            let docs = documented.get(&id).cloned().unwrap_or_default();
+            let mut union = natives.clone();
+            union.extend(docs.iter().filter(|d| !natives.contains(d)).cloned());
+            let rows = union
+                .iter()
+                .map(|dep| {
+                    let is_native = natives.contains(dep);
+                    documented_not_native |= !is_native;
+                    json!({"node_id":dep,"native":is_native,"documented":docs.contains(dep),
+                        "status":if is_native {"native"} else {"documented_not_native"}})
+                })
+                .collect();
+            evidence.insert(id.clone(), rows);
+            dependencies.insert(id, union);
+        }
+        let documented_only = documented_not_native
+            || external
+                .iter()
+                .any(|e| e["status"] == "documented_not_native");
         let ids: Vec<String> = candidates
             .iter()
             .map(|(i, _)| format!("issue-{}", i.number))
@@ -1531,8 +1803,7 @@ impl GithubReader {
         let found_cycles = cycles(&ids, &dependencies);
 
         let source = |issue: &Issue| {
-            json!({"provider":"github","repository_id":null,"repository":repository.full(),
-                "repository_node_id":token.repository_node_id,
+            json!({"provider":"github","repository_id":graph.identity,
                 "item_id":format!("{repository_id}:{}", issue.node_id),
                 "revision":revision(repository_id, issue),
                 "display":{"number":issue.number,"url":base.issue_url(repository, issue.number)}})
@@ -1541,27 +1812,38 @@ impl GithubReader {
             bounded_text(&issue.title, 1000).unwrap_or_else(|| format!("Issue #{}", issue.number))
         };
         let mut acceptance = Vec::<Value>::new();
-        let mut add_acceptance = |node: Option<&str>, prefix: &str, body: &str| {
-            for (i, text) in acceptance_lines(body).into_iter().enumerate() {
+        let mut add_acceptance = |node: Option<&str>, prefix: &str, body: &str| -> bool {
+            let lines = acceptance_lines(body);
+            let mut cut = lines.len() >= MAX_ACCEPTANCE_PER_ISSUE;
+            for (i, text) in lines.into_iter().enumerate() {
                 if acceptance.len() >= MAX_ACCEPTANCE_TOTAL {
+                    cut = true;
                     break;
                 }
                 acceptance.push(
                     json!({"id":format!("{prefix}:acceptance-{}", i + 1),"node_id":node,
-                    "text":text,"label":"derived_from_issue"}),
+                    "text":text,"label":"derived_from_issue","derivation":"parsed","provenance":"github_app"}),
                 );
             }
+            cut
         };
-        add_acceptance(None, &format!("issue-{parent}"), &parent_issue.body);
+        let mut acceptance_cut =
+            add_acceptance(None, &format!("issue-{parent}"), &parent_issue.body);
         let nodes: Vec<Value> = candidates
             .iter()
             .map(|(issue, relation)| {
                 let id = format!("issue-{}", issue.number);
-                add_acceptance(Some(&id), &id, &issue.body);
-                json!({"id":id,"title":title(issue),"dependencies":dependencies.get(&id).cloned().unwrap_or_default(),
-                    "relation":relation,"github_state":"open","source":source(issue)})
+                acceptance_cut |= add_acceptance(Some(&id), &id, &issue.body);
+                json!({"id":id,"title":title(issue),
+                    "dependencies":dependencies.get(&id).cloned().unwrap_or_default(),
+                    "dependency_evidence":evidence.get(&id).cloned().unwrap_or_default(),
+                    "relation":relation,"derivation":if *relation == "sub_issue" {"native"} else {"parsed"},
+                    "github_state":"open","provenance":"github_app",
+                    "forge":forge(repository, issue),"forge_key":forge_key(repository, issue.number),
+                    "source":source(issue)})
             })
             .collect();
+        truncated.acceptance = acceptance_cut;
         let mut blockers = Vec::new();
         if nodes.is_empty() {
             blockers.push("no_candidate_nodes");
@@ -1570,28 +1852,37 @@ impl GithubReader {
             blockers.push("dependency_cycle");
         }
         let mut decisions = vec!["confirm_acceptance_criteria", "bind_criteria_to_nodes"];
+        if candidates
+            .iter()
+            .any(|(_, relation)| *relation == "task_list")
+        {
+            decisions.push("confirm_parsed_task_list_nodes");
+        }
+        if documented_only {
+            decisions.push("confirm_documented_dependencies");
+        }
         if !external.is_empty() {
             decisions.push("external_dependencies_not_imported");
         }
         if !cross.is_empty() {
             decisions.push("cross_repository_references_not_imported");
         }
-        if truncated
-            .as_object()
-            .is_some_and(|t| t.values().any(|v| v == true))
-        {
-            decisions.push("results_truncated");
+        let complete = !truncated.any();
+        if !complete {
+            decisions.push("results_incomplete");
         }
         let mut guidance = self.import_guidance(blockers.is_empty(), &blockers);
         guidance["decisions_needed"] = json!(decisions);
         Ok(json!({
+            "status":if complete {"complete"} else {"incomplete"},
             "observed_at":crate::store::now(),
-            "forge_repository":{"repository":repository.full(),"repository_id":repository_id,"node_id":token.repository_node_id},
+            "forge_repository":{"provider":"github","repository":repository.key(),"repository_id":repository_id,"node_id":token.repository_node_id},
             "parent_issue":{"number":parent,"title":title(&parent_issue),"github_state":if parent_issue.open {"open"} else {"closed"},
-                "source":source(&parent_issue)},
+                "provenance":"github_app","forge":forge(repository, &parent_issue),
+                "forge_key":forge_key(repository, parent),"source":source(&parent_issue)},
             "nodes":nodes,"acceptance_candidates":acceptance,
             "cycles":found_cycles.into_iter().map(|ids| json!({"node_ids":ids,"status":"rejected"})).collect::<Vec<_>>(),
-            "external_dependencies":external,"cross_repository":cross,"omitted":omitted,"truncated":truncated,
+            "external_dependencies":external,"cross_repository":cross,"omitted":omitted,"truncated":truncated.json(),
             "import":guidance,
         }))
     }
@@ -1693,7 +1984,7 @@ impl GithubReader {
             "checks":{"rollup":rollup_state,"total":total.min(10_000),"truncated":total as usize > runs.len() + statuses.len(),
                 "runs":runs,"statuses":statuses},
             "ready_for_review":ready,"merge_authority":false,
-            "observed_at":observed_at,"reported_by":"github"
+            "observed_at":observed_at,"reported_by":"github","provenance":"github_app"
         }))
     }
     async fn observe_node(
@@ -1766,25 +2057,30 @@ impl GithubReader {
         let references = &node["closedByPullRequestsReferences"];
         let mut pulls = Vec::new();
         let mut cross = 0;
-        for pr in references["nodes"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .take(MAX_PULL_REQUESTS)
-        {
+        let mut unrecognized = false;
+        let listed = references["nodes"].as_array();
+        for pr in listed.into_iter().flatten().take(MAX_PULL_REQUESTS) {
             if pr["repository"]["databaseId"].as_u64() != Some(repository_id) {
                 cross += 1;
                 continue;
             }
-            if let Some(pr) = self.pull_request(&repository, pr, observed_at) {
-                pulls.push(pr);
+            match self.pull_request(&repository, pr, observed_at) {
+                Some(pr) => pulls.push(pr),
+                None => unrecognized = true,
             }
         }
-        let total = references["totalCount"].as_u64().unwrap_or(0);
+        let total = references["totalCount"].as_u64();
         let partial = body["errors"].as_array().is_some_and(|e| !e.is_empty());
+        let shown = listed.map_or(0, Vec::len) as u64;
+        // Complete only when every linked PR and every check context was read.
+        let complete = !partial
+            && !unrecognized
+            && total.is_some_and(|total| total <= MAX_PULL_REQUESTS as u64 && shown >= total)
+            && pulls.iter().all(|pr| pr["checks"]["truncated"] == false);
+        let total = total.unwrap_or(0);
         let base = self.base()?;
         Ok(json!({
-            "partial":partial,
+            "partial":partial,"complete":complete,
             "issue":{"number":number,"url":base.issue_url(&repository, number),
                 "state":lower_enum(&node["state"],&["open","closed"])},
             "pull_requests":pulls,"pull_requests_total":total.min(10_000),
@@ -1804,8 +2100,8 @@ impl GithubReader {
     ) -> Value {
         let mut result = json!({
             "schema_version":1,"run_id":run_id,"graph_revision":graph_revision,
-            "reported_by":"github","proof":"none","merge_capability":"none",
-            "available":false,"reason":null,"retry_at":null,
+            "reported_by":"github","provenance":"github_app","proof":"none","merge_capability":"none",
+            "available":false,"complete":false,"reason":null,"retry_at":null,
             "min_interval_seconds":DELIVERY_MIN_INTERVAL_SECONDS,
             "observed_at":crate::store::now(),"nodes":[]
         });
@@ -1844,12 +2140,16 @@ impl GithubReader {
                     (None, _) => ("unavailable", None),
                 };
                 let mut entry = json!({"node_id":source.node_id,"item_id":source.item_id,"reported_by":"github",
-                    "status":status,"freshness":freshness,"reason":reason,"observed_at":null,
-                    "issue":null,"pull_requests":[],"pull_requests_total":0,"pull_requests_truncated":false});
+                    "provenance":"github_app","status":status,"freshness":freshness,"reason":reason,"observed_at":null,
+                    "issue":null,"pull_requests":[],"pull_requests_total":0,"pull_requests_truncated":false,"complete":false});
                 if let Some(data) = value.and_then(Value::as_object) {
                     for (k, v) in data {
                         entry[k] = v.clone();
                     }
+                }
+                // Stale, deferred or unavailable data is never a complete read.
+                if status != "observed" || freshness == Some("stale") {
+                    entry["complete"] = json!(false);
                 }
                 entry
             };
@@ -1902,13 +2202,19 @@ impl GithubReader {
                 global = Some(failure);
             }
         }
+        let complete = global.is_none()
+            && sources.len() <= 128
+            && nodes.iter().all(|node| node["complete"] == true);
         result["nodes"] = json!(nodes);
         match global {
             Some(failure) => {
                 result["reason"] = json!(failure.reason());
                 result["retry_at"] = json!(failure.retry_at());
             }
-            None => result["available"] = json!(true),
+            None => {
+                result["available"] = json!(true);
+                result["complete"] = json!(complete);
+            }
         }
         result
     }
@@ -1966,6 +2272,11 @@ mod tests {
             ApiBase::parse("https://api.acme.ghe.com").unwrap().web_host,
             "acme.ghe.com"
         );
+        // Release builds refuse plain HTTP outright, loopback included.
+        for http in ["http://127.0.0.1:8080", "http://[::1]:9"] {
+            assert!(ApiBase::parse_with(http, false).is_err(), "{http}");
+        }
+        ApiBase::parse_with("https://api.github.com", false).unwrap();
     }
 
     #[test]
@@ -2013,6 +2324,23 @@ mod tests {
         assert_eq!(
             acceptance_lines(body),
             vec!["Tests pass", "Docs updated", "Third item"]
+        );
+        let body = "Depends on #4 and #5.\nPart of #67\nBlocked on https://github.com/joshyorko/plugins/issues/6\nblocked by https://github.com/joshyorko/plugins/pull/7\n## Dependencies\n- other/repo#8\n- #4 again\n## Notes\n- #9 not a dependency";
+        assert_eq!(
+            documented_dependencies(body, "github.com")
+                .iter()
+                .map(|r| (r.repository.as_ref().map(RepoName::key), r.number))
+                .collect::<Vec<_>>(),
+            vec![
+                (None, 4),
+                (None, 5),
+                (Some("joshyorko/plugins".into()), 6),
+                (Some("other/repo".into()), 8),
+            ]
+        );
+        assert_eq!(
+            forge_key(&RepoName::parse("JoshYorko/Plugins").unwrap(), 67),
+            "github:joshyorko/plugins#67"
         );
     }
 

@@ -141,8 +141,9 @@ async fn live_read_only_github_app_check() {
         .unwrap();
     assert_redacted(&inspection, &key_path);
     println!("inspect_factory_issue_graph: {}", summary(&inspection));
-    assert_eq!(
-        inspection["status"], "available",
+    // `incomplete` is an honest, successful read of a large or partly unreadable graph.
+    assert!(
+        ["complete", "incomplete"].contains(&inspection["status"].as_str().unwrap_or_default()),
         "{}",
         inspection["reason"]
     );
@@ -154,13 +155,14 @@ async fn live_read_only_github_app_check() {
     })).await.unwrap();
     let run_id = graph["graph"]["run_id"].clone();
     let identity = graph["graph"]["repository"]["identity"].clone();
+    assert_eq!(inspection["graph_repository"]["identity"], identity);
     let nodes: Vec<Value> = inspection["nodes"]
         .as_array()
         .unwrap()
         .iter()
         .map(|n| {
             json!({"id":n["id"],"title":n["title"],"criterion_ids":["A1"],"dependencies":n["dependencies"],
-            "source":{"provider":"github","repository_id":identity,"item_id":n["source"]["item_id"],"revision":n["source"]["revision"]}})
+            "source":n["source"]})
         })
         .collect();
     if nodes.is_empty() || !inspection["cycles"].as_array().unwrap().is_empty() {

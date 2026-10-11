@@ -89,6 +89,8 @@ struct World {
     gone: BTreeSet<u64>,
     sub_issues: HashMap<u64, Vec<Value>>,
     blocked_by: HashMap<u64, Vec<Value>>,
+    /// The issue dependencies API is absent (404), as on instances without it.
+    dependencies_unavailable: bool,
     graphql: HashMap<String, Value>,
     installation_id: u64,
     installation_permissions: Value,
@@ -108,6 +110,7 @@ impl Default for World {
             gone: BTreeSet::new(),
             sub_issues: HashMap::new(),
             blocked_by: HashMap::new(),
+            dependencies_unavailable: false,
             graphql: HashMap::new(),
             installation_id: INSTALLATION,
             installation_permissions: json!({"actions":"read","checks":"read","issues":"read","metadata":"read","pull_requests":"read","statuses":"read"}),
@@ -298,6 +301,9 @@ async fn handle(
                         ));
                     }
                     reply(StatusCode::OK, &headers, json!(all[start..end]))
+                }
+                ["dependencies", "blocked_by"] if world.dependencies_unavailable => {
+                    reply(StatusCode::NOT_FOUND, &[], json!({"message":"Not Found"}))
                 }
                 ["dependencies", "blocked_by"] => reply(
                     StatusCode::OK,
@@ -556,22 +562,41 @@ async fn recorded_shapes_become_revisioned_candidates_and_inspection_writes_noth
     let runs_before = invoke(&h, "list_factory_runs", json!({})).await;
 
     let result = inspect(&h, REPO, 67).await;
-    assert_eq!(result["status"], "available", "{result}");
+    assert_eq!(result["status"], "complete", "{result}");
     assert_eq!(result["writes"], "none");
     assert_eq!(result["reported_by"], "github");
+    assert_eq!(result["provenance"], "github_app");
+    // Physical binding: the same opaque identity create_factory_graph reports, never a path.
+    assert_eq!(
+        result["graph_repository"],
+        json!({"alias":"test","identity":graph["graph"]["repository"]["identity"]})
+    );
     assert_eq!(
         result["eligibility"],
         json!({"eligible":true,"allowed_by_github_app":true,"approved_aliases":["test"],"reasons":[]})
     );
     assert_eq!(
         result["forge_repository"],
-        json!({"repository":REPO,"repository_id":REPO_ID,"node_id":REPO_NODE})
+        json!({"provider":"github","repository":REPO,"repository_id":REPO_ID,"node_id":REPO_NODE})
     );
     assert_eq!(ids(&result["nodes"]), ["issue-69", "issue-70", "issue-71"]);
     let first = &result["nodes"][0];
     assert_eq!(first["relation"], "sub_issue");
+    assert_eq!(first["derivation"], "native");
+    assert_eq!(first["provenance"], "github_app");
+    // Forge identity is separate from the physical source binding.
+    assert_eq!(
+        first["forge"],
+        json!({"provider":"github","repository":REPO,"number":69,"node_id":"I_kwDORHtYm88AAAABWWXqmw"})
+    );
+    assert_eq!(first["forge_key"], "github:joshyorko/plugins#69");
     assert_eq!(first["source"]["provider"], "github");
-    assert!(first["source"]["repository_id"].is_null());
+    assert_eq!(
+        first["source"]["repository_id"],
+        graph["graph"]["repository"]["identity"]
+    );
+    assert!(first["source"].get("repository").is_none());
+    assert!(first["source"].get("repository_node_id").is_none());
     assert_eq!(
         first["source"]["item_id"],
         format!("{REPO_ID}:I_kwDORHtYm88AAAABWWXqmw")
@@ -587,7 +612,17 @@ async fn recorded_shapes_become_revisioned_candidates_and_inspection_writes_noth
         json!({"number":69,"url":"https://github.com/joshyorko/plugins/issues/69"})
     );
     assert_eq!(result["nodes"][2]["relation"], "task_list");
+    assert_eq!(result["nodes"][2]["derivation"], "parsed");
     assert_eq!(result["nodes"][2]["dependencies"], json!(["issue-69"]));
+    assert_eq!(
+        result["nodes"][2]["dependency_evidence"],
+        json!([{"node_id":"issue-69","native":true,"documented":false,"status":"native"}])
+    );
+    assert_eq!(
+        result["parent_issue"]["forge"],
+        json!({"provider":"github","repository":REPO,"number":67,"node_id":"I_kwDOfixture00067"})
+    );
+    assert_eq!(result["parent_issue"]["provenance"], "github_app");
     let cross = &result["cross_repository"];
     assert!(cross.as_array().unwrap().contains(
         &json!({"repository":"other/repo","number":9,"relation":"sub_issue","imported":false})
@@ -612,7 +647,15 @@ async fn recorded_shapes_become_revisioned_candidates_and_inspection_writes_noth
             .iter()
             .all(|a| a["label"] == "derived_from_issue")
     );
-    assert!(acceptance.contains(&json!({"id":"issue-67:acceptance-1","node_id":null,"text":"Graph imports cleanly","label":"derived_from_issue"})));
+    assert!(
+        acceptance
+            .iter()
+            .all(|a| a["derivation"] == "parsed" && a["provenance"] == "github_app")
+    );
+    assert!(acceptance.contains(
+        &json!({"id":"issue-67:acceptance-1","node_id":null,"text":"Graph imports cleanly",
+        "label":"derived_from_issue","derivation":"parsed","provenance":"github_app"})
+    ));
     assert!(
         acceptance
             .iter()
@@ -622,6 +665,19 @@ async fn recorded_shapes_become_revisioned_candidates_and_inspection_writes_noth
     assert_eq!(
         result["import"]["confirmation"],
         "explicit_user_confirmation_required"
+    );
+    assert!(
+        result["import"]["decisions_needed"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("confirm_parsed_task_list_nodes"))
+    );
+    assert!(
+        result["truncated"]
+            .as_object()
+            .unwrap()
+            .values()
+            .all(|v| v == false)
     );
     assert!(result["cycles"].as_array().unwrap().is_empty());
 
@@ -745,13 +801,14 @@ async fn sub_issue_pagination_and_candidate_nodes_are_bounded() {
     let h = harness(world, |_, _| {}).await;
     let result = inspect(&h, REPO, 1).await;
     assert_eq!(result["nodes"].as_array().unwrap().len(), 32);
+    assert_eq!(result["status"], "incomplete");
     assert_eq!(result["truncated"]["nodes"], true);
     assert_eq!(result["truncated"]["sub_issues"], true);
     assert!(
         result["import"]["decisions_needed"]
             .as_array()
             .unwrap()
-            .contains(&json!("results_truncated"))
+            .contains(&json!("results_incomplete"))
     );
     let pages: Vec<_> = h
         .hits()
@@ -808,7 +865,8 @@ async fn cycles_are_rejected_and_foreign_or_closed_dependencies_are_not_imported
     assert_eq!(result["import"]["blockers"], json!(["dependency_cycle"]));
     assert_eq!(
         result["external_dependencies"],
-        json!([{"node_id":"issue-13","blocked_by":14,"github_state":"closed","imported":false}])
+        json!([{"node_id":"issue-13","blocked_by":14,"github_state":"closed","imported":false,
+            "derivation":"native","status":"native"}])
     );
     assert!(result["cross_repository"].as_array().unwrap().contains(
         &json!({"repository":"other/repo","number":1,"relation":"blocked_by","imported":false})
@@ -823,13 +881,15 @@ async fn import_graph(h: &Harness, inspection: &Value) -> (String, Value) {
     })).await;
     let run_id = graph["graph"]["run_id"].as_str().unwrap().to_owned();
     let identity = graph["graph"]["repository"]["identity"].clone();
+    // Intake sources are already bound to the graph identity: they are copied unchanged.
+    assert_eq!(inspection["graph_repository"]["identity"], identity);
     let nodes: Vec<Value> = inspection["nodes"]
         .as_array()
         .unwrap()
         .iter()
         .map(|n| {
             json!({"id":n["id"],"title":n["title"],"criterion_ids":["A1"],"dependencies":n["dependencies"],
-                "source":{"provider":"github","repository_id":identity,"item_id":n["source"]["item_id"],"revision":n["source"]["revision"]}})
+                "source":n["source"]})
         })
         .collect();
     let change = json!({"kind":"import_candidates","nodes":nodes});
@@ -1056,6 +1116,9 @@ async fn github_success_never_changes_proof_presentation_actions_or_attention() 
     assert_eq!(delivery["proof"], "none");
     assert_eq!(delivery["merge_capability"], "none");
     assert_eq!(delivery["reported_by"], "github");
+    assert_eq!(delivery["provenance"], "github_app");
+    // Two nodes could not be read, so the call as a whole is not complete.
+    assert_eq!(delivery["complete"], false);
     let node = |id: &str| {
         delivery["nodes"]
             .as_array()
@@ -1069,6 +1132,8 @@ async fn github_success_never_changes_proof_presentation_actions_or_attention() 
     assert_eq!(observed["status"], "observed");
     assert_eq!(observed["freshness"], "fresh");
     assert_eq!(observed["reported_by"], "github");
+    assert_eq!(observed["provenance"], "github_app");
+    assert_eq!(observed["complete"], true, "{observed}");
     assert!(observed["observed_at"].as_u64().unwrap() >= now() - 5);
     let pr = &observed["pull_requests"][0];
     assert_eq!(pr["number"], 68);
@@ -1093,9 +1158,11 @@ async fn github_success_never_changes_proof_presentation_actions_or_attention() 
     assert_eq!(pr["ready_for_review"], true);
     assert_eq!(pr["merge_authority"], false);
     assert_eq!(pr["reported_by"], "github");
+    assert_eq!(pr["provenance"], "github_app");
     // A node whose GitHub item belongs to another repository is not reported as ours.
     assert_eq!(node("issue-70")["status"], "unavailable");
     assert_eq!(node("issue-70")["reason"], "source_repository_mismatch");
+    assert_eq!(node("issue-70")["complete"], false);
     assert_eq!(node("issue-71")["reason"], "issue_unavailable");
     let mint = h
         .mints()
@@ -1168,6 +1235,11 @@ async fn github_success_never_changes_proof_presentation_actions_or_attention() 
         .unwrap()
         .clone();
     assert_eq!(stale["freshness"], "stale");
+    assert_eq!(
+        stale["complete"], false,
+        "stale data is never a complete read"
+    );
+    assert_eq!(limited["complete"], false);
     assert_eq!(stale["observed_at"], observed["observed_at"]);
     assert_eq!(stale["pull_requests"][0]["ready_for_review"], true);
     let hits = h.hits().len();
@@ -1266,4 +1338,303 @@ async fn delivery_polling_is_bounded_per_call_and_per_node() {
     assert_eq!(graphql(), 20);
     invoke(&h, "read_factory_delivery", json!({"run_id":run_id})).await;
     assert_eq!(graphql(), 20);
+}
+
+/// Siblings whose prose documents a dependency GitHub does not record natively.
+fn documented_world() -> World {
+    let mut world = World::default();
+    world
+        .issues
+        .insert(30, issue(REPO, 30, "Documented parent", "", true, 0));
+    world.sub_issues.insert(
+        30,
+        vec![
+            issue(REPO, 31, "Base", "", true, 0),
+            issue(
+                REPO,
+                32,
+                "Depends in prose",
+                "Depends on #31 and blocked by #99.\n\n## Dependencies\n- other-owner/other-repo#4\n",
+                true,
+                0,
+            ),
+            issue(REPO, 33, "Native and documented", "Blocked by #31", true, 1),
+        ],
+    );
+    world
+        .blocked_by
+        .insert(33, vec![issue(REPO, 31, "Base", "", true, 0)]);
+    world
+}
+
+#[tokio::test]
+async fn documented_dependencies_survive_an_absent_native_record() {
+    let h = harness(documented_world(), |_, _| {}).await;
+    let result = inspect(&h, REPO, 30).await;
+    assert_eq!(result["status"], "complete", "{result}");
+    let node = |id: &str| {
+        result["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["id"] == id)
+            .unwrap()
+            .clone()
+    };
+    // GitHub reports no blocked_by for #32, but its body documents #31: kept, flagged.
+    assert_eq!(node("issue-32")["dependencies"], json!(["issue-31"]));
+    assert_eq!(
+        node("issue-32")["dependency_evidence"],
+        json!([{"node_id":"issue-31","native":false,"documented":true,"status":"documented_not_native"}])
+    );
+    // Recorded natively and documented: native wins, both are visible.
+    assert_eq!(
+        node("issue-33")["dependency_evidence"],
+        json!([{"node_id":"issue-31","native":true,"documented":true,"status":"native"}])
+    );
+    assert!(
+        result["external_dependencies"]
+            .as_array()
+            .unwrap()
+            .contains(
+                &json!({"node_id":"issue-32","blocked_by":99,"github_state":null,
+                "imported":false,"derivation":"parsed","status":"documented_not_native"})
+            )
+    );
+    assert!(
+        result["cross_repository"].as_array().unwrap().contains(&json!(
+            {"repository":"other-owner/other-repo","number":4,"relation":"documented_dependency","imported":false}
+        ))
+    );
+    assert!(
+        result["import"]["decisions_needed"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("confirm_documented_dependencies"))
+    );
+    // Only #33 had a native record to read; #32's summary said zero, so no request.
+    let dependency_reads: Vec<_> = h
+        .hits()
+        .into_iter()
+        .filter(|hit| hit.path.ends_with("/dependencies/blocked_by"))
+        .map(|hit| hit.path)
+        .collect();
+    assert_eq!(dependency_reads.len(), 1, "{dependency_reads:?}");
+
+    // Without the dependencies API, the documented edge still stands and the read is incomplete.
+    let mut world = documented_world();
+    world.dependencies_unavailable = true;
+    let h = harness(world, |_, _| {}).await;
+    let result = inspect(&h, REPO, 30).await;
+    assert_eq!(result["status"], "incomplete");
+    assert_eq!(result["truncated"]["dependencies"], true);
+    let node33 = result["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["id"] == "issue-33")
+        .unwrap()
+        .clone();
+    assert_eq!(node33["dependencies"], json!(["issue-31"]));
+    assert_eq!(
+        node33["dependency_evidence"][0]["status"],
+        "documented_not_native"
+    );
+}
+
+#[tokio::test]
+async fn short_dependency_pages_and_unrecognized_items_are_incomplete() {
+    let mut world = World::default();
+    world
+        .issues
+        .insert(40, issue(REPO, 40, "Parent", "", true, 0));
+    let mut subs = vec![
+        issue(REPO, 41, "A", "", true, 0),
+        // GitHub says three blockers, but only one comes back.
+        issue(REPO, 42, "B", "", true, 3),
+    ];
+    subs.push(json!({"number":43,"title":"Missing fields"}));
+    world.sub_issues.insert(40, subs);
+    world
+        .blocked_by
+        .insert(42, vec![issue(REPO, 41, "A", "", true, 0)]);
+    let h = harness(world, |_, _| {}).await;
+    let result = inspect(&h, REPO, 40).await;
+    assert_eq!(result["status"], "incomplete", "{result}");
+    assert_eq!(result["truncated"]["dependencies"], true);
+    assert_eq!(result["truncated"]["unrecognized"], true);
+    assert!(
+        result["import"]["decisions_needed"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("results_incomplete"))
+    );
+}
+
+#[tokio::test]
+async fn ambiguous_repository_bindings_need_an_explicit_alias_before_any_request() {
+    let h = harness(parent_world(), |config, _| {
+        let root = PathBuf::from(config["repositories"]["test"]["root"].as_str().unwrap());
+        let second = root.parent().unwrap().join("second");
+        std::fs::create_dir(&second).unwrap();
+        git(&second, &["init", "-q"]);
+        git(
+            &second,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "fixture",
+            ],
+        );
+        git(
+            &second,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:joshyorko/plugins.git",
+            ],
+        );
+        config["repositories"]["second"] = json!({"root":second,"max_finish":"local_candidate"});
+    })
+    .await;
+    let ambiguous = inspect(&h, REPO, 67).await;
+    assert_eq!(ambiguous["status"], "ineligible");
+    assert_eq!(ambiguous["reason"], "repository_alias_required");
+    assert!(ambiguous["graph_repository"].is_null());
+    let unbound = invoke(
+        &h,
+        "inspect_factory_issue_graph",
+        json!({"repository":REPO,"parent":67,"repository_alias":"elsewhere"}),
+    )
+    .await;
+    assert_eq!(
+        unbound["reason"],
+        "repository_alias_not_bound_to_github_repository"
+    );
+    assert!(h.hits().is_empty(), "no request may precede binding");
+
+    let bound = invoke(
+        &h,
+        "inspect_factory_issue_graph",
+        json!({"repository":REPO,"parent":67,"repository_alias":"second"}),
+    )
+    .await;
+    assert_eq!(bound["status"], "complete", "{bound}");
+    assert_eq!(bound["graph_repository"]["alias"], "second");
+    let graph = invoke(&h, "create_factory_graph", json!({
+        "repository":"second","objective":"x","acceptance":["y"],"non_goals":[],"finish":"local_candidate",
+        "profile":"default","capacity":1,"repair_attempts":0,"wall_seconds":60,"idempotency_key":"second"
+    })).await;
+    assert_eq!(
+        bound["nodes"][0]["source"]["repository_id"],
+        graph["graph"]["repository"]["identity"]
+    );
+    assert_ne!(
+        bound["graph_repository"]["identity"],
+        inspect_alias(&h, "test").await["graph_repository"]["identity"]
+    );
+}
+async fn inspect_alias(h: &Harness, alias: &str) -> Value {
+    invoke(
+        h,
+        "inspect_factory_issue_graph",
+        json!({"repository":REPO,"parent":67,"repository_alias":alias}),
+    )
+    .await
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn symlinked_keys_and_key_directories_are_refused_without_any_request() {
+    use std::os::unix::fs::PermissionsExt;
+    // The configured path is a symlink to a correctly locked key.
+    let h = harness(parent_world(), |config, _| {
+        let key = PathBuf::from(config["github_app"]["private_key_path"].as_str().unwrap());
+        let link = key.with_file_name("linked.pem");
+        std::os::unix::fs::symlink(&key, &link).unwrap();
+        config["github_app"]["private_key_path"] = json!(link);
+    })
+    .await;
+    let capabilities = invoke(&h, "get_factory_capabilities", json!({})).await;
+    assert_eq!(
+        capabilities["github"],
+        json!({"configured":false,"reason":"github_app_key_symlinked"})
+    );
+    let result = inspect(&h, REPO, 67).await;
+    assert_eq!(result["reason"], "github_app_key_symlinked");
+    assert!(h.hits().is_empty());
+
+    // An ancestor directory is a symlink.
+    let h = harness(parent_world(), |config, _| {
+        let key = PathBuf::from(config["github_app"]["private_key_path"].as_str().unwrap());
+        let config_dir = key.parent().unwrap();
+        let linked_dir = config_dir.with_file_name("config-link");
+        std::os::unix::fs::symlink(config_dir, &linked_dir).unwrap();
+        config["github_app"]["private_key_path"] = json!(linked_dir.join(key.file_name().unwrap()));
+    })
+    .await;
+    let result = inspect(&h, REPO, 67).await;
+    assert_eq!(result["reason"], "github_app_key_symlinked");
+    assert!(h.hits().is_empty());
+
+    // Group-readable (not only world-readable) keys are refused too.
+    let h = harness(parent_world(), |_, _| {}).await;
+    std::fs::set_permissions(&h.key_path, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let result = inspect(&h, REPO, 67).await;
+    assert_eq!(result["reason"], "github_app_key_permissions_too_open");
+    assert!(h.hits().is_empty());
+}
+
+#[tokio::test]
+async fn credentials_never_reach_debug_errors_or_tool_arguments() {
+    let h = harness(parent_world(), |_, _| {}).await;
+    // Mint and use a token so every credential exists in memory.
+    assert_eq!(inspect(&h, REPO, 67).await["status"], "complete");
+    let token = format!("{TOKEN_PREFIX}0001");
+    let pem = String::from_utf8_lossy(&keys().pem).into_owned();
+    let debug = format!(
+        "{:?} {:?}",
+        h.server.factory.github_reader(),
+        h.server.factory.config
+    );
+    for secret in [token.as_str(), "eyJ", "PRIVATE KEY", &pem[40..80]] {
+        assert!(!debug.contains(secret), "Debug output leaked {secret}");
+    }
+    assert!(
+        !debug.contains(h.key_path.to_str().unwrap()),
+        "key path leaked"
+    );
+    // The API base and key path are operator configuration only: a tool cannot supply them.
+    for extra in [
+        json!({"api_base":"https://attacker.example"}),
+        json!({"private_key_path":"/etc/shadow"}),
+        json!({"token":"x"}),
+    ] {
+        let mut args = json!({"repository":REPO,"parent":67});
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let error = h
+            .server
+            .invoke("inspect_factory_issue_graph", args)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains(&token) && !error.contains("eyJ"), "{error}");
+    }
+    // Request-level failures carry a stable reason, never GitHub's error body or a credential.
+    let mut world = parent_world();
+    world.installation_id = 7;
+    let h = harness(world, |_, _| {}).await;
+    let result = inspect(&h, REPO, 67).await;
+    assert_eq!(result["reason"], "github_installation_mismatch");
+    assert!(!result.to_string().contains("Not Found"));
 }
