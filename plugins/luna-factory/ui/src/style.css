@@ -169,7 +169,7 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .campaign-head { margin: 4px 0 16px; }
 .campaign-head h1 { font-size: 26px; line-height: 1.22; font-weight: 650; letter-spacing: -.02em; margin: 6px 0 10px; overflow-wrap: anywhere; max-width: 980px; }
 .statusline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 12px; }
-.fresh { color: var(--faint); font-size: 12px; }
+.fresh, .started { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
 .story { max-width: 860px; }
 .story-now { font-size: 16px; margin-bottom: 6px; overflow-wrap: anywhere; }
 .story-kicker { font-size: 12px; color: var(--faint); margin-bottom: 6px; }
@@ -251,6 +251,8 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .node-top .task-glyph { margin-top: 2px; }
 .node-title { font-size: 13px; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .node-meta { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 23px; }
+.node-ref { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.source-link { color: var(--luna); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; font-variant-numeric: tabular-nums; }
 .node-after { display: none; }
 .dock { position: absolute; top: -9px; right: -9px; display: inline-flex; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .16)); }
 .canvas-empty { padding: 36px 18px; text-align: center; color: var(--muted); }
@@ -312,6 +314,7 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .lane-events li { display: grid; grid-template-columns: 52px 150px minmax(0, 1fr); gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .lane-events time { color: var(--faint); font-variant-numeric: tabular-nums; }
 .lane-events strong { font-weight: 560; text-transform: capitalize; }
+.lane-events .lane-agent { display: block; font-size: 11px; font-weight: 400; color: var(--faint); text-transform: none; }
 .lane-events span { color: var(--muted); overflow-wrap: anywhere; }
 .lanes-note { margin: 10px 0 0; }
 

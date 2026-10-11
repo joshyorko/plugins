@@ -243,6 +243,28 @@ async fn owner_acceptance_is_fetched_from_fenced_native_history_and_bound_to_sub
             .iter()
             .any(|r| r["kind"] == "criterion_acceptance")
     );
+    // Owner-report and owner-dispatch receipts are attributed to the owner thread the server
+    // dispatched to; nothing else is attributed by inference.
+    for receipt in result["receipts"].as_array().unwrap() {
+        if matches!(
+            receipt["kind"].as_str(),
+            Some("owner_acceptance" | "criterion_acceptance" | "native_dispatch")
+        ) {
+            assert_eq!(receipt["thread_id"], result["owner_thread"], "{receipt}");
+        }
+    }
+    assert!(result["created_at"].as_u64().unwrap() <= result["updated_at"].as_u64().unwrap());
+    let newest = result["receipts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["created_at"].as_u64())
+        .max()
+        .unwrap();
+    assert_eq!(
+        result["activity_at"].as_u64().unwrap(),
+        result["updated_at"].as_u64().unwrap().max(newest)
+    );
 }
 #[tokio::test]
 async fn confirmed_preflight_failure_does_not_leave_an_unrecoverable_claim() {
@@ -483,6 +505,22 @@ async fn reroute_notifications_preserve_exact_turn_evidence_and_stop_owned_work(
             evidence.len(),
             1,
             "duplicate native telemetry must be idempotent"
+        );
+        let receipts = stopped["receipts"].as_array().unwrap();
+        let attributed = |kind: &str| {
+            receipts
+                .iter()
+                .find(|receipt| receipt["kind"] == kind)
+                .unwrap_or_else(|| panic!("{mode}: missing {kind} receipt"))["thread_id"]
+                .clone()
+        };
+        // The exact owned thread named by the reroute evidence, and the thread that spawned.
+        assert_eq!(attributed("routing_mismatch"), thread, "{mode}");
+        assert_eq!(attributed("native_child_spawn"), "owner", "{mode}");
+        assert!(
+            receipts.iter().all(|receipt| receipt["thread_id"].is_null()
+                || ["owner", "child"].contains(&receipt["thread_id"].as_str().unwrap())),
+            "{mode}: attribution outside owned threads"
         );
         assert_eq!(evidence[0]["thread_id"], thread);
         assert_eq!(evidence[0]["turn_id"], turn);

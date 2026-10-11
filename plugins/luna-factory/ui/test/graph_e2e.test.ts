@@ -41,7 +41,7 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
     // Actual inspected engineering repository, isolated from all active worktrees and services.
     execFileSync("git", ["clone", "--quiet", "--shared", source, repo]);
     const snapshotBytes = await readFile(resolve("../tests/fixtures/github/issue-61.json"), "utf8");
-    const issue = JSON.parse(snapshotBytes) as { node_id: string; title: string; repository_id: number };
+    const issue = JSON.parse(snapshotBytes) as { node_id: string; title: string; repository_id: number; number: number; html_url: string };
     const issueRevision = `sha256:${createHash("sha256").update(snapshotBytes).digest("hex")}`;
     const config = join(directory, "config.json");
     await writeFile(config, JSON.stringify({
@@ -107,7 +107,8 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
     const proposal = graphEnvelopeSchema.parse(await model("propose_factory_change", {
       run_id: runId, expected_revision: created.graph.revision, idempotency_key: "import-issue-61", change: { kind: "import_candidates", nodes: [{
         id: "issue-61", title: issue.title, criterion_ids: ["A1"], dependencies: [],
-        source: { provider: "github", repository_id: created.graph.repository.identity, item_id: `${issue.repository_id}:${issue.node_id}`, revision: issueRevision },
+        // Display hints from the recorded snapshot; never proof or identity.
+        source: { provider: "github", repository_id: created.graph.repository.identity, item_id: `${issue.repository_id}:${issue.node_id}`, revision: issueRevision, display: { number: issue.number, url: issue.html_url } },
       }, ...titleCases.map(title => ({
         id: title.id, title: title.raw, criterion_ids: ["A1"], dependencies: [],
         source: { provider: "fixture", repository_id: created.graph.repository.identity, item_id: title.id, revision: "title-contract-v1" },
@@ -146,6 +147,17 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
     controller.selectNode("issue-61");
     await vi.waitFor(() => expect(contexts.at(-1)).toMatchObject({ run_id: runId, node_id: "issue-61" }));
     expect(root.textContent).toContain(issue.title);
+    expect(controller.state.graph?.nodes.find(node => node.id === "issue-61")?.source?.display).toEqual({ number: 61, url: "https://github.com/joshyorko/plugins/issues/61" });
+    expect(root.querySelector('[data-node-id="issue-61"] .node-ref')?.textContent).toBe("#61");
+    const issueLink = root.querySelector<HTMLAnchorElement>(".graph-inspector a.source-link");
+    expect(issueLink?.getAttribute("href")).toBe(issue.html_url);
+    expect(issueLink?.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(controller.state.graph?.nodes.find(node => node.id === "long-ascii-title")?.source?.display).toBeUndefined();
+    // Additive run projection from the compiled server.
+    expect(controller.selected?.created_at).toEqual(expect.any(Number));
+    expect(controller.selected?.activity_at).toBeGreaterThanOrEqual(controller.selected?.updated_at ?? Infinity);
+    expect(controller.selected?.presentation?.blocker_kind).toEqual({ kind: "planning_only" });
+    expect(root.querySelector(".campaign-head .started")?.textContent).toMatch(/^Created /);
     const before = controller.state.graph?.revision;
     expect(await controller.proposeChange({ kind: "set_target", node_id: "issue-61", target_id: "native-local" }), controller.state.error ?? "proposal").toBe(true);
     expect(await controller.applyChange(true), controller.state.error ?? "apply").toBe(true);

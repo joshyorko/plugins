@@ -99,8 +99,15 @@ fn definitions() -> Map<String, Value> {
         "workers":array(object(json!({"thread_id":id(),"liveness":liveness})),64),
         "budget":object(json!({"time_remaining_seconds":nullable(count()),"repair_attempts_remaining":count(),"repairs_used":count()})),
         "claim":reference("claim"),
-        "deliverable":object(json!({"kind":enumeration(&["local_candidate","push","pr_ready"]),"status":enumeration(&["verified","unproved"]),"subject":id(),"reference":nullable(string())}))
+        "deliverable":object(json!({"kind":enumeration(&["local_candidate","push","pr_ready"]),"status":enumeration(&["verified","unproved"]),"subject":id(),"reference":nullable(string())})),
+        "blocker_kind":reference("blocker_kind")
     })));
+    // Copy/placement category derived from existing server state and reason codes only.
+    // It never grants an action or creates attention; clients map unknown kinds to `unknown`.
+    defs.insert("blocker_kind".into(),json!({"oneOf":[
+        object(json!({"kind":{"const":"budget_exhausted"},"budget":enumeration(&["time","repair"])})),
+        object(json!({"kind":enumeration(&["diagnosis_required","native_approval","effect_outcome_unknown","liveness_unknown","planning_only","none","unknown"])}))
+    ]}));
     defs.insert("route".into(),object(json!({
         "requested_model":{"const":"gpt-6-luna"},"requested_effort":nullable(string()),
         "configured_model":nullable(string()),"configured_effort":nullable(string()),
@@ -118,8 +125,9 @@ fn definitions() -> Map<String, Value> {
         "remaining_gap":nullable(string()),"skill_sha256":nullable(string()),"blocker":nullable(string()),
         "deadline_at":count(),"claim_held":boolean(),"pending_decision":nullable(object(json!({"id":id(),"question":string()}))),
         "repairs_used":count(),"repair_limit":{"type":"integer","minimum":0,"maximum":10},"generation":count(),"updated_at":count(),
+        "created_at":count(),"activity_at":count(),
         "control":nullable(reference("control")),"presentation":nullable(reference("presentation")),"route":reference("route"),
-        "receipts":array(object(json!({"subject":string(),"kind":string(),"summary":string(),"created_at":count()})),20)
+        "receipts":array(object(json!({"subject":string(),"kind":string(),"summary":string(),"created_at":count(),"thread_id":nullable(id())})),20)
     })),&["receipts"]));
     defs.insert("settings_values".into(),optional(object(json!({
         "capacity":{"type":"integer","minimum":1,"maximum":8},"finish":finish(),"profile":text(64)
@@ -149,9 +157,24 @@ fn definitions() -> Map<String, Value> {
     })));
     defs.insert("candidate".into(),object(json!({"id":{"type":"string","pattern":"^[a-f0-9]{64}$"},"name":string(),"root_alias":text(64),"max_finish":finish()})));
     defs.insert("registration".into(),object(json!({"id":id(),"alias":text(64),"root_alias":text(64),"name":string(),"max_finish":finish(),"status":enumeration(&["pending","approved"])})));
+    // Display hints are importer-supplied and never proof or identity.
+    let mut source_display = optional(
+        object(json!({
+            "number":{"type":"integer","minimum":1,"maximum":crate::graph::DISPLAY_NUMBER_MAX},
+            "url":{"type":"string","maxLength":crate::graph::DISPLAY_URL_MAX,"pattern":"^https://github\\.com/[A-Za-z0-9._~%/-]+$"}
+        })),
+        &["number", "url"],
+    );
+    source_display["minProperties"] = json!(1);
+    defs.insert("source_display".into(), source_display);
     defs.insert(
         "source".into(),
-        object(json!({"provider":id(),"repository_id":id(),"item_id":id(),"revision":id()})),
+        optional(
+            object(
+                json!({"provider":id(),"repository_id":id(),"item_id":id(),"revision":id(),"display":reference("source_display")}),
+            ),
+            &["display"],
+        ),
     );
     defs.insert("graph_candidate".into(),object(json!({"id":id(),"title":text(4000),"criterion_ids":array(id(),32),"dependencies":array(id(),128),"source":reference("source")})));
     defs.insert("change".into(),json!({"oneOf":[

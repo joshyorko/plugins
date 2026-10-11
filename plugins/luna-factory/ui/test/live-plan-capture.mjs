@@ -69,9 +69,12 @@ try {
   });
   const runId = envelope.graph.run_id;
   const identity = envelope.graph.repository.identity;
+  // Display hints come from the recorded snapshot: the issue number, and the canonical issue URL built
+  // from its recorded repository and number. They are importer-supplied and never proof or identity.
   const nodes = children.map(issue => ({
     id: `issue-${issue.number}`, title: issue.title, criterion_ids: ["A1"], dependencies: issue.requires.map(number => `issue-${number}`),
-    source: { provider: "github", repository_id: identity, item_id: `${snapshot.repository_id}:${issue.node_id}`, revision: `sha256:${createHash("sha256").update(JSON.stringify(issue)).digest("hex")}` },
+    source: { provider: "github", repository_id: identity, item_id: `${snapshot.repository_id}:${issue.node_id}`, revision: `sha256:${createHash("sha256").update(JSON.stringify(issue)).digest("hex")}`,
+      display: { number: issue.number, url: `https://github.com/${snapshot.repository}/issues/${issue.number}` } },
   }));
   envelope = await tool("propose_factory_change", { run_id: runId, expected_revision: envelope.graph.revision, idempotency_key: "live-import-67", change: { kind: "import_candidates", nodes } });
   envelope = await tool("apply_factory_change", { run_id: runId, expected_revision: envelope.graph.revision, change_id: envelope.proposal.id });
@@ -82,6 +85,7 @@ try {
   const graph = (await tool("get_factory_graph", { run_id: runId })).graph;
   assert.equal(graph.nodes.length, children.length + 1);
   assert.equal(graph.attempts.length, 0); assert.equal(graph.claim.held, false); assert.equal(graph.planning_only, true);
+  for (const issue of children) assert.equal(graph.nodes.find(node => node.id === `issue-${issue.number}`)?.source?.display?.number, issue.number, `issue-${issue.number} display`);
 
   const cases = [
     { file: "live-campaign-map-light.png", width: 1440, height: 1000, params: { surface: "global", mode: "fullscreen", node: "issue-79" } },
@@ -111,7 +115,14 @@ try {
       const frame = page.frames().find(candidate => candidate.url().endsWith("/index.html"));
       assert(frame, "Production App iframe did not mount");
       await frame.locator(".workbench").waitFor();
-      if (item.params.node) await frame.locator(`[data-node-id="${item.params.node}"][aria-pressed="true"]`).waitFor();
+      if (item.params.node) {
+        await frame.locator(`[data-node-id="${item.params.node}"][aria-pressed="true"]`).waitFor();
+        const number = item.params.node.replace("issue-", "#");
+        if (!item.lanes) {
+          assert.equal(await frame.locator(`[data-node-id="${item.params.node}"] .node-ref`).textContent(), number, `Map node ${item.params.node} lacks its issue number`);
+          assert.equal(await frame.locator(".graph-inspector a.source-link").getAttribute("rel"), "noopener noreferrer");
+        }
+      }
       if (item.params.surface === "inline") await frame.locator('[data-action="chat-follow-up"]:enabled').waitFor();
       if (item.lanes) { await frame.locator('[data-action="view-mode"][data-mode="lanes"]').click(); await frame.locator(".lanes").waitFor(); }
       if (item.width >= 1000) await frame.evaluate(() => window.scrollTo(0, 0));
@@ -133,7 +144,7 @@ try {
     server_binary_sha256: createHash("sha256").update(await readFile(resolve(binary))).digest("hex"),
     ui_source_sha256: source.digest("hex"),
     github_snapshot_sha256: createHash("sha256").update(snapshotBytes).digest("hex"),
-    graph: { revision: graph.revision, nodes: graph.nodes.length, attempts: graph.attempts.length, planning_only: graph.planning_only, claim: graph.claim },
+    graph: { revision: graph.revision, nodes: graph.nodes.length, attempts: graph.attempts.length, planning_only: graph.planning_only, claim: graph.claim, display_numbers: graph.nodes.map(node => node.source?.display?.number).filter(number => number !== undefined) },
     captures,
   }, null, 2) + "\n");
   console.log(`PASS ${captures.length} live-server captures at graph revision ${graph.revision}; read-only proxy; zero native dispatch`);

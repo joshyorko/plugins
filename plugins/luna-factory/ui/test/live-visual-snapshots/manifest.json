@@ -1,7 +1,7 @@
 {
   "evidence_kind": "Real disposable luna-factoryd + SQLite + MCP HTTP, recorded GitHub issue snapshot imported through model-visible tools, real browser AppBridge; not authenticated ChatGPT Desktop acceptance",
-  "server_binary_sha256": "4916458209762bddc5bf98d9fc930709c73ea83d9522641512e0b93f3409e688",
-  "ui_source_sha256": "9e1441cadcbed14687d21a4c9c41bf8bfedd96ed35abec62ff2bcd73730dde2d",
+  "server_binary_sha256": "678b279f4f005e39751b61ead41ae9ac0eea9c8eb6ff317edf7e6e03c17b26bb",
+  "ui_source_sha256": "951db1dfa916ed2e44953adca9eb597a13771238d6e5413a4b65dfe996c6da98",
   "github_snapshot_sha256": "1c92fec1ad22697e412074feff0b2d3f1fc8f38a1d5f35f946512e535580df83",
   "graph": {
     "revision": 4,
@@ -11,7 +11,23 @@
     "claim": {
       "held": false,
       "status": "released"
-    }
+    },
+    "display_numbers": [
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82
+    ]
   },
   "captures": [
     {
@@ -32,6 +48,8 @@
         "open_factory",
         "refresh_factory",
         "get_factory_run",
+        "get_factory_graph",
+        "get_factory_backends",
         "get_factory_graph",
         "get_factory_backends"
       ]
@@ -78,6 +96,8 @@
         "open_factory_panel",
         "refresh_factory",
         "get_factory_run",
+        "get_factory_graph",
+        "get_factory_backends",
         "get_factory_graph",
         "get_factory_backends"
       ]

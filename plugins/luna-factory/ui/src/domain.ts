@@ -16,6 +16,16 @@ const controlSchema = z.object({
   attempts: z.array(z.object({ id: nodeId, task_id: nodeId, intent_generation: revision, dispatch_generation: revision, subject: text, thread_id: nullableText, turn_id: nullableText, status: z.string().max(64) })).max(256),
   effects: z.array(z.unknown()).max(128), child_policy: z.literal("cooperative_unverified"),
 });
+/**
+ * Copy and placement category from the server's existing state and reason codes. It never grants
+ * an action or creates attention. Kinds this client does not know (or malformed values) read as
+ * `unknown`, never as a guessed category.
+ */
+const blockerKindSchema = z.union([
+  z.object({ kind: z.literal("budget_exhausted"), budget: z.enum(["time", "repair"]) }),
+  z.object({ kind: z.enum(["diagnosis_required", "native_approval", "effect_outcome_unknown", "liveness_unknown", "planning_only", "none", "unknown"]) }),
+]).catch({ kind: "unknown" as const });
+export type BlockerKind = z.infer<typeof blockerKindSchema>;
 const presentationSchema = z.object({
   revision,
   primary_action: actionSchema,
@@ -27,6 +37,7 @@ const presentationSchema = z.object({
   budget: z.object({ time_remaining_seconds: z.number().int().nonnegative().max(604_800).nullable(), repair_attempts_remaining: z.number().int().nonnegative().max(10_000), repairs_used: z.number().int().nonnegative().max(10_000) }),
   claim: z.object({ held: z.boolean(), status: z.enum(["owned", "released", "foreign", "unknown"]) }),
   deliverable: z.object({ kind: z.enum(["local_candidate", "push", "pr_ready"]), status: z.enum(["verified", "unproved"]), subject: text, reference: nullableText }),
+  blocker_kind: blockerKindSchema.optional(),
 });
 const states = ["STARTING", "RUNNING", "VERIFYING", "NEEDS_INPUT", "BLOCKED", "CONVERGED", "QUIESCENT", "CANCELLING", "CANCELLED", "INTERRUPTED", "FAILED"] as const;
 export const runSchema = z.object({
@@ -40,6 +51,8 @@ export const runSchema = z.object({
   deadline_at: timestamp, claim_held: z.boolean(),
   planning_only: z.boolean().optional(),
   updated_at: timestamp.optional(), generation: z.number().int().nonnegative().optional(),
+  /** Admission time. `activity_at` is the newest of `updated_at` and retained receipts; graph edits carry no time. */
+  created_at: timestamp.optional(), activity_at: timestamp.optional(),
   route: z.object({
     requested_model: nullableText, requested_effort: nullableText,
     configured_model: nullableText, configured_effort: nullableText,
@@ -48,7 +61,9 @@ export const runSchema = z.object({
     observed_provider: nullableText.optional(), observed_model_source: nullableText.optional(),
     reroutes: z.array(z.object({ thread_id: text, turn_id: text, from_model: text, to_model: text, reason: text, source: z.literal("model/rerouted") })).max(100).optional(),
   }),
-  receipts: z.array(z.object({ subject: text, kind: z.string().max(64), summary: z.string().max(2000), created_at: timestamp })).max(100),
+  // `thread_id` is the native thread the server recorded at receipt time. Absent on older servers;
+  // null or malformed means unattributed. It is never inferred here.
+  receipts: z.array(z.object({ subject: text, kind: z.string().max(64), summary: z.string().max(2000), created_at: timestamp, thread_id: nodeId.nullable().optional().catch(null) })).max(100),
   control: controlSchema.optional(), presentation: presentationSchema.optional(),
 });
 export type RunView = z.infer<typeof runSchema>;
@@ -76,7 +91,13 @@ export const repositoryDiscoverySchema = z.object({
   requests: z.array(repositoryRegistrationSchema).max(100), approval: z.literal("local_operator"),
 }).strict();
 export type RepositoryDiscovery = z.infer<typeof repositoryDiscoverySchema>;
-const graphSourceSchema = z.object({ provider: nodeId, repository_id: nodeId, item_id: nodeId, revision: nodeId });
+/** Importer-supplied display hints: never proof or identity. Invalid hints are dropped, not shown. */
+const sourceDisplaySchema = z.object({
+  number: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+  url: z.string().max(512).regex(/^https:\/\/github\.com\/[A-Za-z0-9._~%/-]+$/).optional(),
+});
+const graphSourceSchema = z.object({ provider: nodeId, repository_id: nodeId, item_id: nodeId, revision: nodeId, display: sourceDisplaySchema.optional().catch(undefined) });
+export type GraphSource = z.infer<typeof graphSourceSchema>;
 const graphNodeSchema = controlSchema.shape.tasks.element.extend({ id: nodeId, dependencies: z.array(nodeId).max(128), source: graphSourceSchema.nullable(), target_preference: nodeId.nullable() });
 export const graphChangeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("set_target"), node_id: nodeId, target_id: nodeId }),

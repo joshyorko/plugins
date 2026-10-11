@@ -11,7 +11,7 @@ describe("dogfood MCP Apps browser simulator evidence", () => {
     const manifest = manifestSchema.parse(JSON.parse(readFileSync(new URL("manifest.json", directory), "utf8")));
     expect(manifest.expected_ui_version).toBe(UI_VERSION);
     expect(manifest.evidence_kind).toContain("not authenticated ChatGPT Desktop acceptance");
-    expect(manifest.captures).toHaveLength(18);
+    expect(manifest.captures).toHaveLength(19);
     expect(readFileSync(new URL("global-large-host-font.png", directory)).equals(readFileSync(new URL("global-planning-split-light.png", directory)))).toBe(false);
     const source = new URL("../src/", import.meta.url);
     const hash = createHash("sha256");

@@ -89,8 +89,8 @@ async fn main() -> Result<()> {
                     &store
                         .list(100)?
                         .iter()
-                        .map(luna_factoryd::lifecycle::public_run)
-                        .collect::<Vec<_>>()
+                        .map(|run| luna_factoryd::lifecycle::public_run_with_activity(run, &store))
+                        .collect::<Result<Vec<_>>>()?
                 )?
             );
         }

@@ -3,7 +3,8 @@ import type { FactoryGraph, GraphChange, RunView } from "./domain";
 import { roster, livenessLabel, type Agent } from "./agents";
 import { canvasSize, edgePath, fitGeometry, layoutWaves, nodePosition, type MapGeometry, type MapNode, type WaveLayout } from "./campaign-map";
 import { coordinatorToken, icon, taskGlyph, taskTone, taskToneLabel, workerToken } from "./lunar";
-import { renderLanes } from "./lanes";
+import { receiptAgent, renderLanes } from "./lanes";
+import { blockerCopy } from "./narrative";
 
 /** Last rendered state per run task. A difference between two server snapshots is the only motion trigger. */
 const seenStates = new Map<string, string>();
@@ -100,7 +101,7 @@ function renderMap(tasks: MapTask[], layout: WaveLayout, agents: Agent[], state:
       const missing = layout.missing.get(id)?.length ?? 0;
       return `<li><button type="button" id="node-${esc(id)}" class="map-node tone-${tone}${changed ? " changed" : ""}${id === selected ? " selected" : ""}${chain.has(id) ? " chain" : ""}${layout.prerequisitesMet.has(id) ? " met" : ""}${selected && !neighbors.has(id) ? " dim" : ""}" style="--x:${position.x}px;--y:${position.y + 24}px" data-action="graph-node" data-node-id="${esc(id)}" aria-pressed="${id === selected}" aria-describedby="node-state-${esc(id)}">
         <span class="node-top">${taskGlyph(tone)}<span class="node-title">${esc(task.title || id)}</span></span>
-        <span class="node-meta" id="node-state-${esc(id)}">${id === "objective" ? "Objective · " : ""}${esc(taskToneLabel[tone])}${missing ? ` · ${missing} unknown prerequisite${missing === 1 ? "" : "s"}` : ""}</span>
+        <span class="node-meta" id="node-state-${esc(id)}">${id === "objective" ? "Objective · " : ""}${task.source && sourceNumber(task.source) ? `<span class="node-ref">${esc(sourceNumber(task.source)!)}</span> · ` : ""}${esc(taskToneLabel[tone])}${missing ? ` · ${missing} unknown prerequisite${missing === 1 ? "" : "s"}` : ""}</span>
         <span class="node-after">${prerequisites.length ? `After ${esc(prerequisites.join(", "))}` : "No prerequisites"}</span>
         ${owner ? `<span class="dock" title="${esc(owner.label)} · ${esc(livenessLabel[owner.liveness])}">${agentToken(owner, 20)}<span class="sr-only">Owned by ${esc(owner.label)}</span></span>` : ""}
       </button></li>`;
@@ -113,9 +114,26 @@ function renderMap(tasks: MapTask[], layout: WaveLayout, agents: Agent[], state:
 }
 
 const providers: Record<string, string> = { github: "GitHub", local: "Local", fixture: "Fixture" };
+type Source = NonNullable<MapTask["source"]>;
 /** Provider only; opaque item identities stay in the inspector's source detail. */
-export function sourceLabel(source: NonNullable<MapTask["source"]>): string {
+export function sourceLabel(source: Source): string {
   return providers[source.provider] ?? source.provider;
+}
+/** `#N` only when the importer supplied a display number. Display data is never proof. */
+export function sourceNumber(source: Source): string | null {
+  return source.display?.number !== undefined ? `#${source.display.number}` : null;
+}
+/**
+ * Provider label plus `#N`, linked only when a validated https://github.com/ URL was supplied.
+ * Without display metadata this is exactly the provider-only label.
+ */
+export function sourceReference(source: Source): string {
+  const label = sourceLabel(source);
+  const number = sourceNumber(source);
+  const url = source.display?.url;
+  const text = number ?? label;
+  const link = url ? `<a class="source-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Link supplied at import · not Factory proof">${esc(text)}</a>` : esc(text);
+  return number || url ? `${number ? `${esc(label)} ` : ""}${link}` : esc(label);
 }
 
 function renderInspector(state: ViewState, run: RunView, tasks: MapTask[], graph: FactoryGraph | null, layout: WaveLayout, agents: Agent[], followUps: (task?: { id: string; title: string }) => string): string {
@@ -124,7 +142,9 @@ function renderInspector(state: ViewState, run: RunView, tasks: MapTask[], graph
   const byId = new Map(tasks.map(task => [task.id, task]));
   const criteria = graph?.criteria ?? run.control?.criteria ?? [];
   const attempts = graph?.attempts ?? run.control?.attempts ?? [];
-  const agentSection = agent ? `<section class="inspector-agent" aria-label="Selected agent">${agentToken(agent, 30)}<div><div class="eyebrow">${agent.role === "coordinator" ? "Coordinator" : "Worker"}</div><h3>${esc(agent.label)}</h3><p>${esc(livenessLabel[agent.liveness])}${agent.taskId ? ` · owns ${esc(byId.get(agent.taskId)?.title ?? agent.taskId)}` : " · no task binding reported"}</p><p class="small muted">${attempts.filter(attempt => attempt.thread_id === agent.thread).length} recorded attempts. A per-agent timeline isn't available from this server yet.</p></div></section>` : "";
+  const attributed = agent ? run.receipts.filter(receipt => receiptAgent(receipt, agents) === agent).length : 0;
+  const agentSection = agent ? `<section class="inspector-agent" aria-label="Selected agent">${agentToken(agent, 30)}<div><div class="eyebrow">${agent.role === "coordinator" ? "Coordinator" : "Worker"}</div><h3>${esc(agent.label)}</h3><p>${esc(livenessLabel[agent.liveness])}${agent.taskId ? ` · owns ${esc(byId.get(agent.taskId)?.title ?? agent.taskId)}` : " · no task binding reported"}</p><p class="small muted">${attempts.filter(attempt => attempt.thread_id === agent.thread).length} recorded attempts. ${attributed ? `${attributed} retained ${attributed === 1 ? "receipt" : "receipts"} recorded on this agent's thread.` : "No retained receipts are attributed to this agent."}</p></div></section>` : "";
+  const blocker = blockerCopy(run);
   if (!selected) return `<aside class="graph-inspector inspector" aria-label="Selected task inspector">${agentSection}<p class="muted">Select a task to see why it's in its wave, what it unblocks, and its proof.</p>${followUps()}</aside>`;
   const tone = taskTone(selected.state);
   const owner = agents.find(item => item.thread === selected.owner_thread);
@@ -136,10 +156,10 @@ function renderInspector(state: ViewState, run: RunView, tasks: MapTask[], graph
   const graphNode = graph?.nodes.find(node => node.id === selected.id);
   return `<aside class="graph-inspector inspector" aria-label="Selected task inspector">
     ${agentSection}
-    <div class="eyebrow">Task · wave ${wave}${selected.source ? ` · ${esc(sourceLabel(selected.source))}` : ""}</div>
+    <div class="eyebrow">Task · wave ${wave}${selected.source ? ` · ${esc(sourceLabel(selected.source))}${sourceNumber(selected.source) ? ` ${esc(sourceNumber(selected.source)!)}` : ""}` : ""}</div>
     <h3>${esc(selected.title || selected.id)}</h3>
     <p class="inspector-state">${taskGlyph(tone)}<span>${esc(taskToneLabel[tone])}${selected.admission ? ` · admission ${esc(selected.admission.toLowerCase())}` : ""}</span></p>
-    <dl class="route-list"><dt>Owner</dt><dd>${owner ? `${esc(owner.label)} · ${esc(livenessLabel[owner.liveness])}` : selected.owner_thread ? "An agent the server no longer lists" : "No agent assigned"}</dd><dt>Reason</dt><dd>${esc(reasonText(selected.reason))}</dd>${selected.source ? `<dt>Source</dt><dd>${esc(sourceLabel(selected.source))}<small class="mono">${esc(selected.source.item_id)}</small></dd>` : ""}${"target_preference" in selected ? `<dt>Planning note</dt><dd>${esc(selected.target_preference ?? "No target preference")}</dd>` : ""}</dl>
+    <dl class="route-list"><dt>Owner</dt><dd>${owner ? `${esc(owner.label)} · ${esc(livenessLabel[owner.liveness])}` : selected.owner_thread ? "An agent the server no longer lists" : "No agent assigned"}</dd><dt>Reason</dt><dd>${esc(reasonText(selected.reason))}</dd>${blocker ? `<dt>Run blocker</dt><dd class="blocker-kind">${esc(blocker)}</dd>` : ""}${selected.source ? `<dt>Source</dt><dd>${sourceReference(selected.source)}<small class="mono">${esc(selected.source.item_id)}</small></dd>` : ""}${"target_preference" in selected ? `<dt>Planning note</dt><dd>${esc(selected.target_preference ?? "No target preference")}</dd>` : ""}</dl>
     <h4>Waits on</h4>${list(selected.dependencies, "No prerequisites.")}
     <h4>Unblocks</h4>${list(unblocks, "Nothing in this plan waits on it.")}
     <h4>Proof</h4>${proof ? `<ul class="graph-proof">${proof}</ul>` : '<p class="small muted">No criterion bindings.</p>'}
@@ -164,8 +184,20 @@ function renderPlanEditor(state: ViewState, graph: FactoryGraph, selected: Facto
   return `<details id="edit-${esc(selected.id)}" class="planning-editor"><summary>Edit this planned task</summary><p class="field-hint">Selecting a task only inspects it. Saving records a proposal for review. Only a confirmed application changes the plan, and no work is dispatched.</p><form data-form="graph-node" data-input-identity="${esc(graph.run_id)}:${esc(selected.id)}:${graph.revision}">
       ${nodeLocked && !locked ? '<p class="field-hint">Only planned tasks with no execution history can be edited.</p>' : ""}
       <div class="field"><label for="dependencies">Prerequisite tasks</label><select id="dependencies" name="dependencies" multiple size="${Math.min(5, Math.max(2, graph.nodes.length - 1))}"${disabled(nodeLocked)}>${graph.nodes.filter(node => node.id !== selected.id).map(node => `<option value="${esc(node.id)}"${selected.dependencies.includes(node.id) ? " selected" : ""}>${esc(node.title)}</option>`).join("")}</select><p class="field-hint">Choose the tasks that must finish first. ${selected.dependencies.length ? "Clearing all selections proposes removal of existing prerequisites." : "There are no prerequisites yet. Empty selection leaves the plan unchanged."} The server rejects cycles.</p></div><button class="button" type="submit" value="dependencies"${disabled(nodeLocked)}>Save prerequisite proposal</button>
-      <details id="target-${esc(selected.id)}" class="target-editor"><summary>Optional planning target note</summary><div class="field target-field"><label for="target_id">Planning target note</label><select id="target_id" name="target_id"${disabled(nodeLocked || !eligible.length)}><option value=""${selected.target_preference === null ? " selected" : ""}>No preference</option>${eligible.map(target => `<option value="${esc(target.id)}"${selected.target_preference === target.id ? " selected" : ""}${disabled(!target.planning_eligible)}>${esc(target.label)} · execution unverified</option>`).join("") || '<option value="">Read targets with Refresh plan</option>'}</select><p class="field-hint">A planning preference does not authorize execution or verify subscription access.</p></div><button class="button" type="submit" value="target"${disabled(nodeLocked || !eligible.length)}>Save planning note proposal</button></details>
+      <details id="target-${esc(selected.id)}" class="target-editor"><summary>Optional planning target note</summary><div class="field target-field"><label for="target_id">Planning target note</label><select id="target_id" name="target_id"${disabled(nodeLocked || !eligible.length)}>${targetOptions(selected.target_preference ?? null, eligible)}</select><p class="field-hint">A planning preference does not authorize execution or verify subscription access.</p></div><button class="button" type="submit" value="target"${disabled(nodeLocked || !eligible.length)}>Save planning note proposal</button></details>
     </form></details>`;
+}
+
+/**
+ * An empty target is never a submittable value. "No preference" is only a disabled placeholder
+ * while no note is set; a saved note cannot be cleared here, because the server has no clear change.
+ */
+export function targetOptions(current: string | null, eligible: Array<{ id: string; label: string; planning_eligible: boolean }>): string {
+  const offered = eligible.map(target => `<option value="${esc(target.id)}"${current === target.id ? " selected" : ""}${disabled(!target.planning_eligible)}>${esc(target.label)} · execution unverified</option>`).join("");
+  const placeholder = current === null
+    ? '<option value="" selected disabled>No preference</option>'
+    : eligible.some(target => target.id === current) ? "" : `<option value="${esc(current)}" selected disabled>${esc(current)} · current note</option>`;
+  return placeholder + (offered || '<option value="" disabled>Read targets with Refresh plan</option>');
 }
 
 /** Proposal review stays prominent: nothing applies without an exact, confirmed revision. */

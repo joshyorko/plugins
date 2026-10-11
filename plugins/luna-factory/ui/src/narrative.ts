@@ -31,6 +31,29 @@ export function nowSentence(run: RunView): string {
   return run.blocker || run.delta || run.remaining_gap || "No change has been reported yet.";
 }
 
+/**
+ * Plain-language copy for the server's typed blocker category. Copy and placement only: tiers,
+ * "Needs you" and actions never read it. `none` and `planning_only` add nothing.
+ */
+export function blockerCopy(run: RunView): string | null {
+  const kind = run.control ? run.presentation?.blocker_kind : undefined;
+  if (!kind) return null;
+  switch (kind.kind) {
+    case "budget_exhausted": return kind.budget === "time" ? "Time budget used up" : "Repair budget used up";
+    case "diagnosis_required": return "A diagnosis is needed before another repair";
+    case "native_approval": return "Waiting on an approval in native Codex";
+    case "effect_outcome_unknown": return "An effect's outcome is unknown";
+    case "liveness_unknown": return "Owned execution isn't proved stopped yet";
+    case "unknown": return "Blocker not categorized by the server";
+    case "none": case "planning_only": return null;
+  }
+}
+
+/** Newest server-recorded activity: `activity_at` when reported, else lifecycle `updated_at`. */
+export function activityAt(run: RunView): number | undefined {
+  return run.activity_at ?? run.updated_at;
+}
+
 /** Time of day for today; otherwise the date too, so old events never read as recent. */
 export function clock(seconds: number, now = Date.now() / 1000): string {
   const date = new Date(seconds * 1000);
@@ -45,6 +68,7 @@ export function freshness(seconds: number | undefined, now = Date.now() / 1000):
   return `Updated ${clock(seconds, now)}`;
 }
 
+/** `updated` is the run's newest reported activity when first seen (see `activityAt`). */
 export interface Baseline { at: number; updated: number }
 /**
  * "Since you last looked", scoped honestly to this open session.
@@ -62,14 +86,14 @@ export class SinceTracker {
   observe(runs: RunView[]): void {
     let added = false;
     for (const run of runs) {
-      if (!this.seen.has(run.id)) { this.seen.set(run.id, { at: this.now(), updated: run.updated_at ?? 0 }); added = true; }
+      if (!this.seen.has(run.id)) { this.seen.set(run.id, { at: this.now(), updated: activityAt(run) ?? 0 }); added = true; }
     }
     if (added) this.persist?.(Object.fromEntries(this.seen));
   }
   /** Moves every baseline to now, so the next visit reports only what changed after this one. */
   markSeen(runs: RunView[]): void {
     const at = this.now();
-    for (const run of runs) this.seen.set(run.id, { at, updated: run.updated_at ?? 0 });
+    for (const run of runs) this.seen.set(run.id, { at, updated: activityAt(run) ?? 0 });
     this.persist?.(Object.fromEntries(this.seen));
   }
   /** Returns null when nothing changed after the baseline, so no change is implied. */
@@ -79,7 +103,7 @@ export class SinceTracker {
     // Receipts can be newer than updated_at, so only events after this session began count as new.
     const threshold = Math.max(base.updated, base.at);
     const receipts = run.receipts.filter(receipt => receipt.created_at > threshold).sort((a, b) => b.created_at - a.created_at).slice(0, 3).map(receipt => `${clock(receipt.created_at)} · ${receipt.summary}`);
-    const updated = (run.updated_at ?? 0) > base.updated;
+    const updated = (activityAt(run) ?? 0) > base.updated;
     if (!receipts.length && !updated) return null;
     return { since: base.at, lines: receipts.length ? receipts : run.delta ? [run.delta] : [] };
   }

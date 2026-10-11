@@ -36,6 +36,7 @@ and `child_policy: "cooperative_unverified"`.
 | `budget` | Remaining time, remaining repair attempts and repairs used under original limits. |
 | `claim` | held flag and owned/released/foreign/unknown status; no age-based unlock. |
 | `deliverable` | local_candidate/push/pr_ready, verified/unproved, exact subject and nullable reference. A URL/prose is not verified PR delivery or merge authority. |
+| `blocker_kind` | Typed copy/placement category (#70), derived from the same state and reason codes. Never grants an action or creates attention. See [Projection additions](#projection-additions-69-70). |
 
 One safe primary action is visible. Current server-authorized cancel/steer controls
 may remain folded as secondary actions. UI action display is not enforcement;
@@ -122,13 +123,14 @@ mutation. Legacy records without this stamp are readable, but new graph mutation
 are denied until a future explicit qualification mechanism exists.
 
 Nodes project the existing Control task records. Additional `source` is nullable
-or `{provider,repository_id,item_id,revision}`; `repository_id` is the graph's
+or `{provider,repository_id,item_id,revision,display?}`; `repository_id` is the graph's
 opaque local repository binding, not a caller-selected filesystem path or a claim
 of authenticated GitHub provenance. Provider/item/revision strings are supplied
 source assertions. They confer no authority or accepted evidence. An external
 item ID can be qualified with its immutable forge repository ID. Reimporting an
 existing provider/repository/item at a new revision does not create another node.
-`target_preference` is nullable or a configured planning target ID.
+`target_preference` is nullable or a configured planning target ID. Optional
+`display` is described under [Projection additions](#projection-additions-69-70).
 
 Changes are a closed tagged union:
 
@@ -250,3 +252,88 @@ tool, scheduler or execution backend is added. Manual continuation of a fresh
 admitted task also no longer consumes repair allowance; existing decision-answer
 idempotency remains unchanged. Legacy unstamped runs retain manual recovery but
 cannot enter new automatic continuation. Planning-only records never dispatch.
+
+## Projection additions (#69, #70)
+
+All fields are additive. No MCP tool is added (the catalog stays at the 22 tools
+asserted in `server/tests/mcp_contract.rs`), and no revision, fencing, claim,
+evidence or action semantics change. Older clients ignore the fields; the UI
+treats them as optional so older servers still parse.
+
+### Receipt attribution
+
+`receipts[]` entries gain required nullable `thread_id`. It is the native thread
+whose observed event or dispatch produced the receipt, recorded only when the
+server knows it at receipt time. It is never inferred afterwards.
+
+| Receipt kind | `thread_id` |
+| --- | --- |
+| `native_dispatch`, `automatic_continuation` | Owner thread the turn was started on |
+| `native_turn_failure`, `owner_acceptance`, `criterion_acceptance` | Owner thread whose correlated turn returned |
+| `native_child_spawn` | The owned thread that emitted the spawn event (the spawner, not the new child) |
+| `execution` | The owned thread that emitted the command completion |
+| `routing_mismatch` | The exact owned thread named by the `model/rerouted` evidence |
+| `terminal_stop_requested` | The owned thread whose background terminal was targeted |
+
+The store rejects attribution to a thread that is neither the owner nor an
+owned child (`receipt_thread_not_owned`). SQLite gains a nullable
+`receipts.thread_id` column through an idempotent, transactional migration at
+open. Existing rows stay `NULL` and are not backfilled. `PRAGMA user_version`
+stays 2, because older binaries name their receipt columns explicitly and
+ignore the column, so rollback keeps working.
+
+### Run timing
+
+- `created_at`: the stored admission time, now projected.
+- `activity_at`: the newest of lifecycle `updated_at` and the newest retained
+  receipt `created_at` (all retained receipts, not only the projected 20).
+  Graph proposals and applications carry no timestamp in the ledger, so
+  `activity_at` covers lifecycle updates and receipts only. No timestamp is
+  invented for graph changes; a plan edit alone does not move it.
+
+### Source display hints
+
+Import candidates may add `source.display: {number?, url?}`:
+
+- `number`: integer from 1 to 2^53-1.
+- `url`: at most 512 bytes, `https://github.com/` followed by a non-empty path of
+  `A-Za-z0-9-._~/%` only. No query, fragment, userinfo or other host can be
+  expressed.
+- At least one field. Unknown fields are rejected (`invalid_graph_source_display`
+  or typed decoding failure), and nothing is written.
+
+Display hints are supplied by the importer. They are never proof, authority or
+source identity, and duplicate detection still compares only provider,
+repository and item. Like the rest of the source binding they are immutable once
+imported. An absent `display` is omitted from serialization, so earlier proposal
+fingerprints and snapshots are byte-identical. Graph nodes project `display`
+unchanged. The workbench shows `#N` only when `number` is present and links only
+a validated `url`, opening it with `rel="noopener noreferrer"`.
+
+### Typed blocker kind
+
+`presentation.blocker_kind` is `{kind:"budget_exhausted",budget:"time"|"repair"}`
+or `{kind}` with one of `diagnosis_required`, `native_approval`,
+`effect_outcome_unknown`, `liveness_unknown`, `planning_only`, `none` or
+`unknown`. It is computed after every action and attention decision, from the
+predicates behind the existing reason codes, in this order:
+
+| Condition | Kind |
+| --- | --- |
+| Planning-only record | `planning_only` |
+| `NEEDS_INPUT` without a recorded decision (`native_approval_requires_native_ui`) | `native_approval` |
+| Verified finish, or owned execution observed active | `none` |
+| Foreign or unknown claim (`foreign_or_unknown_claim`) | `unknown` |
+| Unknown dispatch or effect, including uncertified delivery (`effect_outcome_unknown`, `delivery_certification_unsupported`) | `effect_outcome_unknown` |
+| Owned liveness not proved stopped (`owned_liveness_unknown`) | `liveness_unknown` |
+| Original time limit used (`time_budget_exhausted`) | `budget_exhausted` / `time` |
+| Original repair limit used without a decision or fresh task (`repair_budget_exhausted`) | `budget_exhausted` / `repair` |
+| Two no-progress attempts without a diagnosis (`diagnosis_required`) | `diagnosis_required` |
+| A recorded decision is pending, or resume is allowed | `none` |
+| Anything else | `unknown` |
+
+Nothing reads `blocker_kind` back: `needs` attention is still only a
+server-authorized answer or a native approval, and an exhausted budget next to a
+decision does not make it answerable. Clients map unknown or malformed kinds to
+`unknown`. `protected_resource`, `authority_ceiling` and `external_dependency`
+are not emitted, because the server has no detection for them yet.

@@ -67,6 +67,9 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/server/src/schemas.rs",
     "plugins/luna-factory/server/src/extensions.rs",
     "plugins/luna-factory/server/src/mentions.rs",
+    # #69/#70: receipt attribution, run timing, source display and typed blocker projection.
+    "plugins/luna-factory/server/src/main.rs",
+    "plugins/luna-factory/server/src/store.rs",
     "plugins/luna-factory/server/tests/http_security.rs",
     "plugins/luna-factory/server/tests/http_integration.rs",
     "plugins/luna-factory/server/tests/mcp_contract.rs",
@@ -74,6 +77,10 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/server/tests/graph.rs",
     "plugins/luna-factory/server/tests/mentions.rs",
     "plugins/luna-factory/server/tests/openai_forms.rs",
+    # #69/#70 contract tests.
+    "plugins/luna-factory/server/tests/control.rs",
+    "plugins/luna-factory/server/tests/factory_integration.rs",
+    "plugins/luna-factory/server/tests/presentation.rs",
     "plugins/luna-factory/server/Cargo.lock",
     "plugins/luna-factory/server/Cargo.toml",
     "plugins/luna-factory/tests/fixtures/github/issue-graph-67.json",

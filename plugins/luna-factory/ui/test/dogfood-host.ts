@@ -13,7 +13,15 @@ const platform = params.get("platform") === "mobile" ? "mobile" : "desktop";
 const largeFontStyles = McpUiHostStylesSchema.parse({ variables: { "--font-text-md-size": "20px", "--font-text-sm-size": "18px" } });
 const campaign = fixtureCampaignPlan();
 const decisionRun = () => fixtureRun({ id: "review-301", state: "NEEDS_INPUT", pending_decision: { id: "fixture-decision", question: "Which approved scope should the owner use?" }, active_workers: 0, updated_at: 1791141000 });
-const blockedRun = () => fixtureRun({ id: "blocked-77", state: "BLOCKED", pending_decision: null, active_workers: 0, blocker: "Native ownership is unverified. Keep the claim held.", updated_at: 1791139000 });
+const blockedRun = () => {
+  const run = fixtureRun({ id: "blocked-77", state: "BLOCKED", pending_decision: null, active_workers: 0, blocker: "Native ownership is unverified. Keep the claim held.", updated_at: 1791139000, created_at: 1791132000 });
+  // Server-shaped: unproved liveness with a held claim projects read-only reconciliation, never a decision.
+  const reconcile = { kind: "reconcile" as const, label: "Reconcile native ownership", reason: "read_only_native_reconciliation", tool: "reconcile_factory_run", allowed: true };
+  run.presentation!.primary_action = reconcile;
+  run.presentation!.actions = [reconcile, ...run.presentation!.actions.filter(action => action.kind === "cancel")];
+  run.presentation!.blocker_kind = { kind: "liveness_unknown" };
+  return run;
+};
 const run = scenario === "decision" ? decisionRun() : scenario === "blocked" ? blockedRun()
   : scenario === "campaign" || scenario === "home" ? campaign.run : scenario === "swarm" ? fixtureSwarmRun() : fixturePlanningRun();
 let graph = fixtureGraph(run.control?.revision ?? 6);

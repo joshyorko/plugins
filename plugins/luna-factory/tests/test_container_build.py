@@ -183,8 +183,17 @@ class ContainerBuildTests(unittest.TestCase):
                 "plugins/luna-factory/server/tests/openai_forms.rs",
                 "plugins/luna-factory/docs/chatgpt-extension-gap-matrix.md",
                 "skills/setup",
+                "plugins/luna-factory/server/src/main.rs",
+                "plugins/luna-factory/server/src/store.rs",
+                "plugins/luna-factory/server/tests/control.rs",
+                "plugins/luna-factory/server/tests/factory_integration.rs",
+                "plugins/luna-factory/server/tests/presentation.rs",
             ]
         )
+        # Listing reviewed files is not a prefix grant: siblings stay rejected.
+        for unlisted in ["plugins/luna-factory/server/src/store_extra.rs", "plugins/luna-factory/server/tests/native_live.rs"]:
+            with self.assertRaisesRegex(ValueError, "unreviewed release source delta"):
+                BUILD.validate_release_delta([unlisted])
 
     def test_oci_icon_pins_the_reviewed_moonlight_logo(self):
         logo = CONTAINER_DIR.parent / "assets/logo.png"

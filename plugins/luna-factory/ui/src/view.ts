@@ -3,7 +3,9 @@ import type { ViewState } from "./controller";
 import { renderMission, renderProposalReview, renderTargets, missionTasks } from "./graph-view";
 import { layoutWaves } from "./campaign-map";
 import { icon, lunaMark, phaseGlyph, taskTone } from "./lunar";
-import { freshness, nowSentence, runTier, statusLabel, clock, type SinceTracker, type Tier } from "./narrative";
+import { activityAt, blockerCopy, freshness, nowSentence, runTier, statusLabel, clock, type SinceTracker, type Tier } from "./narrative";
+import { roster } from "./agents";
+import { receiptAgent } from "./lanes";
 
 export type Editor = "start" | "settings" | "steer" | "stop" | "repositories" | null;
 export type WorkbenchSurface = "inline" | "global" | "thread";
@@ -140,7 +142,7 @@ function renderHome(state: ViewState, canStart: boolean, options: WorkbenchOptio
     return `<li><a id="campaign-${escape(run.id)}" class="campaign-row tier-${tier}" href="${runPath(run.id)}" data-run-id="${escape(run.id)}">
       <span class="row-sky">${miniMap(run) || phaseGlyph(run.presentation?.criteria.proven ?? 0, run.presentation?.criteria.mandatory ?? 0, 22)}</span>
       <span class="row-main"><span class="row-repo">${escape(run.repository)}</span><strong>${escape(run.objective)}</strong><span class="row-now">${escape(tier === "needs" ? nowSentence(run) : changes?.lines[0] ?? nowSentence(run))}</span></span>
-      <span class="row-side">${statusMark(tier, statusLabel(run))}${proofLine(run)}<span class="row-fresh">${escape(freshness(run.updated_at, options.now))}</span></span>
+      <span class="row-side">${statusMark(tier, statusLabel(run))}${proofLine(run)}<span class="row-fresh">${escape(freshness(activityAt(run), options.now))}</span></span>
     </a></li>`;
   };
   const sections = groups.map(group => {
@@ -163,15 +165,18 @@ function renderCampaign(run: RunView, state: ViewState, options: WorkbenchOption
   const secondary = presentation?.actions.filter(item => item.allowed && ["cancel", "steer"].includes(item.kind) && item.kind !== primary?.kind && item.tool) ?? [];
   const changes = options.since?.changes(run);
   const baseline = options.since?.baseline(run.id);
-  const eyebrow = attention ? "Needs you" : run.planning_only ? "Plan navigation" : run.blocker ? "Execution blocker" : "Next safe action";
+  // The typed category only names the blocker in plain language. Attention, tier and actions
+  // never read it; an uncategorized blocker keeps the generic label.
+  const category = presentation?.blocker_kind?.kind === "unknown" ? null : blockerCopy(run);
+  const eyebrow = attention ? "Needs you" : run.planning_only ? "Plan navigation" : category ?? (run.blocker ? "Execution blocker" : "Next safe action");
   const headline = attention ? run.pending_decision?.question || action.label : run.planning_only ? action.label : run.blocker || action.label;
   return `<section class="campaign-head">
       <div class="eyebrow">${escape(run.repository)} · ${escape(finishLabels[run.finish])}</div>
       <h1>${escape(run.objective)}</h1>
-      <p class="statusline">${statusMark(tier, statusLabel(run))}${proofLine(run)}<span class="fresh">${escape(freshness(run.updated_at, options.now))}</span></p>
+      <p class="statusline">${statusMark(tier, statusLabel(run))}${proofLine(run)}<span class="fresh">${escape(freshness(activityAt(run), options.now))}</span>${run.created_at !== undefined ? `<span class="started"><time datetime="${new Date(run.created_at * 1000).toISOString()}">${run.planning_only ? "Created" : "Started"} ${escape(clock(run.created_at, options.now))}</time></span>` : ""}</p>
       <div class="story">${changes?.lines.length ? `<p class="story-kicker">Since you last looked at ${escape(clock(changes.since))}</p><ul>${changes.lines.map(line => `<li>${escape(line)}</li>`).join("")}</ul>` : `<p class="story-now">${escape(attention ? run.delta || "No new change was reported." : nowSentence(run))}</p>${baseline ? `<p class="story-kicker">No new server changes since ${escape(clock(baseline))}.</p>` : ""}`}${run.remaining_gap && tier !== "planned" ? `<p class="story-gap"><span>Still needed</span>${escape(run.remaining_gap)}</p>` : ""}</div>
     </section>
-    <section class="decision-panel tier-${attention ? "needs" : tier}${attention ? " needs-you" : " compact"}" aria-labelledby="decision-title"><div class="eyebrow">${escape(eyebrow)}</div><h2 id="decision-title">${escape(headline)}</h2><p id="action-reason">${escape(reasonCopy(presentation ? action.reason : null))}${presentation ? " The server rechecks this at the action boundary." : " Refresh to load the server's action and proof view."}</p><div class="run-controls">${actionButton(action, true, busy)}${secondary.length ? `<details id="other-actions" class="other-actions"><summary>Other available actions</summary><div class="run-controls">${secondary.map(item => actionButton(item, false, busy)).join("")}</div></details>` : ""}</div></section>
+    <section class="decision-panel tier-${attention ? "needs" : tier}${attention ? " needs-you" : " compact"}" aria-labelledby="decision-title"><div class="eyebrow"${category && !attention && !run.planning_only ? ` data-blocker-kind="${escape(presentation?.blocker_kind?.kind ?? "")}"` : ""}>${escape(eyebrow)}</div><h2 id="decision-title">${escape(headline)}</h2><p id="action-reason">${escape(reasonCopy(presentation ? action.reason : null))}${presentation ? " The server rechecks this at the action boundary." : " Refresh to load the server's action and proof view."}</p><div class="run-controls">${actionButton(action, true, busy)}${secondary.length ? `<details id="other-actions" class="other-actions"><summary>Other available actions</summary><div class="run-controls">${secondary.map(item => actionButton(item, false, busy)).join("")}</div></details>` : ""}</div></section>
     ${renderProposalReview(state)}
     ${renderMission(state, run, task => renderFollowUpActions(run, options, task), options.canvasWidth)}
     ${renderEvidence(run, state)}`;
@@ -180,8 +185,9 @@ function renderCampaign(run: RunView, state: ViewState, options: WorkbenchOption
 function renderEvidence(run: RunView, state: ViewState): string {
   const presentation = run.control ? run.presentation : undefined;
   const criteria = run.control?.criteria ?? run.acceptance.map((description, index) => ({ id: `A${index + 1}`, description, status: "unproved" as const, reason: null, check_refs: [] }));
-  const { tasks } = missionTasks(state, run);
-  const receipts = run.receipts.map(receipt => `<li class="receipt"><time datetime="${new Date(receipt.created_at * 1000).toISOString()}">${escape(clock(receipt.created_at))}</time><div><strong>${escape(receipt.kind.replaceAll("_", " "))}</strong><span>${escape(receipt.summary)}</span><small class="${receipt.subject === run.current_subject ? "" : "warn"}">${receipt.subject === run.current_subject ? "Matches the current subject" : "Different subject; re-verification may be needed"}</small></div></li>`).join("");
+  const { tasks, graph } = missionTasks(state, run);
+  const agents = roster(run, graph);
+  const receipts = run.receipts.map(receipt => `<li class="receipt"><time datetime="${new Date(receipt.created_at * 1000).toISOString()}">${escape(clock(receipt.created_at))}</time><div><strong>${escape(receipt.kind.replaceAll("_", " "))}</strong><span>${escape(receipt.summary)}</span>${receipt.thread_id ? `<small>Recorded on ${escape(receiptAgent(receipt, agents)?.label ?? "an unlisted agent")}'s thread</small>` : ""}<small class="${receipt.subject === run.current_subject ? "" : "warn"}">${receipt.subject === run.current_subject ? "Matches the current subject" : "Different subject; re-verification may be needed"}</small></div></li>`).join("");
   return `<details id="evidence-audit" class="evidence advanced"><summary>Evidence and audit<span>${criteria.length} criteria · ${run.receipts.length} receipts · ${tasks.length} tasks</span></summary>
     <section><h3>Criteria</h3><ol class="acceptance-list">${criteria.map(criterion => `<li><span class="criterion-state ${escape(criterion.status)}">${escape(criterion.status === "unproved" ? "pending" : criterion.status)}</span><div><p>${escape(criterion.description)}</p>${criterion.reason ? `<small class="muted">${escape(reasonCopy(criterion.reason))}</small>` : ""}${criterion.check_refs.length ? `<small class="muted">Checks: ${criterion.check_refs.map(escape).join(", ")}</small>` : ""}</div></li>`).join("")}</ol><p class="muted small">Child-task policy: ${escape(run.control?.child_policy ?? "unverified")}.</p></section>
     <section><h3>Execution and delivery</h3><div class="delivery-strip"><div><span>Owner</span><strong>${run.planning_only ? "No owner started" : escape(presentation?.owner.liveness ?? "unknown")}</strong><small>${run.planning_only ? "No native owner is assigned" : escape(presentation?.owner.thread_id ?? "Identity unknown")}${presentation?.owner.turn_id ? ` · turn ${escape(presentation.owner.turn_id)}` : ""}</small></div><div><span>Workers</span><strong>${presentation ? `${presentation.workers.filter(worker => worker.liveness === "active").length} active · ${presentation.workers.filter(worker => worker.liveness === "unknown").length} unknown` : "Unknown"}</strong><small>${presentation?.workers.map(worker => `${escape(worker.thread_id)}: ${escape(worker.liveness)}`).join(", ") || "No worker identities reported"}</small></div><div><span>Time left</span><strong>${run.planning_only ? "Not running" : presentation?.result.kind !== "working" ? "Inactive" : presentation?.budget.time_remaining_seconds === null || presentation?.budget.time_remaining_seconds === undefined ? "Unverified" : `${Math.ceil(presentation.budget.time_remaining_seconds / 60)} min`}</strong><small>${presentation?.budget.repair_attempts_remaining ?? "?"} repairs remaining · ${presentation?.budget.repairs_used ?? "?"} used</small></div><div><span>Repository claim</span><strong>${presentation?.claim.status ?? "unknown"}</strong><small>${presentation?.claim.held ? "Retained" : presentation ? "Released" : "Status unknown"}</small></div><div><span>Deliverable</span><strong>${run.planning_only ? "No deliverable yet" : presentation ? `${presentation.deliverable.status} · ${deliverableLabel(presentation.deliverable.kind)}` : "unverified"}</strong><small class="mono">${escape(presentation?.deliverable.subject ?? "Subject unknown")}${presentation?.deliverable.reference ? ` · ${escape(presentation.deliverable.reference)}` : ""}</small></div></div></section>
@@ -201,7 +207,7 @@ function renderInline(state: ViewState, run: RunView | undefined, options: Workb
   const followKind: FollowUpKind = run.blocker || run.remaining_gap || run.pending_decision ? "blocker" : "summary";
   const followLabel = followKind === "blocker" ? (tier === "needs" ? "Ask ChatGPT about this decision" : "Ask ChatGPT about this") : "Summarize in chat";
   return shell(`<article class="inline-card tier-${tier}" aria-labelledby="inline-title">
-    <header class="inline-top">${lunaMark(18)}<span>${escape(run.repository)}</span>${statusMark(tier, statusLabel(run))}<span class="inline-fresh">${escape(freshness(run.updated_at, options.now))}</span></header>
+    <header class="inline-top">${lunaMark(18)}<span>${escape(run.repository)}</span>${statusMark(tier, statusLabel(run))}<span class="inline-fresh">${escape(freshness(activityAt(run), options.now))}</span></header>
     <div class="inline-body"><span class="inline-sky">${miniMap(run) || phaseGlyph(run.presentation?.criteria.proven ?? 0, run.presentation?.criteria.mandatory ?? 0, 32)}</span><div><h2 id="inline-title">${escape(run.objective.slice(0, 300))}</h2><p class="inline-now">${escape(nowSentence(run))}</p><p class="inline-proof">${proofLine(run)}</p></div></div>
     ${tier === "needs" ? `<p class="inline-attention">${icon("alert", 14)}<span>${run.pending_decision ? "Answer in Luna Factory or in this chat." : "Answer this approval in native Codex."}</span></p>` : ""}
     <div class="inline-actions"><button id="follow-up-${followKind}-${escape(run.id)}" type="button" class="button quiet" data-action="chat-follow-up" data-kind="${followKind}"${disabled(!options.canSendFollowUps)}${options.messagePending ? ' aria-disabled="true"' : ""}>${icon("chat")}${escape(followLabel)}</button><button class="button primary" type="button" id="action-expand-mode" data-action="expand-mode"${disabled(!options.canExpand || !state.connected)}>Open Luna Factory</button></div>
