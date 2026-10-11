@@ -319,6 +319,25 @@ describe("observed agent timelines", () => {
     await controller.loadTimelines();
     await vi.waitFor(() => expect(timelineCalls()).toHaveLength(3));
   });
+  it("stops between agents when the page becomes hidden mid-read", async () => {
+    let release: () => void = () => undefined;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const { controller, timelineCalls } = await observedController(fixtureTimelineCapability, async thread => { await pending; return { structuredContent: fixtureTimelines("swarm-fixture")[thread] }; });
+    controller.setViewMode("lanes");
+    await vi.waitFor(() => expect(timelineCalls()).toHaveLength(1));
+    // Lanes stays selected; only the page visibility changes while the first read is in flight.
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    try {
+      release();
+      await vi.waitFor(() => expect(Object.keys(controller.state.timelines)).toHaveLength(1));
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(controller.state.viewMode).toBe("lanes");
+      expect(timelineCalls()).toHaveLength(1);
+    } finally { hidden.mockRestore(); }
+    // The unread agents stay due once the page is visible again.
+    await controller.loadTimelines();
+    await vi.waitFor(() => expect(timelineCalls()).toHaveLength(3));
+  });
   it("never changes attention, proof, the Map or the ChatGPT context", async () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(1_791_142_800_000);
     try {
