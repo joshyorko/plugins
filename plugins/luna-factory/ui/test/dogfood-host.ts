@@ -53,7 +53,7 @@ host.oncalltool = async request => {
   if (scenario === "error") return { isError: true, content: [{ type: "text", text: "Fixture read failed. Reconnect to read current state." }] };
   if (request.name === "get_factory_backends") return { content: [], structuredContent: fixtureBackends };
   if (request.name === "get_factory_graph") return { content: [], structuredContent: graph };
-  if (request.name === "list_factory_campaigns") return { content: [], structuredContent: { campaigns: scenario === "campaign" || scenario === "home" ? [fixtureCampaign()] : [] } };
+  if (request.name === "list_factory_campaigns") return { content: [], structuredContent: { campaigns: scenario === "campaign" || scenario === "home" ? [fixtureCampaign()] : [], skipped: [] } };
   if (request.name === "get_factory_run") return { content: [], structuredContent: homeRuns.find(item => item.id === request.arguments?.run_id) ?? run };
   if (["refresh_factory", "open_factory"].includes(request.name)) return { content: [], structuredContent: workbench };
   return { isError: true, content: [{ type: "text", text: "The synthetic visual host is read-only; no mutation was sent." }] };

@@ -163,7 +163,7 @@ const campaignTier = (status: CampaignView["status"]): Tier => ({ planned: "plan
 const plannedTasks = (count: number): string => count === 1 ? "1 planned task" : `${count} planned tasks`;
 /** Campaign row, then its planning plan, then any linked runs. Every value is a named campaign or run field. */
 function renderCampaignGroup(state: ViewState, campaigns: CampaignView[], options: WorkbenchOptions): string {
-  if (!campaigns.length) return "";
+  if (!campaigns.length && !state.campaignsSkipped) return "";
   const child = (id: string, kind: string, run: RunView | undefined, fallback: string): string => {
     const tier = run ? runTier(run) : "unverified";
     return `<li><a id="campaign-child-${escape(id)}" class="campaign-child tier-${tier}" href="${runPath(id)}" data-run-id="${escape(id)}"><span class="child-kind">${escape(kind)}</span><span class="child-main"><strong>${escape(run ? run.objective : fallback)}</strong>${run ? `<span class="row-now">${escape(nowSentence(run))}</span>` : ""}</span><span class="row-side">${run ? `${statusMark(tier, statusLabel(run))}${proofLine(run)}` : '<span class="row-fresh">Open to read its current state</span>'}</span></a></li>`;
@@ -175,11 +175,11 @@ function renderCampaignGroup(state: ViewState, campaigns: CampaignView[], option
     const runs = campaign.run_ids.map(id => child(id, "Run", state.runs.find(run => run.id === id), "Linked run")).join("");
     return `<li class="campaign-entity"><a id="campaign-entity-${escape(campaign.id)}" class="campaign-row campaign-parent-row tier-${tier}" href="${runPath(campaign.planning_run_id)}" data-run-id="${escape(campaign.planning_run_id)}">
       <span class="row-sky">${plan ? miniMap(plan) || phaseGlyph(0, 0, 22) : phaseGlyph(0, 0, 22)}</span>
-      <span class="row-main"><span class="row-repo">${escape(campaign.repository)} · ${escape(parentLabel(campaign))}</span><strong>${escape(campaign.title)}</strong><span class="row-now">${escape(`${plannedTasks(campaign.planning.tasks.total)} · ${execution}.`)}</span></span>
+      <span class="row-main"><span class="row-repo">${escape(campaign.repository.alias)} · ${escape(parentLabel(campaign))}</span><strong>${escape(campaign.title)}</strong><span class="row-now">${escape(`${plannedTasks(campaign.planning.tasks.total)} · ${execution}.`)}</span></span>
       <span class="row-side">${statusMark(tier, campaignStatusLabel(campaign.status))}<span class="row-fresh">${escape(freshness(campaign.updated_at, options.now))}</span></span>
     </a><ul class="campaign-children" aria-label="Plan and runs">${child(campaign.planning_run_id, "Plan", plan, `Planning graph · ${plannedTasks(campaign.planning.tasks.total)}`)}${runs || '<li class="campaign-child-empty">No execution runs yet</li>'}</ul></li>`;
   }).join("");
-  return `<section class="home-group group-campaigns" aria-labelledby="group-campaigns"><h2 id="group-campaigns">Parent campaigns<span>${campaigns.length}</span></h2>${state.campaignsStale ? '<p class="group-empty" role="status">Campaign grouping could not be refreshed. Showing the last valid read.</p>' : ""}<ul class="campaign-list">${items}</ul></section>`;
+  return `<section class="home-group group-campaigns" aria-labelledby="group-campaigns"><h2 id="group-campaigns">Parent campaigns<span>${campaigns.length}</span></h2>${state.campaignsStale ? '<p class="group-empty" role="status">Campaign grouping could not be refreshed. Showing the last valid read.</p>' : ""}${state.campaignsSkipped ? `<p class="group-empty" role="status">${state.campaignsSkipped === 1 ? "1 campaign record could not be read and is not shown." : `${state.campaignsSkipped} campaign records could not be read and are not shown.`}</p>` : ""}${items ? `<ul class="campaign-list">${items}</ul>` : ""}</section>`;
 }
 
 function renderCampaign(run: RunView, state: ViewState, options: WorkbenchOptions): string {

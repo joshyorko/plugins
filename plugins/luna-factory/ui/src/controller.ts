@@ -22,9 +22,11 @@ export interface ViewState {
   viewMode: "map" | "lanes"; selectedAgent: string | null;
   /** Last valid `list_factory_campaigns` read; null when the server has not provided one. */
   campaigns: CampaignView[] | null; campaignsStale: boolean;
+  /** Records the last valid read skipped as unreadable. Counted only; never rendered as campaigns. */
+  campaignsSkipped: number;
 }
 export class WorkbenchController {
-  readonly state: ViewState = { runs: [], capabilities: null, settings: {}, connectionStatus: "connecting", selectedId: null, initialized: false, connected: false, refreshing: false, pending: null, error: null, notice: null, contextError: null, discovery: null, discovering: false, graph: null, graphLoading: false, graphStale: false, selectedNodeId: null, proposal: null, backends: null, viewMode: "map", selectedAgent: null, campaigns: null, campaignsStale: false };
+  readonly state: ViewState = { runs: [], capabilities: null, settings: {}, connectionStatus: "connecting", selectedId: null, initialized: false, connected: false, refreshing: false, pending: null, error: null, notice: null, contextError: null, discovery: null, discovering: false, graph: null, graphLoading: false, graphStale: false, selectedNodeId: null, proposal: null, backends: null, viewMode: "map", selectedAgent: null, campaigns: null, campaignsStale: false, campaignsSkipped: 0 };
   private initialSeen = false;
   private readVersion = 0;
   private contextVersion = 0;
@@ -146,7 +148,7 @@ export class WorkbenchController {
     try {
       const parsed = campaignListSchema.parse(structuredResult(await this.bridge.call("list_factory_campaigns", { limit: 100 })));
       if (version !== this.campaignVersion) return;
-      this.state.campaigns = parsed.campaigns; this.state.campaignsStale = false;
+      this.state.campaigns = parsed.campaigns; this.state.campaignsSkipped = parsed.skipped.length; this.state.campaignsStale = false;
     } catch {
       if (version === this.campaignVersion) this.state.campaignsStale = this.state.campaigns !== null;
     } finally { if (version === this.campaignVersion) this.changed(); }

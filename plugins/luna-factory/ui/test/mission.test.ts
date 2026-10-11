@@ -7,7 +7,7 @@ import { renderLanes } from "../src/lanes";
 import { nowSentence, runTier, SinceTracker, statusLabel } from "../src/narrative";
 import { renderWorkbench } from "../src/view";
 import { fixtureBackends, fixtureCampaign, fixtureCampaignPlan, fixturePlanningRun, fixtureRun, fixtureSwarmRun, fixtureWorkbench } from "./fixtures";
-import { campaignListSchema } from "../src/domain";
+import { campaignListSchema, parentLabel } from "../src/domain";
 
 const node = (id: string, dependencies: string[] = [], state = "candidate") => ({ id, title: id, dependencies, state, owner_thread: null });
 
@@ -207,7 +207,7 @@ describe("campaign grouping", () => {
     const row = entity?.querySelector<HTMLAnchorElement>(".campaign-parent-row");
     expect(row?.dataset.runId).toBe("campaign-actions-v2");
     expect(row?.getAttribute("href")).toBe("/runs/campaign-actions-v2");
-    expect(row?.textContent).toContain("GitHub #101 · reported by GitHub");
+    expect(row?.textContent).toContain("GitHub example/actions#101 · supplied, not verified");
     expect(row?.textContent).toContain("14 planned tasks · Execution hasn't started.");
     expect(row?.textContent).toContain("Planned · not started");
     const children = Array.from(entity?.querySelectorAll<HTMLElement>(".campaign-children > li") ?? []);
@@ -277,7 +277,7 @@ describe("campaign grouping", () => {
     controller.state.campaigns = [fixtureCampaign()];
     const root = document.createElement("div");
     renderWorkbench(root, controller.state, null, false);
-    expect(root.querySelector(".campaign-head .eyebrow")?.textContent).toContain("GitHub #101 · reported by GitHub");
+    expect(root.querySelector(".campaign-head .eyebrow")?.textContent).toContain("GitHub example/actions#101 · supplied, not verified");
     const primary = root.cloneNode(true) as HTMLElement;
     primary.querySelector("#evidence-audit")?.remove();
     primary.querySelector(".planning-editor")?.remove();
@@ -290,5 +290,29 @@ describe("campaign grouping", () => {
     counts.planning.tasks.total += 1;
     expect(campaignListSchema.safeParse({ campaigns: [counts] }).success).toBe(false);
     expect(campaignListSchema.safeParse({ campaigns: [{ ...fixtureCampaign(), planning: { ...fixtureCampaign().planning, planning_only: false } }] }).success).toBe(false);
+    // The forge key must be the canonical provider:owner/repo#number of the projected forge identity.
+    const parent = fixtureCampaign().parent;
+    for (const bad of [
+      { ...parent, key: "github:example/actions#102" },
+      { ...parent, forge: { ...parent.forge, provider: "GitHub" } },
+      { ...parent, forge: { ...parent.forge, repository: "Example/Actions" }, key: "github:Example/Actions#101" },
+      { ...parent, provenance: "reported_by_github" },
+    ]) expect(campaignListSchema.safeParse({ campaigns: [{ ...fixtureCampaign(), parent: bad }] }).success, JSON.stringify(bad)).toBe(false);
+    expect(campaignListSchema.safeParse({ campaigns: [{ ...fixtureCampaign(), repository: "actions" }] }).success).toBe(false);
+  });
+  it("labels supplied parents as unverified and never as reported by GitHub", () => {
+    expect(parentLabel(fixtureCampaign())).toBe("GitHub example/actions#101 · supplied, not verified");
+    expect(parentLabel(fixtureCampaign({ parent: { ...fixtureCampaign().parent, provenance: "github_app" } }))).toBe("GitHub example/actions#101 · fetched by Luna's GitHub App");
+    expect(parentLabel(fixtureCampaign())).not.toMatch(/reported by/i);
+  });
+  it("counts records the server skipped as unreadable without rendering them", async () => {
+    const { controller } = homeController(() => ({ structuredContent: { campaigns: [fixtureCampaign()], skipped: [{ id: "broken", reason: "campaign_record_corrupt" }] } }));
+    await controller.refresh();
+    expect(controller.state.campaignsSkipped).toBe(1);
+    const root = document.createElement("div");
+    renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector(".group-campaigns [role='status']")?.textContent).toBe("1 campaign record could not be read and is not shown.");
+    expect(root.querySelectorAll(".group-campaigns .campaign-entity")).toHaveLength(1);
+    expect(root.querySelector(".group-campaigns")?.textContent).not.toContain("broken");
   });
 });

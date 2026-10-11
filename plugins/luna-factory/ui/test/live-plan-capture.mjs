@@ -65,16 +65,18 @@ try {
   const parent = snapshot.issues.find(issue => issue.number === 67);
   const children = snapshot.issues.filter(issue => issue.number !== 67);
   const revisionOf = issue => `sha256:${createHash("sha256").update(JSON.stringify(issue)).digest("hex")}`;
-  // Parent #67 comes from the recorded snapshot; its number and URL are display assertions, not proof.
+  // Parent #67 comes from the recorded snapshot. Its forge identity and URL are supplied assertions, not proof.
   const campaignRequest = {
     repository: "plugins", title: parent.title,
-    parent: { provider: "github", item_id: `${snapshot.repository_id}:${parent.node_id}`, revision: revisionOf(parent), display: { number: parent.number, url: `https://github.com/${snapshot.repository}/issues/${parent.number}` } },
+    parent: { forge: { provider: "github", repository: snapshot.repository, number: parent.number, node_id: parent.node_id }, revision: revisionOf(parent), display: { url: `https://github.com/${snapshot.repository}/issues/${parent.number}` } },
     objective: `${parent.title} (#67)`, acceptance: ["Every sub-issue is resolved by a verified change"], non_goals: ["No execution from this planning graph"],
     finish: "local_candidate", profile: "default", idempotency_key: "live-campaign-67",
   };
   const created = await tool("create_factory_campaign", campaignRequest);
   const campaignId = created.campaign.id;
   assert.equal(created.campaign.status, "planned"); assert.deepEqual(created.campaign.run_ids, []);
+  assert.equal(created.campaign.parent.key, `github:${snapshot.repository.toLowerCase()}#67`); assert.equal(created.campaign.parent.provenance, "supplied");
+  assert.deepEqual(created.campaign.repository, { alias: "plugins", identity: created.graph.repository.identity });
   let envelope = { graph: created.graph };
   const runId = envelope.graph.run_id;
   assert.equal(created.campaign.planning_run_id, runId); assert.equal(envelope.graph.planning_only, true);
@@ -139,7 +141,7 @@ try {
       if (item.home) {
         const row = frame.locator(`.group-campaigns .campaign-parent-row[data-run-id="${runId}"]`);
         await row.waitFor();
-        assert((await row.textContent()).includes("GitHub #67 · reported by GitHub"), "Campaign row lost its parent label");
+        assert((await row.textContent()).includes(`GitHub ${snapshot.repository.toLowerCase()}#67 · supplied, not verified`), "Campaign row lost its parent label");
         await frame.locator(`.group-campaigns .campaign-child[data-run-id="${runId}"]`).waitFor();
         assert.equal(await frame.locator(`.group-planned [data-run-id="${runId}"]`).count(), 0, "Linked plan was also listed ungrouped");
       }
@@ -173,7 +175,7 @@ try {
     ui_source_sha256: source.digest("hex"),
     github_snapshot_sha256: createHash("sha256").update(snapshotBytes).digest("hex"),
     graph: { revision: graph.revision, nodes: graph.nodes.length, attempts: graph.attempts.length, planning_only: graph.planning_only, claim: graph.claim, display_numbers: graph.nodes.map(node => node.source?.display?.number).filter(number => number !== undefined) },
-    campaign: { created_with: "create_factory_campaign", parent: { provider: campaign.parent.provider, number: campaign.parent.display?.number ?? null }, status: campaign.status, planning_revision: campaign.planning.revision, planning_tasks: campaign.planning.tasks.total, run_ids: campaign.run_ids.length, replay: "identical", promotion: "rejected execution_not_qualified; graph and campaign unchanged" },
+    campaign: { created_with: "create_factory_campaign", parent: { key: campaign.parent.key, provenance: campaign.parent.provenance }, status: campaign.status, planning_revision: campaign.planning.revision, planning_tasks: campaign.planning.tasks.total, run_ids: campaign.run_ids.length, replay: "identical", promotion: "rejected execution_not_qualified; graph and campaign unchanged" },
     captures,
   }, null, 2) + "\n");
   console.log(`PASS ${captures.length} live-server captures at graph revision ${graph.revision}; campaign #67 planned, promotion rejected; read-only proxy; zero native dispatch`);
