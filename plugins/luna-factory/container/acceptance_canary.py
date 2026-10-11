@@ -30,6 +30,27 @@ ALLOWED_TOOL_CALLS = {
     "propose_factory_change",
     "apply_factory_change",
 }
+# Campaign tools (#77): visible to the model and the app, never called by this canary.
+CAMPAIGN_TOOLS = {
+    "create_factory_campaign",
+    "list_factory_campaigns",
+    "get_factory_campaign",
+    "promote_factory_campaign",
+}
+CAMPAIGN_READ_TOOLS = {"list_factory_campaigns", "get_factory_campaign"}
+TOOL_COUNT = 26
+
+
+def campaign_tools_visible(tools: list[dict[str, Any]]) -> bool:
+    """Every campaign tool is model- and app-visible and only its reads are read-only."""
+    by_name = {tool.get("name"): tool for tool in tools}
+    return CAMPAIGN_TOOLS.issubset(by_name) and all(
+        by_name[name].get("_meta", {}).get("ui", {}).get("visibility") == ["model", "app"]
+        and by_name[name].get("annotations", {}).get("readOnlyHint") is (name in CAMPAIGN_READ_TOOLS)
+        for name in CAMPAIGN_TOOLS
+    )
+
+
 FORBIDDEN_TOOL_CALLS = {
     "start_factory",
     "resume_factory_run",
@@ -105,9 +126,10 @@ def run(url: str, mode: str, expected_ui_sha256: str = RELEASE_UI_SHA256) -> dic
     tools = client.request("tools/list").get("tools", [])
     names = {tool.get("name") for tool in tools}
     if (
-        len(tools) != 22
+        len(tools) != TOOL_COUNT
         or not ALLOWED_TOOL_CALLS.issubset(names)
         or not FORBIDDEN_TOOL_CALLS.issubset(names)
+        or not campaign_tools_visible(tools)
     ):
         raise RuntimeError("MCP tool catalog mismatch")
     mention = next(tool for tool in tools if tool.get("name") == "search_factory_mentions")
