@@ -113,6 +113,13 @@ def run(url: str, mode: str, expected_ui_sha256: str = RELEASE_UI_SHA256) -> dic
         or not FORBIDDEN_TOOL_CALLS.issubset(names)
     ):
         raise RuntimeError("MCP tool catalog mismatch")
+    for name in ("inspect_factory_issue_graph", "read_factory_delivery"):
+        github_read = next(tool for tool in tools if tool.get("name") == name)
+        if (
+            github_read.get("annotations", {}).get("readOnlyHint") is not True
+            or github_read.get("_meta", {}).get("ui", {}).get("visibility") != ["model", "app"]
+        ):
+            raise RuntimeError("GitHub read tool contract mismatch")
     mention = next(tool for tool in tools if tool.get("name") == "search_factory_mentions")
     metadata = mention.get("_meta", {})
     if (
