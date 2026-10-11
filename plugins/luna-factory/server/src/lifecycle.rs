@@ -515,8 +515,9 @@ impl Factory {
         Ok(crate::graph::envelope(&run, None))
     }
     /// Creates the planning graph through the same planning admission as `create_graph`
-    /// and links it to one campaign. Never connects to native Codex, acquires a claim or
-    /// dispatches work; the linked graph stays planning-only.
+    /// and links it to one campaign in the same SQLite transaction, so no failure leaves an
+    /// orphan graph. Never connects to native Codex, acquires a claim or dispatches work;
+    /// the linked graph stays planning-only.
     pub async fn create_campaign(&self, request: crate::campaign::CreateCampaign) -> Result<Value> {
         let request = request.normalized();
         let _guard = self.mutation.lock().await;
@@ -524,52 +525,27 @@ impl Factory {
         let config =
             crate::repositories::effective_config(&self.config, &store.repository_registrations()?);
         request.validate(&config)?;
-        let fingerprint = request.fingerprint()?;
-        let planning_request = request.planning_request();
-        if let Some(existing) = store.campaign_by_key(&request.idempotency_key)? {
+        // Read-only prechecks give precise reasons before any write; admission repeats both
+        // inside its transaction, where they are authoritative.
+        let existing = store.campaign_by_key(&request.idempotency_key)?;
+        if let Some(existing) = &existing {
             ensure!(
-                existing.fingerprint == fingerprint,
+                existing.fingerprint == request.fingerprint()?,
                 "campaign_idempotency_conflict"
             );
-            // Replays the recorded graph through its own admission checks (alias remap,
-            // repository identity), which never creates a second planning record.
-            let admission = store.admit_planning(&config, &planning_request)?;
-            ensure!(
-                !admission.created && admission.run.id == existing.planning_run_id,
-                "campaign_record_corrupt"
-            );
-            return Self::campaign_envelope(&store, &existing);
         }
-        // Checked before any write, so a duplicate parent leaves no orphan planning graph.
         let identity = crate::campaign::repository_identity(&config, &request.repository)?;
-        ensure!(
-            store
-                .campaign_by_parent(&identity, &request.parent.provider, &request.parent.item_id)?
-                .is_none(),
-            "campaign_parent_exists"
-        );
-        let admission = store.admit_planning(&config, &planning_request)?;
-        ensure!(
-            admission.run.planning_only && crate::graph::repository_id(&admission.run) == identity,
-            "repository_identity_changed"
-        );
-        let timestamp = now();
-        let campaign = crate::campaign::Campaign {
-            id: uuid::Uuid::new_v4().to_string(),
-            repository: request.repository,
-            repository_identity: identity,
-            parent: request.parent,
-            title: request.title,
-            planning_run_id: admission.run.id,
-            run_ids: vec![],
-            finish: request.finish,
-            status: crate::campaign::CampaignStatus::Planned,
-            idempotency_key: request.idempotency_key,
-            fingerprint,
-            created_at: timestamp,
-            updated_at: timestamp,
-        };
-        store.insert_campaign(&campaign)?;
+        if existing.is_none() {
+            ensure!(
+                store
+                    .campaign_by_parent(&identity, &request.parent.forge.key())?
+                    .is_none(),
+                "campaign_parent_exists"
+            );
+        }
+        // Replays rerun the planning admission's alias and identity checks and never admit
+        // a second graph.
+        let (_, campaign) = store.admit_campaign(&config, &request, &identity)?;
         Self::campaign_envelope(&store, &campaign)
     }
     fn campaign_envelope(store: &Store, campaign: &crate::campaign::Campaign) -> Result<Value> {
@@ -588,14 +564,28 @@ impl Factory {
             .collect::<Result<Vec<_>>>()?;
         crate::campaign::project(campaign, &planning, &runs)
     }
+    /// Lists campaigns. A corrupt row, or one whose planning run cannot be read, is skipped
+    /// and flagged in `skipped` instead of failing the whole read.
     pub async fn campaigns(&self, limit: u32) -> Result<Value> {
         let store = self.store.lock().await;
-        let campaigns = store
-            .campaigns(limit)?
-            .iter()
-            .map(|campaign| Self::campaign_view(&store, campaign))
-            .collect::<Result<Vec<_>>>()?;
-        Ok(json!({"campaigns":campaigns}))
+        let mut campaigns = Vec::new();
+        let mut skipped = Vec::new();
+        for (id, campaign) in store.campaigns(limit)? {
+            let reason = match campaign {
+                Err(_) => "campaign_record_corrupt",
+                Ok(campaign) => match Self::campaign_view(&store, &campaign) {
+                    Ok(view) => {
+                        campaigns.push(view);
+                        continue;
+                    }
+                    Err(_) => "campaign_planning_run_unavailable",
+                },
+            };
+            // The row id is echoed only when it is a well-formed campaign id.
+            let id = (crate::control::bounded_id(&id) && id.len() <= 64).then_some(id);
+            skipped.push(json!({"id":id,"reason":reason}));
+        }
+        Ok(json!({"campaigns":campaigns,"skipped":skipped}))
     }
     pub async fn campaign(&self, id: &str) -> Result<Value> {
         let store = self.store.lock().await;
@@ -603,9 +593,10 @@ impl Factory {
         Ok(json!({"campaign":Self::campaign_view(&store,&campaign)?}))
     }
     /// Promotion is an explicit, revision-fenced and keyed command, but this version has
-    /// no qualified execution (#71) and no promotion transition. It rejects before reading
-    /// or writing any campaign, graph or journal state, so a planning graph is never
-    /// upgraded, silently or otherwise.
+    /// no qualified execution (#71) and no promotion transition. It validates its input
+    /// first (`invalid_campaign_promotion` or a schema error), then fails closed with
+    /// `execution_not_qualified` without reading or writing any campaign, graph or journal
+    /// state, so a planning graph is never upgraded, silently or otherwise.
     pub async fn promote_campaign(
         &self,
         request: crate::campaign::PromoteCampaign,

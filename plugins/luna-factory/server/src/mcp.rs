@@ -200,23 +200,32 @@ pub fn tool_definitions() -> Vec<Tool> {
         definition("propose_factory_change", "Propose graph change", "Record a source-bound, revision-fenced planning proposal under local operator authority. Imports remain candidates without execution authority. Inspect its returned ID/revision before applying; duplicate keys require identical payloads.", object(json!({"run_id":id,"expected_revision":revision,"idempotency_key":node_id,"change":change}), &["run_id","expected_revision","idempotency_key","change"]), false),
         definition("apply_factory_change", "Apply graph change", "Apply one inspected proposal at its current revision. Rechecks source, authority and backend preference. Does not dispatch or reassign active/unknown execution. Identical recorded retries do not apply twice.", object(json!({"run_id":id,"change_id":node_id,"expected_revision":revision}), &["run_id","change_id","expected_revision"]), false),
     ]);
+    let token = json!({"type":"string","minLength":1,"maxLength":256,"pattern":"^\\S+$"});
+    // Forge identity shared with #76: provider:owner/repo#number. Physical identity is the
+    // approved repository alias, never caller-supplied.
+    let forge = object(
+        json!({"provider":{"type":"string","enum":["github","local","fixture"]},
+            "repository":{"type":"string","minLength":3,"maxLength":201,"pattern":"^[A-Za-z0-9_-][A-Za-z0-9._-]*/[A-Za-z0-9_-][A-Za-z0-9._-]*$"},
+            "number":{"type":"integer","minimum":1,"maximum":9_007_199_254_740_991_u64},
+            "node_id":token}),
+        &["provider", "repository", "number"],
+    );
     let parent = object(
-        json!({"provider":node_id,"item_id":node_id,"revision":node_id,
+        json!({"forge":forge,"revision":token,
             "display":{"type":"object","additionalProperties":false,"properties":{
-                "number":{"type":"integer","minimum":1,"maximum":9_007_199_254_740_991_u64},
-                "url":{"type":"string","minLength":9,"maxLength":2048,"pattern":"^https://"}}}}),
-        &["provider", "item_id", "revision"],
+                "url":{"type":"string","minLength":9,"maxLength":2048,"pattern":"^https://[^/@\\s]+/"}}}}),
+        &["forge", "revision"],
     );
     let campaign_id = json!({"type":"string","minLength":1,"maxLength":64});
     tools.extend([
-        definition("create_factory_campaign", "Create planning campaign", "Group one parent work item (for example a GitHub issue) with a new planning-only graph in an approved repository. Parent number/URL are supplied display assertions, never evidence. One campaign per repository and parent item; duplicate keys require identical payloads. Starts no claim, worker, inference or execution; continue planning with propose_factory_change on the returned graph.", object(json!({
+        definition("create_factory_campaign", "Create planning campaign", "Group one parent work item with a new planning-only graph in an approved repository. parent.forge is the item's forge identity (provider github|local|fixture, owner/repo, number); it and any display URL are supplied, not verified, and never evidence. A GitHub display URL must be https://github.com/{owner}/{repo}/issues/{number}. One campaign per forge identity and local repository; duplicate keys require identical payloads. Starts no claim, worker, inference or execution; continue planning with propose_factory_change on the returned graph.", object(json!({
             "repository":start["repository"],"parent":parent,"title":{"type":"string","minLength":1,"maxLength":1000},
             "objective":start["objective"],"acceptance":start["acceptance"],"non_goals":start["non_goals"],
             "finish":start["finish"],"profile":start["profile"],"idempotency_key":start["idempotency_key"]
         }), &["repository","parent","title","objective","acceptance","non_goals","finish","profile","idempotency_key"]), false),
-        definition("list_factory_campaigns", "Factory campaigns", "Read recent campaigns with their parent item, planning graph summary and linked runs, without inference. A planned campaign has no execution.", object(json!({"limit":{"type":"integer","minimum":1,"maximum":100}}), &[]), true),
+        definition("list_factory_campaigns", "Factory campaigns", "Read recent campaigns with their supplied parent item, planning graph summary and linked runs, without inference. A planned campaign has no execution. Unreadable records are listed in skipped, never returned.", object(json!({"limit":{"type":"integer","minimum":1,"maximum":100}}), &[]), true),
         definition("get_factory_campaign", "Factory campaign", "Read one campaign, its planning graph summary (task counts by state and revision) and its linked runs, without inference.", object(json!({"campaign_id":campaign_id}), &["campaign_id"]), true),
-        definition("promote_factory_campaign", "Promote campaign to execution", "Request promotion of a campaign's reviewed plan into execution, fenced to the planning graph revision. Fails closed with execution_not_qualified while capabilities.execution.eligible is false; it never upgrades the planning graph and records nothing.", object(json!({"campaign_id":campaign_id,"expected_revision":revision,"idempotency_key":node_id}), &["campaign_id","expected_revision","idempotency_key"]), false),
+        definition("promote_factory_campaign", "Promote campaign to execution", "Request promotion of a campaign's reviewed plan into execution, fenced to the planning graph revision. Input is validated first; a valid request then fails closed with execution_not_qualified while capabilities.execution.eligible is false. It never upgrades the planning graph and records nothing.", object(json!({"campaign_id":campaign_id,"expected_revision":revision,"idempotency_key":token}), &["campaign_id","expected_revision","idempotency_key"]), false),
     ]);
     for tool in &mut tools {
         let name = tool.name.as_ref();

@@ -446,7 +446,7 @@ impl Store {
           CREATE TABLE IF NOT EXISTS receipts (sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES runs(id), subject TEXT NOT NULL, kind TEXT NOT NULL, summary TEXT NOT NULL, created_at INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS repository_registrations (id TEXT PRIMARY KEY, alias TEXT NOT NULL UNIQUE, payload TEXT NOT NULL);
-          CREATE TABLE IF NOT EXISTS campaigns (id TEXT PRIMARY KEY, idem TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL, repository_identity TEXT NOT NULL, parent_provider TEXT NOT NULL, parent_item TEXT NOT NULL, planning_run_id TEXT NOT NULL UNIQUE REFERENCES runs(id), payload TEXT NOT NULL, UNIQUE(repository_identity, parent_provider, parent_item));")?;
+          CREATE TABLE IF NOT EXISTS campaigns (id TEXT PRIMARY KEY, idem TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL, repository_identity TEXT NOT NULL, forge_key TEXT NOT NULL, planning_run_id TEXT NOT NULL UNIQUE REFERENCES runs(id), payload TEXT NOT NULL, UNIQUE(repository_identity, forge_key));")?;
         let mut store = Self { connection };
         store.migrate_control()?;
         store.migrate_receipt_attribution()?;
@@ -625,6 +625,19 @@ impl Store {
         request: &StartRequest,
         planning_only: bool,
     ) -> Result<Admission> {
+        self.admit_linked(config, request, planning_only, |_, _, _| Ok(()))
+            .map(|(admission, ())| admission)
+    }
+    /// Admission with a caller step run inside the same IMMEDIATE transaction, after the
+    /// run is inserted (or found for replay) and before commit. If the step fails, the whole
+    /// admission rolls back, so nothing linked to it can leave an orphan run behind.
+    fn admit_linked<T>(
+        &mut self,
+        config: &Config,
+        request: &StartRequest,
+        planning_only: bool,
+        link: impl FnOnce(&rusqlite::Transaction<'_>, &Run, bool) -> Result<T>,
+    ) -> Result<(Admission, T)> {
         validate_request(config, request)?;
         // Preserve legacy executable fingerprints; planning uses a distinct domain.
         let payload = if planning_only {
@@ -672,10 +685,15 @@ impl Store {
                     "repository_identity_changed"
                 );
             }
-            return Ok(Admission {
-                run,
-                created: false,
-            });
+            let linked = link(&tx, &run, false)?;
+            tx.commit()?;
+            return Ok((
+                Admission {
+                    run,
+                    created: false,
+                },
+                linked,
+            ));
         }
         if !planning_only
             && tx
@@ -778,8 +796,9 @@ impl Store {
         let snapshot = serde_json::to_string(&run)?;
         let digest = format!("{:x}", Sha256::digest(snapshot.as_bytes()));
         tx.execute("INSERT INTO control_events(run_id,event_id,revision,fingerprint,envelope,snapshot_sha256) VALUES (?1,'admission',0,?2,'{\"kind\":\"admission\"}',?2)",params![run.id,digest])?;
+        let linked = link(&tx, &run, true)?;
         tx.commit()?;
-        Ok(Admission { run, created: true })
+        Ok((Admission { run, created: true }, linked))
     }
     pub fn get(&self, id: &str) -> Result<Run> {
         let tx = self.connection.unchecked_transaction()?;
@@ -1122,12 +1141,14 @@ impl Store {
         run.claim_held = true;
         self.persist(run, None)
     }
-    fn query_campaigns(
-        &self,
+    /// Campaign rows with each payload decoded and checked against its indexed columns.
+    /// A row that does not decode or agree is `campaign_record_corrupt`, never a raw error.
+    fn campaign_rows(
+        connection: &Connection,
         clause: &str,
         params: impl rusqlite::Params,
-    ) -> Result<Vec<crate::campaign::Campaign>> {
-        let mut statement = self.connection.prepare(&format!("SELECT id,idem,fingerprint,repository_identity,parent_provider,parent_item,planning_run_id,payload FROM campaigns {clause}"))?;
+    ) -> Result<Vec<(String, Result<crate::campaign::Campaign>)>> {
+        let mut statement = connection.prepare(&format!("SELECT id,idem,fingerprint,repository_identity,forge_key,planning_run_id,payload FROM campaigns {clause}"))?;
         let rows = statement
             .query_map(params, |row| {
                 Ok((
@@ -1138,115 +1159,149 @@ impl Store {
                         row.get::<_, String>(3)?,
                         row.get::<_, String>(4)?,
                         row.get::<_, String>(5)?,
-                        row.get::<_, String>(6)?,
                     ],
-                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(6)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        rows.into_iter()
+        Ok(rows
+            .into_iter()
             .map(|(columns, payload)| {
-                let campaign: crate::campaign::Campaign = serde_json::from_str(&payload)?;
-                campaign.validate()?;
-                // Indexed columns must agree with the payload they constrain.
-                ensure!(
-                    columns
-                        == [
-                            campaign.id.clone(),
-                            campaign.idempotency_key.clone(),
-                            campaign.fingerprint.clone(),
-                            campaign.repository_identity.clone(),
-                            campaign.parent.provider.clone(),
-                            campaign.parent.item_id.clone(),
-                            campaign.planning_run_id.clone(),
-                        ],
-                    "campaign_record_corrupt"
-                );
-                Ok(campaign)
+                let id = columns[0].clone();
+                let campaign = serde_json::from_str::<crate::campaign::Campaign>(&payload)
+                    .ok()
+                    .filter(|campaign| {
+                        campaign.validate().is_ok()
+                            // Indexed columns must agree with the payload they constrain.
+                            && columns
+                                == [
+                                    campaign.id.clone(),
+                                    campaign.idempotency_key.clone(),
+                                    campaign.fingerprint.clone(),
+                                    campaign.repository_identity.clone(),
+                                    campaign.forge_key(),
+                                    campaign.planning_run_id.clone(),
+                                ]
+                    })
+                    .context("campaign_record_corrupt");
+                (id, campaign)
             })
-            .collect()
+            .collect())
+    }
+    fn one_campaign(
+        connection: &Connection,
+        clause: &str,
+        params: impl rusqlite::Params,
+    ) -> Result<Option<crate::campaign::Campaign>> {
+        Self::campaign_rows(connection, clause, params)?
+            .pop()
+            .map(|(_, campaign)| campaign)
+            .transpose()
     }
     pub fn campaign(&self, id: &str) -> Result<crate::campaign::Campaign> {
-        self.query_campaigns("WHERE id=?1", [id])?
-            .pop()
-            .context("campaign_not_found")
+        Self::one_campaign(&self.connection, "WHERE id=?1", [id])?.context("campaign_not_found")
     }
     pub fn campaign_by_key(&self, key: &str) -> Result<Option<crate::campaign::Campaign>> {
-        Ok(self.query_campaigns("WHERE idem=?1", [key])?.pop())
+        Self::one_campaign(&self.connection, "WHERE idem=?1", [key])
     }
+    /// Uniqueness is per forge identity plus physical (local graph) identity.
     pub fn campaign_by_parent(
         &self,
         identity: &str,
-        provider: &str,
-        item_id: &str,
+        forge_key: &str,
     ) -> Result<Option<crate::campaign::Campaign>> {
-        Ok(self
-            .query_campaigns(
-                "WHERE repository_identity=?1 AND parent_provider=?2 AND parent_item=?3",
-                [identity, provider, item_id],
-            )?
-            .pop())
+        Self::one_campaign(
+            &self.connection,
+            "WHERE repository_identity=?1 AND forge_key=?2",
+            [identity, forge_key],
+        )
     }
-    pub fn campaigns(&self, limit: u32) -> Result<Vec<crate::campaign::Campaign>> {
-        self.query_campaigns("ORDER BY rowid DESC LIMIT ?1", [limit.clamp(1, 100)])
+    /// Recent campaign rows, newest first. Corrupt rows are returned as errors beside their
+    /// row id so a list can skip and flag them instead of failing as a whole.
+    pub fn campaigns(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<(String, Result<crate::campaign::Campaign>)>> {
+        Self::campaign_rows(
+            &self.connection,
+            "ORDER BY rowid DESC LIMIT ?1",
+            [limit.clamp(1, 100)],
+        )
     }
-    /// Links an existing planning-only graph. Never touches the run, its claim or journal.
-    pub fn insert_campaign(&mut self, campaign: &crate::campaign::Campaign) -> Result<()> {
-        campaign.validate()?;
-        let planning = self.get(&campaign.planning_run_id)?;
-        ensure!(
-            planning.planning_only
-                && !planning.claim_held
-                && planning.request.repository == campaign.repository
-                && planning.request.finish == campaign.finish
-                && crate::graph::repository_id(&planning) == campaign.repository_identity,
-            "campaign_planning_run_invalid"
-        );
-        let tx = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        for (sql, value, reason) in [
-            (
-                "SELECT 1 FROM campaigns WHERE idem=?1",
-                &campaign.idempotency_key,
-                "campaign_idempotency_conflict",
-            ),
-            (
-                "SELECT 1 FROM campaigns WHERE planning_run_id=?1",
-                &campaign.planning_run_id,
-                "campaign_planning_run_linked",
-            ),
-        ] {
+    /// Admits the campaign's planning-only graph and inserts the campaign in one IMMEDIATE
+    /// transaction. `expected_identity` is the caller's precheck of the physical identity;
+    /// it is compared with the identity admission actually recorded, inside the transaction.
+    /// Any failure, including the campaign insert itself, rolls back the planning graph.
+    /// Never touches a claim, native connection or journal beyond planning admission.
+    pub fn admit_campaign(
+        &mut self,
+        config: &Config,
+        request: &crate::campaign::CreateCampaign,
+        expected_identity: &str,
+    ) -> Result<(Admission, crate::campaign::Campaign)> {
+        let fingerprint = request.fingerprint()?;
+        let planning = request.planning_request();
+        self.admit_linked(config, &planning, true, |tx, run, created| {
+            if let Some(existing) =
+                Self::one_campaign(tx, "WHERE idem=?1", [&request.idempotency_key])?
+            {
+                ensure!(
+                    existing.fingerprint == fingerprint,
+                    "campaign_idempotency_conflict"
+                );
+                ensure!(
+                    !created && existing.planning_run_id == run.id,
+                    "campaign_record_corrupt"
+                );
+                return Ok(existing);
+            }
+            // A new campaign links only the graph this admission just created, never a
+            // pre-existing planning record that happens to share the derived key.
+            ensure!(created, "campaign_planning_run_invalid");
             ensure!(
-                tx.query_row(sql, [value], |_| Ok(())).optional()?.is_none(),
-                reason
+                run.planning_only && crate::graph::repository_id(run) == expected_identity,
+                "repository_identity_changed"
             );
-        }
-        ensure!(
-            tx.query_row(
-                "SELECT 1 FROM campaigns WHERE repository_identity=?1 AND parent_provider=?2 AND parent_item=?3",
-                params![campaign.repository_identity, campaign.parent.provider, campaign.parent.item_id],
-                |_| Ok(())
-            )
-            .optional()?
-            .is_none(),
-            "campaign_parent_exists"
-        );
-        tx.execute(
-            "INSERT INTO campaigns(id,idem,fingerprint,repository_identity,parent_provider,parent_item,planning_run_id,payload) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-            params![
-                campaign.id,
-                campaign.idempotency_key,
-                campaign.fingerprint,
-                campaign.repository_identity,
-                campaign.parent.provider,
-                campaign.parent.item_id,
-                campaign.planning_run_id,
-                serde_json::to_string(campaign)?
-            ],
-        )?;
-        tx.commit()?;
-        Ok(())
+            ensure!(
+                !run.claim_held && run.request.repository == request.repository,
+                "campaign_planning_run_invalid"
+            );
+            let forge_key = request.parent.forge.key();
+            ensure!(
+                Self::one_campaign(
+                    tx,
+                    "WHERE repository_identity=?1 AND forge_key=?2",
+                    [expected_identity, forge_key.as_str()],
+                )?
+                .is_none(),
+                "campaign_parent_exists"
+            );
+            ensure!(
+                tx.query_row(
+                    "SELECT 1 FROM campaigns WHERE planning_run_id=?1",
+                    [&run.id],
+                    |_| Ok(())
+                )
+                .optional()?
+                .is_none(),
+                "campaign_planning_run_linked"
+            );
+            let campaign = request.record(expected_identity, &fingerprint, &run.id, now());
+            campaign.validate()?;
+            tx.execute(
+                "INSERT INTO campaigns(id,idem,fingerprint,repository_identity,forge_key,planning_run_id,payload) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                params![
+                    campaign.id,
+                    campaign.idempotency_key,
+                    campaign.fingerprint,
+                    campaign.repository_identity,
+                    forge_key,
+                    campaign.planning_run_id,
+                    serde_json::to_string(&campaign)?
+                ],
+            )?;
+            Ok(campaign)
+        })
     }
     pub fn settings(&self) -> Result<serde_json::Value> {
         let value: Option<String> = self

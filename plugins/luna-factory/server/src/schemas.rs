@@ -189,14 +189,18 @@ fn definitions() -> Map<String, Value> {
         "planning_only":boolean(),"nodes":array(reference("graph_node"),128),"criteria":array(reference("criterion"),32),"attempts":array(reference("attempt"),256),"claim":reference("claim"),"changes":array(reference("proposal"),128)
     })));
     let safe_integer = json!({"type":"integer","minimum":1,"maximum":9_007_199_254_740_991_u64});
+    // Forge identity (#76 contract) and its provenance; never the physical identity.
     defs.insert("campaign_parent".into(),object(json!({
-        "provider":id(),"item_id":id(),"revision":id(),
-        "display":nullable(object(json!({"number":nullable(safe_integer),"url":nullable(text(2048))})))
+        "forge":object(json!({"provider":enumeration(&["github","local","fixture"]),"repository":text(201),"number":safe_integer,"node_id":nullable(id())})),
+        "key":text(256),"revision":id(),
+        "display":nullable(object(json!({"url":nullable(text(2048))}))),
+        "provenance":enumeration(&["supplied","github_app"])
     })));
     // A campaign projection never claims execution: its plan is planning-only and
     // promotion is disallowed until execution is independently qualified (#71).
     defs.insert("campaign".into(),object(json!({
-        "id":id(),"repository":text(64),"parent":reference("campaign_parent"),"title":text(1000),"finish":finish(),
+        "id":id(),"repository":object(json!({"alias":text(64),"identity":{"type":"string","pattern":"^[a-f0-9]{64}$"}})),
+        "parent":reference("campaign_parent"),"title":text(1000),"finish":finish(),
         "status":enumeration(&["planned","promoted","finished","stopped"]),
         "planning_run_id":id(),"run_ids":array(id(),64),"created_at":count(),"updated_at":count(),
         "planning":object(json!({"run_id":id(),"revision":count(),"planning_only":{"const":true},
@@ -251,7 +255,8 @@ pub fn output_schema(tool_name: &str) -> Value {
         "create_factory_campaign" => {
             object(json!({"campaign":reference("campaign"),"graph":reference("graph")}))
         }
-        "list_factory_campaigns" => object(json!({"campaigns":array(reference("campaign"),100)})),
+        "list_factory_campaigns" => object(json!({"campaigns":array(reference("campaign"),100),
+            "skipped":array(object(json!({"id":nullable(text(64)),"reason":enumeration(&["campaign_record_corrupt","campaign_planning_run_unavailable"])})),100)})),
         "get_factory_campaign" | "promote_factory_campaign" => {
             object(json!({"campaign":reference("campaign")}))
         }

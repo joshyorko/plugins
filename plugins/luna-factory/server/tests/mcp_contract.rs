@@ -101,13 +101,30 @@ fn campaign_catalog_is_model_and_app_visible_with_read_only_reads_and_fenced_pro
     assert_eq!(create["annotations"]["idempotentHint"], true);
     let input = create["inputSchema"].clone();
     let validator = jsonschema::validator_for(&input).unwrap();
-    let request = json!({"repository":"plugins","parent":{"provider":"github","item_id":"1:I_x","revision":"v1","display":{"number":67,"url":"https://github.com/o/r/issues/67"}},
+    let request = json!({"repository":"plugins","parent":{"forge":{"provider":"github","repository":"o/r","number":67,"node_id":"I_x"},"revision":"v1","display":{"url":"https://github.com/o/r/issues/67"}},
         "title":"Parent","objective":"Plan","acceptance":["A1"],"non_goals":[],"finish":"local_candidate","profile":"default","idempotency_key":"k"});
     assert!(validator.is_valid(&request));
+    let forge = |patch: Value| {
+        let mut parent = request["parent"].clone();
+        for (key, field) in patch.as_object().unwrap() {
+            parent["forge"][key] = field.clone();
+        }
+        json!({"parent":parent})
+    };
     for bad in [
         json!({"capacity":1}),
-        json!({"parent":{"provider":"github","item_id":"1:I_x","revision":"v1","repository_id":"forged"}}),
-        json!({"parent":{"provider":"github","item_id":"1:I_x","revision":"v1","display":{"url":"http://o/r"}}}),
+        json!({"parent":{"provider":"github","item_id":"1:I_x","revision":"v1"}}),
+        json!({"parent":{"forge":{"provider":"github","repository":"o/r","number":67},"revision":"v1","provenance":"github_app"}}),
+        json!({"parent":{"forge":{"provider":"github","repository":"o/r","number":67},"revision":"v1","display":{"url":"http://o/r"}}}),
+        json!({"parent":{"forge":{"provider":"github","repository":"o/r","number":67},"revision":"v1","display":{"url":"https://u@github.com/o/r/issues/67"}}}),
+        json!({"parent":{"forge":{"provider":"github","repository":"o/r","number":67},"revision":"   "}}),
+        forge(json!({"provider":"GitHub"})),
+        forge(json!({"provider":"gitlab"})),
+        forge(json!({"repository":"o"})),
+        forge(json!({"repository":"   "})),
+        forge(json!({"number":0})),
+        forge(json!({"node_id":" "})),
+        forge(json!({"repository_id":"forged"})),
         json!({"acceptance":[]}),
         json!({"finish":"deploy"}),
     ] {
@@ -117,6 +134,16 @@ fn campaign_catalog_is_model_and_app_visible_with_read_only_reads_and_fenced_pro
         }
         assert!(!validator.is_valid(&candidate), "{bad}");
     }
+    // Forge identity and provenance are projected separately from physical identity.
+    let parent = &value("get_factory_campaign")["outputSchema"]["$defs"]["campaign_parent"];
+    assert_eq!(
+        parent["properties"]["provenance"]["enum"],
+        json!(["supplied", "github_app"])
+    );
+    assert_eq!(
+        parent["properties"]["forge"]["properties"]["provider"]["enum"],
+        json!(["github", "local", "fixture"])
+    );
     let promote = value("promote_factory_campaign");
     assert_eq!(promote["annotations"]["readOnlyHint"], false);
     assert_eq!(

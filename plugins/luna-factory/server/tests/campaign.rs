@@ -53,11 +53,12 @@ fn server(config: &Config) -> McpServer {
         html: Arc::new(String::new()),
     }
 }
-fn request(key: &str, item: &str) -> Value {
+fn request(key: &str, number: u64) -> Value {
     json!({
         "repository":"test",
-        "parent":{"provider":"github","item_id":item,"revision":"sha256:recorded-v1",
-            "display":{"number":67,"url":"https://github.com/example/plugins/issues/67"}},
+        "parent":{"forge":{"provider":"github","repository":"example/plugins","number":number,"node_id":"I_parent"},
+            "revision":"sha256:recorded-v1",
+            "display":{"url":format!("https://github.com/example/plugins/issues/{number}")}},
         "title":"Shape conversation-first issue graph and mission control",
         "objective":"Plan the parent issue and its sub-issues","acceptance":["Every sub-issue is resolved by a verified change"],
         "non_goals":["No execution from this planning graph"],"finish":"local_candidate","profile":"default",
@@ -111,17 +112,27 @@ async fn creation_links_one_planning_graph_and_replays_deterministically() {
     let created = call(
         &server,
         "create_factory_campaign",
-        request("campaign-67", "1148934299:I_parent67"),
+        request("campaign-67", 67),
     )
     .await;
     let campaign = &created["campaign"];
     let graph = &created["graph"];
     assert_eq!(campaign["status"], "planned");
-    assert_eq!(campaign["repository"], "test");
+    // Physical identity (alias plus the graph's opaque identity) and forge identity are
+    // projected separately; parent metadata is labelled as supplied, never verified.
+    assert_eq!(
+        campaign["repository"],
+        json!({"alias":"test","identity":graph["repository"]["identity"]})
+    );
+    assert_eq!(
+        campaign["parent"],
+        json!({"forge":{"provider":"github","repository":"example/plugins","number":67,"node_id":"I_parent"},
+            "key":"github:example/plugins#67","revision":"sha256:recorded-v1",
+            "display":{"url":"https://github.com/example/plugins/issues/67"},"provenance":"supplied"})
+    );
     assert_eq!(campaign["finish"], "local_candidate");
     assert_eq!(campaign["run_ids"], json!([]));
     assert_eq!(campaign["runs"], json!([]));
-    assert_eq!(campaign["parent"]["display"]["number"], 67);
     assert_eq!(campaign["planning_run_id"], graph["run_id"]);
     assert_eq!(
         campaign["planning"],
@@ -142,13 +153,21 @@ async fn creation_links_one_planning_graph_and_replays_deterministically() {
         call(
             &server,
             "create_factory_campaign",
-            request("campaign-67", "1148934299:I_parent67")
+            request("campaign-67", 67)
         )
         .await,
         created
     );
+    // The forge repository is canonical lowercase, so a differently cased replay is
+    // the same request.
+    let mut cased = request("campaign-67", 67);
+    cased["parent"]["forge"]["repository"] = json!("Example/Plugins");
+    assert_eq!(
+        call(&server, "create_factory_campaign", cased).await,
+        created
+    );
     // An absent display and an empty display are the same request.
-    let mut bare = request("campaign-bare", "1148934299:I_bare");
+    let mut bare = request("campaign-bare", 68);
     bare["parent"]["display"] = json!({});
     let first = call(&server, "create_factory_campaign", bare.clone()).await;
     bare["parent"].as_object_mut().unwrap().remove("display");
@@ -157,23 +176,33 @@ async fn creation_links_one_planning_graph_and_replays_deterministically() {
     let before = ledger(&config);
 
     // Same key, different fingerprint: rejected without any write.
-    let mut changed = request("campaign-67", "1148934299:I_parent67");
+    let mut changed = request("campaign-67", 67);
     changed["title"] = json!("A different title");
     assert!(
         rejected(&server, "create_factory_campaign", changed)
             .await
             .contains("campaign_idempotency_conflict")
     );
-    changed = request("campaign-67", "1148934299:I_parent67");
+    changed = request("campaign-67", 67);
     changed["parent"]["revision"] = json!("sha256:recorded-v2");
     assert!(
         rejected(&server, "create_factory_campaign", changed)
             .await
             .contains("campaign_idempotency_conflict")
     );
-    // One campaign per repository identity and parent item, whatever the key or revision.
-    let mut duplicate = request("campaign-67-again", "1148934299:I_parent67");
+    // One campaign per forge identity and physical identity, whatever the key, revision,
+    // node id, display or case.
+    let mut duplicate = request("campaign-67-again", 67);
     duplicate["parent"]["revision"] = json!("sha256:recorded-v2");
+    duplicate["parent"]["forge"]["repository"] = json!("EXAMPLE/plugins");
+    duplicate["parent"]["forge"]
+        .as_object_mut()
+        .unwrap()
+        .remove("node_id");
+    duplicate["parent"]
+        .as_object_mut()
+        .unwrap()
+        .remove("display");
     assert!(
         rejected(&server, "create_factory_campaign", duplicate)
             .await
@@ -182,6 +211,7 @@ async fn creation_links_one_planning_graph_and_replays_deterministically() {
     assert_eq!(ledger(&config), before, "rejections leave no orphan graph");
 
     let listed = call(&server, "list_factory_campaigns", json!({})).await;
+    assert_eq!(listed["skipped"], json!([]));
     let ids: Vec<_> = listed["campaigns"]
         .as_array()
         .unwrap()
@@ -234,8 +264,8 @@ async fn creation_links_one_planning_graph_and_replays_deterministically() {
 async fn invalid_parents_titles_and_authority_are_rejected_before_any_write() {
     let (_temp, config) = setup();
     let server = server(&config);
-    let base = request("bad", "1148934299:I_bad");
-    let cases: Vec<(Value, &str)> = vec![
+    let base = request("bad", 70);
+    let mut cases: Vec<(Value, &str)> = vec![
         (json!({"finish":"pr"}), "authority_exceeded"),
         (json!({"repository":"unknown"}), "unknown_repository"),
         (json!({"profile":"unknown"}), "unknown_profile"),
@@ -246,53 +276,110 @@ async fn invalid_parents_titles_and_authority_are_rejected_before_any_write() {
             json!({"idempotency_key":""}),
             "invalid_campaign_idempotency_key",
         ),
-        (
-            json!({"parent":{"provider":"","item_id":"x","revision":"v1"}}),
+    ];
+    let forge = |patch: Value| {
+        let mut forge = json!({"provider":"github","repository":"example/plugins","number":7});
+        for (key, value) in patch.as_object().unwrap() {
+            forge[key] = value.clone();
+        }
+        json!({"parent":{"forge":forge,"revision":"v1"}})
+    };
+    for patch in [
+        json!({"provider":"GitHub"}),
+        json!({"provider":"gitlab"}),
+        json!({"provider":""}),
+        json!({"number":-1}),
+        json!({"number":"7"}),
+    ] {
+        cases.push((forge(patch), "unknown variant|invalid"));
+    }
+    for patch in [
+        json!({"repository":""}),
+        json!({"repository":"   "}),
+        json!({"repository":"example"}),
+        json!({"repository":"example/"}),
+        json!({"repository":"/plugins"}),
+        json!({"repository":"example/plu gins"}),
+        json!({"repository":" example/plugins"}),
+        json!({"repository":"example/plugins/extra"}),
+        json!({"repository":"example/.hidden"}),
+        json!({"repository":"example/plugins\u{7}"}),
+        json!({"repository":format!("example/{}", "x".repeat(101))}),
+        json!({"number":0}),
+        json!({"number":9_007_199_254_740_992_u64}),
+        json!({"node_id":""}),
+        json!({"node_id":"   "}),
+        json!({"node_id":"I_ x"}),
+        json!({"node_id":"x".repeat(257)}),
+    ] {
+        cases.push((forge(patch), "invalid_campaign_parent"));
+    }
+    for revision in ["", "   ", "v 1", "v1\u{7}"] {
+        cases.push((
+            json!({"parent":{"forge":{"provider":"github","repository":"example/plugins","number":7},"revision":revision}}),
             "invalid_campaign_parent",
-        ),
-        (
-            json!({"parent":{"provider":"github","item_id":"x".repeat(257),"revision":"v1"}}),
-            "invalid_campaign_parent",
-        ),
-        (
-            json!({"parent":{"provider":"github","item_id":"x\u{7}","revision":"v1"}}),
-            "invalid_campaign_parent",
-        ),
-        (
-            json!({"parent":{"provider":"github","item_id":"x","revision":"v1","display":{"number":0}}}),
-            "invalid_campaign_parent_display",
-        ),
-        (
-            json!({"parent":{"provider":"github","item_id":"x","revision":"v1","display":{"url":"http://example.com/1"}}}),
-            "invalid_campaign_parent_display",
-        ),
-        (
-            json!({"parent":{"provider":"github","item_id":"x","revision":"v1","display":{"url":"https://example.com/a b"}}}),
-            "invalid_campaign_parent_display",
-        ),
-        (
-            json!({"parent":{"provider":"github","item_id":"x","revision":"v1","display":{"url":"javascript:alert(1)"}}}),
-            "invalid_campaign_parent_display",
-        ),
+        ));
+    }
+    let display = |url: &str| json!({"parent":{"forge":{"provider":"github","repository":"example/plugins","number":7},"revision":"v1","display":{"url":url}}});
+    for url in [
+        "http://github.com/example/plugins/issues/7",
+        "https://example.com/a b",
+        "javascript:alert(1)",
+        "https://",
+        "https:///example/plugins/issues/7",
+        "https://user@github.com/example/plugins/issues/7",
+        "https://user:pw@github.com/example/plugins/issues/7",
+        "https://:pw@github.com/example/plugins/issues/7",
+        "https://evil.example/example/plugins/issues/7",
+        "https://github.com.evil.example/example/plugins/issues/7",
+        "https://github.com:8443/example/plugins/issues/7",
+        "https://github.com/example/plugins/issues/8",
+        "https://github.com/example/other/issues/7",
+        "https://github.com/example/plugins/pull/7",
+        "https://github.com/example/plugins/issues/7?x=1",
+        "https://github.com/example/plugins/issues/7#top",
+        "https://github.com/example/plugins/issues/7/",
+        "https://github.com/example/plugins/issues/%37",
+        "https://GITHUB.com/example/plugins/issues/7",
+        "https://github.com/example/plugins/issues/../issues/7",
+    ] {
+        cases.push((display(url), "invalid_campaign_parent_display"));
+    }
+    let local = |url: &str| json!({"parent":{"forge":{"provider":"local","repository":"team/tracker","number":7},"revision":"v1","display":{"url":url}}});
+    for url in [
+        "https://tracker.example",
+        "https://ops@tracker.example/7",
+        "http://tracker.example/7",
+    ] {
+        cases.push((local(url), "invalid_campaign_parent_display"));
+    }
+    cases.extend([
+        (json!({"parent":{"forge":{"provider":"github","repository":"example/plugins","number":7},"revision":"v1","display":{"number":7}}}), "unknown field"),
+        (json!({"parent":{"forge":{"provider":"github","repository":"example/plugins","number":7},"revision":"v1","provenance":"github_app"}}), "unknown field"),
+        (json!({"parent":{"forge":{"provider":"github","repository":"example/plugins","number":7,"repository_id":"forged"},"revision":"v1"}}), "unknown field"),
+        (json!({"parent":{"provider":"github","item_id":"x","revision":"v1"}}), "unknown field"),
         (json!({"actor":"admin"}), "unknown field"),
         (json!({"capacity":8}), "unknown field"),
-        (
-            json!({"parent":{"provider":"github","item_id":"x","revision":"v1","repository_id":"forged"}}),
-            "unknown field",
-        ),
-    ];
+    ]);
     for (patch, reason) in cases {
         let mut input = base.clone();
         for (key, value) in patch.as_object().unwrap() {
             input[key] = value.clone();
         }
         let error = rejected(&server, "create_factory_campaign", input).await;
-        assert!(error.contains(reason), "{patch}: {error}");
+        assert!(
+            reason.split('|').any(|reason| error.contains(reason)),
+            "{patch}: {error}"
+        );
+        // An invalid display URL is refused by reason alone and never echoed back.
+        if reason == "invalid_campaign_parent_display" {
+            assert_eq!(error, reason, "{patch}");
+        }
     }
     assert_eq!(ledger(&config), (0, 0, vec![]));
     assert_eq!(
         call(&server, "list_factory_campaigns", json!({})).await,
-        json!({"campaigns":[]})
+        json!({"campaigns":[],"skipped":[]})
     );
 }
 
@@ -300,14 +387,18 @@ async fn invalid_parents_titles_and_authority_are_rejected_before_any_write() {
 async fn display_assertions_are_redacted_and_never_become_proof() {
     let (_temp, config) = setup();
     let server = server(&config);
-    let mut input = request("redacted", "1148934299:I_secret");
+    let mut input = request("redacted", 71);
     input["title"] = json!("Rotate ghp_examplecredential before release");
-    input["parent"]["display"]["url"] =
-        json!("https://github.com/example/plugins/issues/9?access_token=abc");
+    // A well-formed non-GitHub URL that carries a credential-like marker is stored as
+    // supplied but never shown.
+    input["parent"]["forge"] = json!({"provider":"local","repository":"team/tracker","number":71});
+    input["parent"]["display"]["url"] = json!("https://tracker.example/71?access_token=abc");
     let created = call(&server, "create_factory_campaign", input).await;
     let campaign = &created["campaign"];
-    assert_eq!(campaign["parent"]["display"]["number"], 67);
+    assert_eq!(campaign["parent"]["key"], "local:team/tracker#71");
+    assert_eq!(campaign["parent"]["provenance"], "supplied");
     assert_eq!(campaign["parent"]["display"]["url"], Value::Null);
+    assert!(!created.to_string().contains("access_token"));
     assert!(
         !campaign["title"]
             .as_str()
@@ -315,7 +406,7 @@ async fn display_assertions_are_redacted_and_never_become_proof() {
             .to_ascii_lowercase()
             .contains("ghp_")
     );
-    // A reported parent number never proves a criterion or creates a decision.
+    // A supplied parent never proves a criterion or creates a decision.
     let run = call(
         &server,
         "get_factory_run",
@@ -332,12 +423,7 @@ async fn display_assertions_are_redacted_and_never_become_proof() {
 async fn promotion_fails_closed_without_events_revisions_or_records() {
     let (_temp, config) = setup();
     let server = server(&config);
-    let created = call(
-        &server,
-        "create_factory_campaign",
-        request("promote", "1148934299:I_promote"),
-    )
-    .await;
+    let created = call(&server, "create_factory_campaign", request("promote", 72)).await;
     let campaign_id = created["campaign"]["id"].clone();
     let run_id = created["graph"]["run_id"].as_str().unwrap().to_owned();
     // Revision fencing and planning edits are unchanged on a campaign's graph.
@@ -440,12 +526,7 @@ async fn promotion_fails_closed_without_events_revisions_or_records() {
 async fn a_planning_only_campaign_cannot_dispatch() {
     let (temp, config) = setup();
     let server = server(&config);
-    let created = call(
-        &server,
-        "create_factory_campaign",
-        request("dispatch", "1148934299:I_dispatch"),
-    )
-    .await;
+    let created = call(&server, "create_factory_campaign", request("dispatch", 73)).await;
     let run_id = created["campaign"]["planning_run_id"].clone();
     let before = ledger(&config);
     for (name, args) in [
@@ -507,12 +588,8 @@ async fn a_planning_only_campaign_cannot_dispatch() {
 async fn corrupt_or_newer_campaign_records_fail_closed() {
     let (_temp, config) = setup();
     let server = server(&config);
-    let created = call(
-        &server,
-        "create_factory_campaign",
-        request("corrupt", "1148934299:I_corrupt"),
-    )
-    .await;
+    let kept = call(&server, "create_factory_campaign", request("kept", 75)).await;
+    let created = call(&server, "create_factory_campaign", request("corrupt", 74)).await;
     let id = created["campaign"]["id"].as_str().unwrap().to_owned();
     let connection = rusqlite::Connection::open(&config.database).unwrap();
     let payload: String = connection
@@ -520,38 +597,150 @@ async fn corrupt_or_newer_campaign_records_fail_closed() {
             r.get(0)
         })
         .unwrap();
-    // This version has no promotion transition, so an execution link cannot be trusted.
+    let set = |payload: &str| {
+        connection
+            .execute(
+                "UPDATE campaigns SET payload=?2 WHERE id=?1",
+                rusqlite::params![id, payload],
+            )
+            .unwrap();
+    };
     let mut forged: Value = serde_json::from_str(&payload).unwrap();
+    // This version has no promotion transition, so an execution link cannot be trusted.
     forged["status"] = json!("promoted");
     forged["run_ids"] = json!(["forged-run"]);
-    connection
-        .execute(
-            "UPDATE campaigns SET payload=?2 WHERE id=?1",
-            rusqlite::params![id, forged.to_string()],
-        )
-        .unwrap();
-    for (name, args) in [
-        ("get_factory_campaign", json!({"campaign_id":id})),
-        ("list_factory_campaigns", json!({})),
+    let promoted = forged.to_string();
+    // Nothing in this version fetches parents, so a GitHub App provenance is forged.
+    forged = serde_json::from_str(&payload).unwrap();
+    forged["parent"]["provenance"] = json!("github_app");
+    let fetched = forged.to_string();
+    // Indexed columns must agree with the payload they constrain.
+    forged = serde_json::from_str(&payload).unwrap();
+    forged["parent"]["forge"]["number"] = json!(99);
+    let moved = forged.to_string();
+    // A newer or unknown shape is not decoded leniently.
+    forged = serde_json::from_str(&payload).unwrap();
+    forged["parent"]["forge"]["provider"] = json!("GitHub");
+    let cased = forged.to_string();
+    forged = serde_json::from_str(&payload).unwrap();
+    forged["acceptance_contract"] = json!("v3");
+    let newer = forged.to_string();
+    for corrupt in [
+        promoted,
+        fetched,
+        moved,
+        cased,
+        newer,
+        "{not json".to_owned(),
     ] {
-        assert!(
-            rejected(&server, name, args)
-                .await
-                .contains("campaign_record_corrupt")
+        set(&corrupt);
+        // A direct read fails closed with the typed reason, never a raw serde error.
+        assert_eq!(
+            rejected(&server, "get_factory_campaign", json!({"campaign_id":id})).await,
+            "campaign_record_corrupt",
+            "{corrupt}"
+        );
+        // A list skips and flags the corrupt row and still returns the valid one.
+        let listed = call(&server, "list_factory_campaigns", json!({})).await;
+        assert_eq!(listed["campaigns"], json!([kept["campaign"]]), "{corrupt}");
+        assert_eq!(
+            listed["skipped"],
+            json!([{"id":id,"reason":"campaign_record_corrupt"}]),
+            "{corrupt}"
+        );
+        // A replay of the corrupt campaign's key refuses instead of trusting the row.
+        assert_eq!(
+            rejected(&server, "create_factory_campaign", request("corrupt", 74)).await,
+            "campaign_record_corrupt",
+            "{corrupt}"
         );
     }
-    // Indexed columns must agree with the payload they constrain.
-    let mut moved: Value = serde_json::from_str(&payload).unwrap();
-    moved["parent"]["item_id"] = json!("1148934299:I_other");
+    set(&payload);
+    assert_eq!(
+        call(&server, "list_factory_campaigns", json!({})).await["skipped"],
+        json!([])
+    );
+}
+
+#[tokio::test]
+async fn a_failed_campaign_insert_rolls_back_its_planning_graph() {
+    let (_temp, config) = setup();
+    let server = server(&config);
+    let connection = rusqlite::Connection::open(&config.database).unwrap();
     connection
-        .execute(
-            "UPDATE campaigns SET payload=?2 WHERE id=?1",
-            rusqlite::params![id, moved.to_string()],
+        .execute_batch(
+            "CREATE TRIGGER fail_campaign BEFORE INSERT ON campaigns BEGIN SELECT RAISE(ABORT,'injected_campaign_insert_failure'); END;",
         )
         .unwrap();
+    let error = rejected(&server, "create_factory_campaign", request("atomic", 76)).await;
     assert!(
-        rejected(&server, "get_factory_campaign", json!({"campaign_id":id}))
-            .await
-            .contains("campaign_record_corrupt")
+        error.contains("injected_campaign_insert_failure"),
+        "{error}"
     );
+    // The planning admission shared the transaction: no run, event or campaign remains.
+    assert_eq!(ledger(&config), (0, 0, vec![]));
+    connection
+        .execute_batch("DROP TRIGGER fail_campaign;")
+        .unwrap();
+    // The same key now admits normally, creating its graph rather than adopting an orphan.
+    let created = call(&server, "create_factory_campaign", request("atomic", 76)).await;
+    assert_eq!(created["graph"]["revision"], 0);
+    let (events, runs, campaigns) = ledger(&config);
+    assert_eq!((events, runs, campaigns.len()), (1, 1, 1));
+}
+
+#[tokio::test]
+async fn a_repository_replaced_after_the_precheck_admits_nothing() {
+    let (temp, config) = setup();
+    let campaign =
+        serde_json::from_value::<luna_factoryd::campaign::CreateCampaign>(request("swap", 77))
+            .unwrap()
+            .normalized();
+    let identity = luna_factoryd::campaign::repository_identity(&config, "test").unwrap();
+    // Replace the approved repository at the same path between precheck and admission.
+    let repo = temp.path().join("repo");
+    std::fs::rename(&repo, temp.path().join("repo-old")).unwrap();
+    std::fs::create_dir(&repo).unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec![
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "replacement",
+        ],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+    let mut store = Store::open(&config).unwrap();
+    let error = store
+        .admit_campaign(&config, &campaign, &identity)
+        .unwrap_err()
+        .to_string();
+    assert_eq!(error, "repository_identity_changed");
+    drop(store);
+    assert_eq!(ledger(&config), (0, 0, vec![]), "no orphan planning graph");
+    // A fresh precheck against the replacement admits exactly one linked graph.
+    let server = server(&config);
+    let created = call(&server, "create_factory_campaign", request("swap", 77)).await;
+    assert_ne!(
+        created["campaign"]["repository"]["identity"],
+        json!(identity)
+    );
+    let (events, runs, campaigns) = ledger(&config);
+    assert_eq!((events, runs, campaigns.len()), (1, 1, 1));
 }
