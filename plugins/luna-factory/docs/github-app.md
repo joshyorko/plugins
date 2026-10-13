@@ -168,14 +168,16 @@ It reads:
   parsed prose, not GitHub relations.
 
 Everything returned was fetched by Luna with the GitHub App, so the result and every node,
-parent and acceptance candidate carry `provenance: "github_app"`. Caller-supplied metadata is
+parent, acceptance candidate, external dependency and cross-repository reference carry
+`provenance: "github_app"`. Caller-supplied metadata is
 never labelled that way.
 
 It returns:
 
 - **`status`.** `complete` only when every page, relation and body was read in full. Any
-  truncation, page limit, missing dependencies API, short dependency page, cut body or
-  unrecognized item makes it `incomplete`, never `complete`. `unavailable` and `ineligible`
+  truncation, page limit, missing dependencies API, short dependency page, a sub-issue list
+  shorter than GitHub's own `sub_issues_summary.total`, cut body or unrecognized item makes it
+  `incomplete`, never `complete`. `unavailable` and `ineligible`
   carry a `reason`.
 - **`graph_repository`.** `{alias, identity}`: the approved alias and the same opaque local
   identity `create_factory_graph` reports as `graph.repository.identity`. Never a path.
@@ -184,9 +186,9 @@ It returns:
 - **`nodes`.** At most 32, open issues only, `id: "issue-<n>"`, with `title`, `dependencies`
   (only edges between candidates) and `relation` (`sub_issue` or `task_list`). Each also has:
   - `derivation`: `native` for GitHub sub-issues, `parsed` for task-list references.
-  - `dependency_evidence`: per dependency, `{node_id, native, documented, status}`, where
-    `status` is `native` (GitHub records it) or `documented_not_native` (only the issue prose
-    says so). An absent GitHub `blocked_by` record never erases a documented dependency.
+  - `dependency_evidence`: per dependency, `{node_id, native, documented, derivation, status}`,
+    where `status` is `native` (GitHub records it, `derivation: "native"`) or
+    `documented_not_native` (only the issue prose says so, `derivation: "parsed"`). An absent GitHub `blocked_by` record never erases a documented dependency.
   - `forge`: the forge identity `{provider: "github", repository: "owner/repo" (lowercase),
     number, node_id}`, and `forge_key`: `github:owner/repo#<number>`.
   - `source`: the physical graph binding, kept apart from the forge identity:
@@ -204,8 +206,9 @@ It returns:
 - **`external_dependencies`.** Blockers in the same repository that aren't candidates, for
   example closed issues. Each has `derivation` and `status` (`native`, or `documented_not_native`
   with `github_state: null`). Not imported.
-- **`cross_repository`.** Sub-issues, task-list references and blockers in other repositories.
-  Reported, never imported.
+- **`cross_repository`.** Sub-issues, task-list references, blockers and documented
+  dependencies in other repositories, each with `derivation` (`native` for sub-issues and
+  `blocked_by`, `parsed` for task-list and prose references). Reported, never imported.
 - **`omitted`.** Closed issues, pull requests, deleted or moved issues (`issue_unavailable`,
   `issue_moved`) and anything over a limit.
 - **`truncated`.** Flags for `sub_issues`, `task_list`, `dependencies`, `nodes`, `acceptance`,
