@@ -1088,6 +1088,8 @@ struct Issue {
     repository: Option<RepoName>,
     pull_request: bool,
     blocked_by_total: Option<u64>,
+    /// GitHub's own sub-issue count, when reported, to detect short sub-issue pages.
+    sub_issues_total: Option<u64>,
     /// The body exceeded the bound and was cut, so prose parsed from it may be incomplete.
     body_truncated: bool,
 }
@@ -1122,6 +1124,7 @@ fn issue(value: &Value) -> Option<Issue> {
         blocked_by_total: summary["total_blocked_by"]
             .as_u64()
             .or_else(|| summary["blocked_by"].as_u64()),
+        sub_issues_total: value["sub_issues_summary"]["total"].as_u64(),
     })
 }
 
@@ -1520,10 +1523,21 @@ impl GithubReader {
         let mut cross = Vec::<Value>::new();
         let mut omitted = Vec::<Value>::new();
         let mut seen = BTreeSet::from([parent]);
-        let cross_entry = |repo: &RepoName, number: u64, relation: &str| json!({"repository":repo.full(),"number":number,"relation":relation,"imported":false});
+        // Native relations come from GitHub's sub-issue and dependency records;
+        // task-list and prose references are parsed from issue bodies.
+        let cross_entry = |repo: &RepoName, number: u64, relation: &str| {
+            let derivation = if matches!(relation, "sub_issue" | "blocked_by") {
+                "native"
+            } else {
+                "parsed"
+            };
+            json!({"repository":repo.full(),"number":number,"relation":relation,
+                "derivation":derivation,"provenance":"github_app","imported":false})
+        };
         let omitted_entry = |number: u64, reason: &str| json!({"number":number,"reason":reason});
 
         // Sub-issues: page-numbered requests only; server-supplied Link URLs are never followed.
+        let mut sub_issues_received = 0u64;
         for page in 1..=MAX_SUB_ISSUE_PAGES {
             let reply = self
                 .get(
@@ -1548,6 +1562,7 @@ impl GithubReader {
                 .body
                 .as_array()
                 .ok_or(Failure::Unavailable("github_invalid_response"))?;
+            sub_issues_received += items.len() as u64;
             for item in items {
                 let Some(child) = issue(item) else {
                     truncated.unrecognized = true;
@@ -1588,6 +1603,14 @@ impl GithubReader {
             if page == MAX_SUB_ISSUE_PAGES {
                 truncated.sub_issues = true;
             }
+        }
+        // A short page without a next link is still incomplete when GitHub's own
+        // summary counts more sub-issues than were returned.
+        if parent_issue
+            .sub_issues_total
+            .is_some_and(|total| total > sub_issues_received)
+        {
+            truncated.sub_issues = true;
         }
 
         // Same-repository task-list references in the parent body. Parsed, not native.
@@ -1736,7 +1759,7 @@ impl GithubReader {
                                 &mut truncated.reported,
                                 json!({"node_id":id,"blocked_by":blocker.number,
                                     "github_state":if blocker.open {"open"} else {"closed"},
-                                    "imported":false,"derivation":"native","status":"native"}),
+                                    "imported":false,"derivation":"native","provenance":"github_app","status":"native"}),
                             );
                         }
                     }
@@ -1766,7 +1789,7 @@ impl GithubReader {
                         &mut external,
                         &mut truncated.reported,
                         json!({"node_id":id,"blocked_by":reference.number,"github_state":null,
-                            "imported":false,"derivation":"parsed","status":"documented_not_native"}),
+                            "imported":false,"derivation":"parsed","provenance":"github_app","status":"documented_not_native"}),
                     ),
                 }
             }
@@ -1786,6 +1809,7 @@ impl GithubReader {
                     let is_native = natives.contains(dep);
                     documented_not_native |= !is_native;
                     json!({"node_id":dep,"native":is_native,"documented":docs.contains(dep),
+                        "derivation":if is_native {"native"} else {"parsed"},
                         "status":if is_native {"native"} else {"documented_not_native"}})
                 })
                 .collect();

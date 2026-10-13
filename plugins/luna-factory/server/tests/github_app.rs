@@ -96,6 +96,10 @@ struct World {
     installation_permissions: Value,
     token_ttl: i64,
     token_permissions: Option<Value>,
+    /// Repositories the minted token claims to cover (default: only REPO).
+    token_repositories: Option<Value>,
+    /// Issue reads fail with a 500 whose body echoes the caller's credential.
+    echo_credential_errors: bool,
     rate_limited: Option<u64>,
     graphql_rate_limited: Option<u64>,
     mints: u32,
@@ -116,6 +120,8 @@ impl Default for World {
             installation_permissions: json!({"actions":"read","checks":"read","issues":"read","metadata":"read","pull_requests":"read","statuses":"read"}),
             token_ttl: 3600,
             token_permissions: None,
+            token_repositories: None,
+            echo_credential_errors: false,
             rate_limited: None,
             graphql_rate_limited: None,
             mints: 0,
@@ -258,17 +264,27 @@ async fn handle(
                 .clone()
                 .unwrap_or_else(|| body["permissions"].clone());
             let expires = (now() as i64 + world.token_ttl).max(0) as u64;
+            let repositories = world.token_repositories.clone().unwrap_or_else(|| {
+                json!([{"id":REPO_ID,"node_id":REPO_NODE,"name":"plugins","full_name":REPO,"private":false}])
+            });
             reply(
                 StatusCode::CREATED,
                 &[],
                 json!({"token":format!("{TOKEN_PREFIX}{:04}", world.mints),"expires_at":iso(expires),
                     "permissions":permissions,"repository_selection":"selected",
-                    "repositories":[{"id":REPO_ID,"node_id":REPO_NODE,"name":"plugins","full_name":REPO,"private":false}]}),
+                    "repositories":repositories}),
             )
         }
         ("GET", ["repos", _, _, "issues", number, rest @ ..]) => {
             if !token_ok {
                 return unauthorized();
+            }
+            if world.echo_credential_errors {
+                return reply(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &[],
+                    json!({"message":format!("upstream failure for {credential}"),"documentation_url":credential}),
+                );
             }
             let Ok(number) = number.parse::<u64>() else {
                 return reply(StatusCode::NOT_FOUND, &[], json!({}));
@@ -616,7 +632,7 @@ async fn recorded_shapes_become_revisioned_candidates_and_inspection_writes_noth
     assert_eq!(result["nodes"][2]["dependencies"], json!(["issue-69"]));
     assert_eq!(
         result["nodes"][2]["dependency_evidence"],
-        json!([{"node_id":"issue-69","native":true,"documented":false,"status":"native"}])
+        json!([{"node_id":"issue-69","native":true,"documented":false,"derivation":"native","status":"native"}])
     );
     assert_eq!(
         result["parent_issue"]["forge"],
@@ -625,10 +641,10 @@ async fn recorded_shapes_become_revisioned_candidates_and_inspection_writes_noth
     assert_eq!(result["parent_issue"]["provenance"], "github_app");
     let cross = &result["cross_repository"];
     assert!(cross.as_array().unwrap().contains(
-        &json!({"repository":"other/repo","number":9,"relation":"sub_issue","imported":false})
+        &json!({"repository":"other/repo","number":9,"relation":"sub_issue","derivation":"native","provenance":"github_app","imported":false})
     ));
     assert!(cross.as_array().unwrap().contains(
-        &json!({"repository":"other-owner/other-repo","number":3,"relation":"task_list","imported":false})
+        &json!({"repository":"other-owner/other-repo","number":3,"relation":"task_list","derivation":"parsed","provenance":"github_app","imported":false})
     ));
     let omitted = result["omitted"].as_array().unwrap();
     for expected in [
@@ -866,10 +882,10 @@ async fn cycles_are_rejected_and_foreign_or_closed_dependencies_are_not_imported
     assert_eq!(
         result["external_dependencies"],
         json!([{"node_id":"issue-13","blocked_by":14,"github_state":"closed","imported":false,
-            "derivation":"native","status":"native"}])
+            "derivation":"native","provenance":"github_app","status":"native"}])
     );
     assert!(result["cross_repository"].as_array().unwrap().contains(
-        &json!({"repository":"other/repo","number":1,"relation":"blocked_by","imported":false})
+        &json!({"repository":"other/repo","number":1,"relation":"blocked_by","derivation":"native","provenance":"github_app","imported":false})
     ));
     assert_eq!(result["nodes"][2]["dependencies"], json!([]));
 }
@@ -1385,12 +1401,12 @@ async fn documented_dependencies_survive_an_absent_native_record() {
     assert_eq!(node("issue-32")["dependencies"], json!(["issue-31"]));
     assert_eq!(
         node("issue-32")["dependency_evidence"],
-        json!([{"node_id":"issue-31","native":false,"documented":true,"status":"documented_not_native"}])
+        json!([{"node_id":"issue-31","native":false,"documented":true,"derivation":"parsed","status":"documented_not_native"}])
     );
     // Recorded natively and documented: native wins, both are visible.
     assert_eq!(
         node("issue-33")["dependency_evidence"],
-        json!([{"node_id":"issue-31","native":true,"documented":true,"status":"native"}])
+        json!([{"node_id":"issue-31","native":true,"documented":true,"derivation":"native","status":"native"}])
     );
     assert!(
         result["external_dependencies"]
@@ -1398,12 +1414,12 @@ async fn documented_dependencies_survive_an_absent_native_record() {
             .unwrap()
             .contains(
                 &json!({"node_id":"issue-32","blocked_by":99,"github_state":null,
-                "imported":false,"derivation":"parsed","status":"documented_not_native"})
+                "imported":false,"derivation":"parsed","provenance":"github_app","status":"documented_not_native"})
             )
     );
     assert!(
         result["cross_repository"].as_array().unwrap().contains(&json!(
-            {"repository":"other-owner/other-repo","number":4,"relation":"documented_dependency","imported":false}
+            {"repository":"other-owner/other-repo","number":4,"relation":"documented_dependency","derivation":"parsed","provenance":"github_app","imported":false}
         ))
     );
     assert!(
@@ -1637,4 +1653,104 @@ async fn credentials_never_reach_debug_errors_or_tool_arguments() {
     let result = inspect(&h, REPO, 67).await;
     assert_eq!(result["reason"], "github_installation_mismatch");
     assert!(!result.to_string().contains("Not Found"));
+}
+
+#[tokio::test]
+async fn short_sub_issue_pages_against_the_reported_total_are_incomplete() {
+    // GitHub's summary counts three sub-issues, but the only page returns one and no next link.
+    let world = || {
+        let mut world = World::default();
+        let mut parent = issue(REPO, 50, "Parent", "", true, 0);
+        parent["sub_issues_summary"]["total"] = json!(3);
+        world.issues.insert(50, parent);
+        world.sub_issues.insert(
+            50,
+            vec![issue(REPO, 51, "Only child returned", "", true, 0)],
+        );
+        world
+    };
+    let h = harness(world(), |_, _| {}).await;
+    let result = inspect(&h, REPO, 50).await;
+    assert_eq!(result["status"], "incomplete", "{result}");
+    assert_eq!(result["truncated"]["sub_issues"], true);
+    assert_eq!(ids(&result["nodes"]), ["issue-51"]);
+    assert!(
+        result["import"]["decisions_needed"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("results_incomplete"))
+    );
+
+    // The same single child with a matching total is a complete read.
+    let mut matching = world();
+    matching.issues.get_mut(&50).unwrap()["sub_issues_summary"]["total"] = json!(1);
+    let h = harness(matching, |_, _| {}).await;
+    let result = inspect(&h, REPO, 50).await;
+    assert_eq!(result["status"], "complete", "{result}");
+    assert_eq!(result["truncated"]["sub_issues"], false);
+}
+
+#[tokio::test]
+async fn credential_echoing_error_bodies_and_persisted_state_stay_clean() {
+    // GitHub error bodies are discarded: only a stable reason is reported, even
+    // when the body echoes the bearer credential back.
+    let mut world = parent_world();
+    world.echo_credential_errors = true;
+    let h = harness(world, |_, _| {}).await;
+    let result = inspect(&h, REPO, 67).await;
+    assert_eq!(result["status"], "unavailable");
+    assert_eq!(result["reason"], "github_service_unavailable");
+    assert!(!result.to_string().contains("upstream failure"), "{result}");
+
+    // A token that covers more than the one requested repository is discarded
+    // before any read.
+    let mut world = parent_world();
+    world.token_repositories = Some(json!([
+        {"id":REPO_ID,"node_id":REPO_NODE,"name":"plugins","full_name":REPO,"private":false},
+        {"id":7,"node_id":"R_other","name":"other","full_name":"joshyorko/other","private":true}
+    ]));
+    let h = harness(world, |_, _| {}).await;
+    let result = inspect(&h, REPO, 67).await;
+    assert_eq!(result["reason"], "github_token_scope_mismatch");
+    assert!(
+        h.hits().iter().all(|hit| !hit.path.contains("/issues/")),
+        "no read with an over-broad token"
+    );
+
+    // Intake, import and delivery leave no credential in the ledger, its
+    // receipts or the projections built from it.
+    let h = harness(delivery_world(), |_, _| {}).await;
+    let inspection = inspect(&h, REPO, 67).await;
+    let (run_id, _) = import_graph(&h, &inspection).await;
+    let delivery = invoke(&h, "read_factory_delivery", json!({"run_id":run_id})).await;
+    assert_eq!(delivery["available"], true, "{delivery}");
+    assert!(
+        h.mints().len() >= 2,
+        "intake and delivery tokens were minted"
+    );
+    for tool in ["get_factory_run", "get_factory_graph", "refresh_factory"] {
+        invoke(&h, tool, json!({"run_id":run_id})).await;
+    }
+    invoke(&h, "list_factory_runs", json!({})).await;
+    invoke(&h, "get_factory_capabilities", json!({})).await;
+    let pem = String::from_utf8_lossy(&keys().pem).into_owned();
+    let state = h.key_path.parent().unwrap().parent().unwrap().join("state");
+    let mut scanned = 0;
+    for entry in std::fs::read_dir(&state).unwrap() {
+        let path = entry.unwrap().path();
+        if !path.is_file() {
+            continue;
+        }
+        let bytes = std::fs::read(&path).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        for secret in [TOKEN_PREFIX, "eyJ", "PRIVATE KEY", &pem[40..80]] {
+            assert!(!text.contains(secret), "persisted state leaked {secret}");
+        }
+        assert!(
+            !text.contains(h.key_path.to_str().unwrap()),
+            "key path persisted"
+        );
+        scanned += 1;
+    }
+    assert!(scanned > 0, "the ledger was written");
 }
