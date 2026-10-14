@@ -548,15 +548,16 @@ async fn a_planning_only_campaign_cannot_dispatch() {
         );
     }
     // The planning record's own request key can never be replayed as executable admission.
+    // Without a qualification the gate refuses before admission (#71); the qualified
+    // idempotency conflict is covered in tests/qualification.rs.
     let planning = Store::open(&config)
         .unwrap()
         .get(run_id.as_str().unwrap())
         .unwrap();
     let start = serde_json::to_value(&planning.request).unwrap();
-    assert!(
-        rejected(&server, "start_factory", start)
-            .await
-            .contains("idempotency_conflict")
+    assert_eq!(
+        rejected(&server, "start_factory", start).await,
+        "execution_not_qualified"
     );
     assert_eq!(ledger(&config), before, "no event, run or campaign write");
     let raw = Store::open(&config)

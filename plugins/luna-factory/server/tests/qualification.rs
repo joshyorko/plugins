@@ -440,6 +440,22 @@ async fn planning_needs_no_qualification_and_contacts_no_native_runtime() {
     assert!(calls(&fixture.dir).is_empty());
 }
 
+#[tokio::test]
+async fn a_qualified_start_still_cannot_replay_a_planning_key_as_execution() {
+    let fixture = fixture("fake_factory.py");
+    let factory = Factory::new(support::qualified(fixture.config.clone())).unwrap();
+    factory.create_graph(fixture.request.clone()).await.unwrap();
+    assert!(
+        factory
+            .start(fixture.request.clone())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("idempotency_conflict")
+    );
+    assert!(calls(&fixture.dir).is_empty());
+}
+
 fn capabilities_validator() -> jsonschema::Validator {
     let tool = luna_factoryd::mcp::tool_definitions()
         .into_iter()
