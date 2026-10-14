@@ -108,6 +108,13 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/plugin.json",
     "plugins/luna-factory/README.md",
     "plugins/luna-factory/skills/setup/SKILL.md",
+    "plugins/luna-factory/docs/research/2026-10-10-architectural-investigation.md",
+    "plugins/luna-factory/docs/research/2026-10-10-engineering-handoff.md",
+    "plugins/luna-factory/docs/research/2026-10-14-reconciliation.md",
+    "plugins/luna-factory/docs/research/plans/69-61-activity-cursor-and-continuation-checkpoint.md",
+    "plugins/luna-factory/docs/research/plans/79-per-attempt-proof-then-two-workers.md",
+    "plugins/luna-factory/docs/research/plans/80-route-policy-then-verified-escalation.md",
+    "plugins/luna-factory/docs/research/plans/81-certified-delivery-then-authorized-merge.md",
 }
 ALLOWED_RELEASE_PREFIXES = (
     "plugins/luna-factory/container/",
