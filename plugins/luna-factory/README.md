@@ -6,6 +6,8 @@ Use `$luna-factory` directly in Codex when you want the skill alone. Starting a 
 
 This is a local/private application package. Build and protocol tests do not establish that the live Codex, ChatGPT, or private tunnel acceptance gates have passed. See [package and operator boundaries](docs/package.md) for the gate checklist.
 
+Ordinary execution requires a persisted, operator-recorded [execution qualification](docs/execution-qualification.md) for the exact profile; without one, every native effect path refuses with a stable `execution_*` code.
+
 The stacked implementation's [integration-readiness report](docs/integration-readiness.md) separates code-merge gates from live acceptance. [Bounded CAS inspection](docs/cas-verification.md) is available for explicitly configured loopback targets; CAS execution remains disabled pending protocol, identity, entitlement and cessation qualification.
 
 Luna's optional, read-only [GitHub App](docs/github-app.md) adds source-bound issue-graph intake and GitHub-reported PR and check telemetry. It's off by default, and its data is never Factory proof.

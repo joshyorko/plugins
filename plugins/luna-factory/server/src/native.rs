@@ -1020,23 +1020,45 @@ impl NativeClient {
     }
 
     pub async fn resume_thread(&self, thread_id: &str) -> Result<Value> {
+        self.resume_thread_guarded(thread_id, &|| Ok(())).await
+    }
+
+    /// The guard runs after the writer is owned, immediately before the first byte.
+    pub async fn resume_thread_guarded(
+        &self,
+        thread_id: &str,
+        guard: &DispatchGuard<'_>,
+    ) -> Result<Value> {
         validate_id(thread_id)?;
         // No overrides: preserve the same thread's runtime/provider/security.
-        self.request(
+        self.request_guarded(
             "thread/resume",
             json!({"threadId":thread_id, "excludeTurns":true}),
+            guard,
         )
         .await
     }
 
     pub async fn steer_turn(&self, thread_id: &str, turn_id: &str, text: &str) -> Result<Value> {
+        self.steer_turn_guarded(thread_id, turn_id, text, &|| Ok(()))
+            .await
+    }
+
+    /// The guard runs after the writer is owned, immediately before the first byte.
+    pub async fn steer_turn_guarded(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+        text: &str,
+        guard: &DispatchGuard<'_>,
+    ) -> Result<Value> {
         validate_id(thread_id)?;
         validate_id(turn_id)?;
         ensure!(
             !text.trim().is_empty() && text.len() <= 64 * 1024,
             "invalid bounded steering input"
         );
-        self.request("turn/steer", json!({"threadId":thread_id, "expectedTurnId":turn_id, "input":[{"type":"text","text":text}]})).await
+        self.request_guarded("turn/steer", json!({"threadId":thread_id, "expectedTurnId":turn_id, "input":[{"type":"text","text":text}]}), guard).await
     }
 
     /// An accepted interrupt is a request, never cancellation completion proof.

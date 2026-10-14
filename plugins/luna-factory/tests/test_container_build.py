@@ -167,11 +167,13 @@ class ContainerBuildTests(unittest.TestCase):
 
     def test_release_delta_rejects_unreviewed_rust_source_changes(self):
         with self.assertRaisesRegex(ValueError, "unreviewed release source delta"):
-            BUILD.validate_release_delta(["plugins/luna-factory/server/src/native.rs"])
+            BUILD.validate_release_delta(["plugins/luna-factory/server/src/control.rs"])
         BUILD.validate_release_delta(
             [
                 "plugins/luna-factory/server/src/config.rs",
                 "plugins/luna-factory/server/src/campaign.rs",
+                "plugins/luna-factory/server/src/native.rs",
+                "plugins/luna-factory/server/src/qualification.rs",
                 "plugins/luna-factory/server/src/store.rs",
                 "plugins/luna-factory/server/tests/campaign.rs",
                 "plugins/luna-factory/server/src/github.rs",
