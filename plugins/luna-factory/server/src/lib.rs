@@ -5,6 +5,7 @@ pub mod http;
 pub mod lifecycle;
 pub mod mcp;
 pub mod native;
+pub mod qualification;
 pub mod repositories;
 pub mod store;
 
