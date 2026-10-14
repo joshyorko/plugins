@@ -136,7 +136,7 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
     await controller.select(runId); await controller.loadGraph();
     expect(controller.state.error).toBeNull();
     expect(controller.selected && classifyRun(controller.selected)).toBe("recent");
-    expect(root.querySelector(".decision-panel .eyebrow")?.textContent).toBe("Plan navigation");
+    expect(root.querySelector(".decision-panel .eyebrow")?.textContent).toBe("Plan");
     for (const title of titleCases) {
       expect(controller.state.graph?.nodes.find(node => node.id === title.id)?.title).toBe(title.public);
       expect(controller.selected?.control?.tasks.find(node => node.id === title.id)?.title).toBe(title.public);
@@ -173,7 +173,11 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
     expect(fromModel.changes.every(change => change.actor === "local_operator")).toBe(true);
     expect(fromModel.attempts).toEqual([]); expect(fromModel.claim.held).toBe(false);
     expect(controller.state.backends?.targets.every(target => !target.execution_eligible)).toBe(true);
-    expect(root.textContent).toContain("native-local");
+    // The applied preference is announced by title and target label; the target ID stays in the editor's option value.
+    const label = controller.state.backends?.targets.find(target => target.id === "native-local")?.label ?? "";
+    expect(label).not.toBe("");
+    expect(root.querySelector(".plan-updated")?.textContent).toContain(`prefers ${label}.`);
+    expect(root.querySelector('#target_id option[value="native-local"]')).not.toBeNull();
     // The reverse direction uses the identical server command boundary and journal.
     const modelChange = graphEnvelopeSchema.parse(await model("propose_factory_change", {
       run_id: runId, expected_revision: fromModel.revision, idempotency_key: "model-prerequisite",

@@ -27,7 +27,7 @@ const escape = (value: string | number): string => String(value).replace(/[&<>"'
 const reasonCopy = (reason: string | null): string => {
   if (!reason) return "No additional reason was reported.";
   const messages: Record<string, string> = {
-    planning_only: "Reads the saved plan. Execution has not started.", evidence_missing: "Evidence has not been collected.", owned_execution_active: "Owned execution is active.", read_only_status: "Reads current status without inference.",
+    planning_only: "The saved plan is ready to review.", evidence_missing: "Evidence has not been collected.", owned_execution_active: "Owned execution is active.", read_only_status: "Reads current status without inference.",
     pending_owner_decision: "The completed owner decision needs an answer.", current_owned_turn: "Correction is fenced to the current turn.",
     stop_requires_native_cessation_proof: "Ownership stays held until native cessation is observed.", same_goal_remaining_budget: "Continue the same objective within its remaining limits.",
     effect_outcome_unknown: "Reconcile the existing effect before any new work.", owned_liveness_unknown: "Owned execution has not been proved stopped.",
@@ -47,7 +47,8 @@ const statusMark = (tier: Tier, label: string): string => `<span class="status t
 function proofLine(run: RunView): string {
   const counts = run.control ? run.presentation?.criteria : undefined;
   if (!counts) return `<span class="proof unverified">${phaseGlyph(0, 0)}Proof unverified</span>`;
-  return `<span class="proof">${phaseGlyph(counts.proven, counts.mandatory)}${counts.proven} of ${counts.mandatory} ${counts.mandatory === 1 ? "criterion" : "criteria"} proven${counts.failed ? ` · ${counts.failed} failed` : ""}</span>`;
+  const progress = counts.failed ? `${counts.failed} need another look` : counts.proven === counts.mandatory ? "Done" : counts.proven ? `${counts.proven} of ${counts.mandatory} done` : "Not done yet";
+  return `<span class="proof">${phaseGlyph(counts.proven, counts.mandatory)}${progress}</span>`;
 }
 
 export function renderWorkbench(root: HTMLElement, state: ViewState, editor: Editor, preview: boolean, options: WorkbenchOptions = {}): void {
@@ -62,6 +63,7 @@ export function renderWorkbench(root: HTMLElement, state: ViewState, editor: Edi
   const focusId = active instanceof HTMLElement && root.contains(active) ? active.id : null;
   const selection = active instanceof HTMLTextAreaElement ? [active.selectionStart, active.selectionEnd] : null;
   const expanded = Array.from(root.querySelectorAll<HTMLDetailsElement>("details[open]")).map(element => element.id);
+  const disclosed = Array.from(root.querySelectorAll<HTMLElement>("[data-disclosure]:not([hidden])")).map(element => element.id);
   const run = state.runs.find(item => item.id === state.selectedId);
   const surface = options.surface ?? "global";
   if (surface === "inline") {
@@ -88,7 +90,8 @@ export function renderWorkbench(root: HTMLElement, state: ViewState, editor: Edi
   if (draft && newForm && oldKind === newForm.dataset.form && oldForm?.dataset.inputIdentity === newForm.dataset.inputIdentity) {
     for (const field of newForm.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input[name],textarea[name],select[name]")) {
       const value = draft.get(field.name);
-      if (field instanceof HTMLSelectElement && field.multiple) {
+      if (field instanceof HTMLInputElement && field.type === "checkbox") field.checked = draft.getAll(field.name).includes(field.value);
+      else if (field instanceof HTMLSelectElement && field.multiple) {
         const values = draft.getAll(field.name);
         for (const option of field.options) option.selected = values.includes(option.value);
       } else if (typeof value === "string") field.value = value;
@@ -101,11 +104,23 @@ export function renderWorkbench(root: HTMLElement, state: ViewState, editor: Edi
     if (apply) apply.disabled = !state.connected || !!state.pending || state.graphStale || state.graphLoading;
   }
   for (const id of expanded) { const element = document.getElementById(id); if (element instanceof HTMLDetailsElement && root.contains(element)) element.open = true; }
+  for (const id of disclosed) { const toggle = Array.from(root.querySelectorAll<HTMLElement>('[data-action="toggle-disclosure"]')).find(element => element.getAttribute("aria-controls") === id); if (toggle) toggleDisclosure(root, toggle, true); }
   if (focusId) {
     const element = findElementById(root, focusId);
     element?.focus({ preventScroll: true });
     if (element instanceof HTMLTextAreaElement && selection?.[0] !== undefined && selection[1] !== undefined) element.setSelectionRange(selection[0], selection[1]);
   }
+}
+
+/** Shows or hides the panel a plain toggle button controls, such as a task's editor. Display state only. */
+export function toggleDisclosure(root: HTMLElement, toggle: HTMLElement, open?: boolean): void {
+  const id = toggle.getAttribute("aria-controls");
+  const panel = id ? findElementById(root, id) : undefined;
+  if (!panel?.hasAttribute("data-disclosure")) return;
+  const show = open ?? panel.hidden;
+  panel.hidden = !show;
+  toggle.setAttribute("aria-expanded", String(show));
+  toggle.textContent = show ? "Close editor" : "Edit";
 }
 
 function findElementById(root: HTMLElement, id: string): HTMLElement | undefined {
@@ -171,7 +186,7 @@ function renderCampaignGroup(state: ViewState, campaigns: CampaignView[], option
   const items = campaigns.map(campaign => {
     const plan = state.runs.find(run => run.id === campaign.planning_run_id);
     const tier = campaignTier(campaign.status);
-    const execution = campaign.run_ids.length ? `${campaign.run_ids.length} linked ${campaign.run_ids.length === 1 ? "run" : "runs"}` : campaign.status === "planned" ? "Execution hasn't started" : "No linked runs reported";
+    const execution = campaign.run_ids.length ? `${campaign.run_ids.length} linked ${campaign.run_ids.length === 1 ? "run" : "runs"}` : campaign.status === "planned" ? "No runs yet" : "No linked runs reported";
     const runs = campaign.run_ids.map(id => child(id, "Run", state.runs.find(run => run.id === id), "Linked run")).join("");
     return `<li class="campaign-entity"><a id="campaign-entity-${escape(campaign.id)}" class="campaign-row campaign-parent-row tier-${tier}" href="${runPath(campaign.planning_run_id)}" data-run-id="${escape(campaign.planning_run_id)}">
       <span class="row-sky">${plan ? miniMap(plan) || phaseGlyph(0, 0, 22) : phaseGlyph(0, 0, 22)}</span>
@@ -191,20 +206,20 @@ function renderCampaign(run: RunView, state: ViewState, options: WorkbenchOption
   const action = primary ?? { kind: "refresh" as const, label: "Refresh current state", reason: "This older response has no authoritative action projection.", tool: "refresh_factory", allowed: true };
   const secondary = presentation?.actions.filter(item => item.allowed && ["cancel", "steer"].includes(item.kind) && item.kind !== primary?.kind && item.tool) ?? [];
   const changes = options.since?.changes(run);
-  const baseline = options.since?.baseline(run.id);
   // The typed category only names the blocker in plain language. Attention, tier and actions
   // never read it; an uncategorized blocker keeps the generic label.
   const category = presentation?.blocker_kind?.kind === "unknown" ? null : blockerCopy(run);
-  const eyebrow = attention ? "Needs you" : run.planning_only ? "Plan navigation" : category ?? (run.blocker ? "Execution blocker" : "Next safe action");
-  const headline = attention ? run.pending_decision?.question || action.label : run.planning_only ? action.label : run.blocker || action.label;
+  const eyebrow = attention ? "Needs you" : run.planning_only ? "Plan" : category ?? (run.blocker ? "Execution blocker" : "Next safe action");
+  const headline = attention ? run.pending_decision?.question || action.label : run.planning_only ? "" : run.blocker || action.label;
   const campaign = state.campaigns?.find(item => item.planning_run_id === run.id || item.run_ids.includes(run.id));
   return `<section class="campaign-head">
-      <div class="eyebrow">${escape(run.repository)} · ${escape(finishLabels[run.finish])}${campaign ? ` · <span class="campaign-parent">${escape(parentLabel(campaign))}</span>` : ""}</div>
+      <div class="eyebrow">${escape(run.repository)}</div>
       <h1>${escape(run.objective)}</h1>
-      <p class="statusline">${statusMark(tier, statusLabel(run))}${proofLine(run)}<span class="fresh">${escape(freshness(activityAt(run), options.now))}</span>${run.created_at !== undefined ? `<span class="started"><time datetime="${new Date(run.created_at * 1000).toISOString()}">${run.planning_only ? "Created" : "Started"} ${escape(clock(run.created_at, options.now))}</time></span>` : ""}</p>
-      <div class="story">${changes?.lines.length ? `<p class="story-kicker">Since you last looked at ${escape(clock(changes.since))}</p><ul>${changes.lines.map(line => `<li>${escape(line)}</li>`).join("")}</ul>` : `<p class="story-now">${escape(attention ? run.delta || "No new change was reported." : nowSentence(run))}</p>${baseline ? `<p class="story-kicker">No new server changes since ${escape(clock(baseline))}.</p>` : ""}`}${run.remaining_gap && tier !== "planned" ? `<p class="story-gap"><span>Still needed</span>${escape(run.remaining_gap)}</p>` : ""}</div>
+      ${campaign ? `<p class="campaign-parent">Parent issue ${escape(parentLabel(campaign))}</p>` : ""}
+      <p class="statusline">${statusMark(tier, statusLabel(run))}${run.planning_only ? "" : proofLine(run)}<span class="fresh">${escape(freshness(activityAt(run), options.now))}</span>${run.created_at !== undefined ? `<span class="started"><time datetime="${new Date(run.created_at * 1000).toISOString()}">${run.planning_only ? "Created" : "Started"} ${escape(clock(run.created_at, options.now))}</time></span>` : ""}</p>
+      <div class="story">${changes?.lines.length ? `<p class="story-kicker">Since you last looked at ${escape(clock(changes.since))}</p><ul>${changes.lines.map(line => `<li>${escape(line)}</li>`).join("")}</ul>` : `<p class="story-now">${escape(attention ? run.delta || "No new change was reported." : nowSentence(run))}</p>`}${run.remaining_gap && tier !== "planned" ? `<p class="story-gap"><span>Still needed</span>${escape(run.remaining_gap)}</p>` : ""}</div>
     </section>
-    <section class="decision-panel tier-${attention ? "needs" : tier}${attention ? " needs-you" : " compact"}" aria-labelledby="decision-title"><div class="eyebrow"${category && !attention && !run.planning_only ? ` data-blocker-kind="${escape(presentation?.blocker_kind?.kind ?? "")}"` : ""}>${escape(eyebrow)}</div><h2 id="decision-title">${escape(headline)}</h2><p id="action-reason">${escape(reasonCopy(presentation ? action.reason : null))}${presentation ? " The server rechecks this at the action boundary." : " Refresh to load the server's action and proof view."}</p><div class="run-controls">${actionButton(action, true, busy)}${secondary.length ? `<details id="other-actions" class="other-actions"><summary>Other available actions</summary><div class="run-controls">${secondary.map(item => actionButton(item, false, busy)).join("")}</div></details>` : ""}</div></section>
+    ${run.planning_only && !attention ? "" : `<section class="decision-panel tier-${attention ? "needs" : tier}${attention ? " needs-you" : " compact"}" aria-labelledby="decision-title"><div class="eyebrow"${category && !attention && !run.planning_only ? ` data-blocker-kind="${escape(presentation?.blocker_kind?.kind ?? "")}"` : ""}>${escape(eyebrow)}</div><h2 id="decision-title">${escape(headline)}</h2><p id="action-reason">${escape(reasonCopy(presentation ? action.reason : null))}${presentation ? "" : " Refresh to load the server's action and proof view."}</p><div class="run-controls">${actionButton(action, !run.planning_only || attention, busy)}${secondary.map(item => actionButton(item, false, busy)).join("")}</div></section>`}
     ${renderProposalReview(state)}
     ${renderMission(state, run, task => renderFollowUpActions(run, options, task), options.canvasWidth)}
     ${renderEvidence(run, state)}`;
@@ -216,9 +231,9 @@ function renderEvidence(run: RunView, state: ViewState): string {
   const { tasks, graph } = missionTasks(state, run);
   const agents = roster(run, graph);
   const receipts = run.receipts.map(receipt => `<li class="receipt"><time datetime="${new Date(receipt.created_at * 1000).toISOString()}">${escape(clock(receipt.created_at))}</time><div><strong>${escape(receipt.kind.replaceAll("_", " "))}</strong><span>${escape(receipt.summary)}</span>${receipt.thread_id ? `<small>Recorded on ${escape(receiptAgent(receipt, agents)?.label ?? "an unlisted agent")}'s thread</small>` : ""}<small class="${receipt.subject === run.current_subject ? "" : "warn"}">${receipt.subject === run.current_subject ? "Matches the current subject" : "Different subject; re-verification may be needed"}</small></div></li>`).join("");
-  return `<details id="evidence-audit" class="evidence advanced"><summary>Evidence and audit<span>${criteria.length} criteria · ${run.receipts.length} receipts · ${tasks.length} tasks</span></summary>
-    <section><h3>Criteria</h3><ol class="acceptance-list">${criteria.map(criterion => `<li><span class="criterion-state ${escape(criterion.status)}">${escape(criterion.status === "unproved" ? "pending" : criterion.status)}</span><div><p>${escape(criterion.description)}</p>${criterion.reason ? `<small class="muted">${escape(reasonCopy(criterion.reason))}</small>` : ""}${criterion.check_refs.length ? `<small class="muted">Checks: ${criterion.check_refs.map(escape).join(", ")}</small>` : ""}</div></li>`).join("")}</ol><p class="muted small">Child-task policy: ${escape(run.control?.child_policy ?? "unverified")}.</p></section>
-    <section><h3>Execution and delivery</h3><div class="delivery-strip"><div><span>Owner</span><strong>${run.planning_only ? "No owner started" : escape(presentation?.owner.liveness ?? "unknown")}</strong><small>${run.planning_only ? "No native owner is assigned" : escape(presentation?.owner.thread_id ?? "Identity unknown")}${presentation?.owner.turn_id ? ` · turn ${escape(presentation.owner.turn_id)}` : ""}</small></div><div><span>Workers</span><strong>${presentation ? `${presentation.workers.filter(worker => worker.liveness === "active").length} active · ${presentation.workers.filter(worker => worker.liveness === "unknown").length} unknown` : "Unknown"}</strong><small>${presentation?.workers.map(worker => `${escape(worker.thread_id)}: ${escape(worker.liveness)}`).join(", ") || "No worker identities reported"}</small></div><div><span>Time left</span><strong>${run.planning_only ? "Not running" : presentation?.result.kind !== "working" ? "Inactive" : presentation?.budget.time_remaining_seconds === null || presentation?.budget.time_remaining_seconds === undefined ? "Unverified" : `${Math.ceil(presentation.budget.time_remaining_seconds / 60)} min`}</strong><small>${presentation?.budget.repair_attempts_remaining ?? "?"} repairs remaining · ${presentation?.budget.repairs_used ?? "?"} used</small></div><div><span>Repository claim</span><strong>${presentation?.claim.status ?? "unknown"}</strong><small>${presentation?.claim.held ? "Retained" : presentation ? "Released" : "Status unknown"}</small></div><div><span>Deliverable</span><strong>${run.planning_only ? "No deliverable yet" : presentation ? `${presentation.deliverable.status} · ${deliverableLabel(presentation.deliverable.kind)}` : "unverified"}</strong><small class="mono">${escape(presentation?.deliverable.subject ?? "Subject unknown")}${presentation?.deliverable.reference ? ` · ${escape(presentation.deliverable.reference)}` : ""}</small></div></div></section>
+  return `<details id="evidence-audit" class="evidence advanced"><summary>Evidence and audit<span>${criteria.length} ${criteria.length === 1 ? "completion check" : "completion checks"} · ${run.receipts.length} ${run.receipts.length === 1 ? "record" : "records"} · ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"}</span></summary>
+    <section><h3>Completion checks</h3><ol class="acceptance-list">${criteria.map(criterion => `<li><span class="criterion-state ${escape(criterion.status)}">${escape(criterion.status === "unproved" ? "Not done yet" : criterion.status === "proven" ? "Done" : "Needs attention")}</span><div><p>${escape(criterion.description)}</p>${criterion.reason ? `<small class="muted">${escape(reasonCopy(criterion.reason))}</small>` : ""}${criterion.check_refs.length ? `<small class="muted">Checks: ${criterion.check_refs.map(escape).join(", ")}</small>` : ""}</div></li>`).join("")}</ol><p class="muted small">Child-task policy: ${escape(run.control?.child_policy ?? "unverified")}.</p></section>
+    <section><h3>Execution and delivery</h3><div class="delivery-strip"><div><span>Owner</span><strong>${run.planning_only ? "No owner started" : escape(presentation?.owner.liveness ?? "unknown")}</strong><small>${run.planning_only ? "No native owner is assigned" : escape(agents.find(agent => agent.thread === presentation?.owner.thread_id)?.label ?? (presentation?.owner.thread_id ? "Owner thread recorded" : "Identity unknown"))}</small></div><div><span>Workers</span><strong>${presentation ? `${presentation.workers.filter(worker => worker.liveness === "active").length} active · ${presentation.workers.filter(worker => worker.liveness === "unknown").length} unknown` : "Unknown"}</strong><small>${presentation?.workers.map(worker => `${escape(agents.find(agent => agent.thread === worker.thread_id)?.label ?? "Unlisted worker")}: ${escape(worker.liveness)}`).join(", ") || "No worker identities reported"}</small></div><div><span>Time left</span><strong>${run.planning_only ? "Not running" : presentation?.result.kind !== "working" ? "Inactive" : presentation?.budget.time_remaining_seconds === null || presentation?.budget.time_remaining_seconds === undefined ? "Unverified" : `${Math.ceil(presentation.budget.time_remaining_seconds / 60)} min`}</strong><small>${presentation?.budget.repair_attempts_remaining ?? "?"} repairs remaining · ${presentation?.budget.repairs_used ?? "?"} used</small></div><div><span>Repository claim</span><strong>${presentation?.claim.status ?? "unknown"}</strong><small>${presentation?.claim.held ? "Retained" : presentation ? "Released" : "Status unknown"}</small></div><div><span>Deliverable</span><strong>${run.planning_only ? "No deliverable yet" : presentation ? `${presentation.deliverable.status} · ${deliverableLabel(presentation.deliverable.kind)}` : "unverified"}</strong><small class="mono">${escape(presentation?.deliverable.subject ?? "Subject unknown")}${presentation?.deliverable.reference ? ` · ${escape(presentation.deliverable.reference)}` : ""}</small></div></div></section>
     <section><h3>Model route</h3><dl class="route-list"><dt>Requested</dt><dd>${escape(run.route.requested_model || "Not reported")}<small>${escape(run.route.requested_effort || "Effort not reported")}</small></dd><dt>Configured</dt><dd>${escape(run.route.configured_model || "Not reported")}<small>${escape(run.route.configured_effort || "Effort not reported")}</small></dd><dt>Observed</dt><dd>${escape(run.route.observed_model || "No execution-side model evidence")}<small>${escape(run.route.observed_effort || "Effort telemetry unavailable")}</small></dd><dt>Provider</dt><dd>${escape(run.route.configured_provider || "Configuration not reported")}<small>Downstream execution and billing unverified</small></dd></dl>${run.route.reroutes?.length ? `<div class="notice error">${run.route.reroutes.length} native model mismatch${run.route.reroutes.length === 1 ? "" : "es"} recorded. Execution was stopped for review. ${run.route.reroutes.map(route => `${escape(route.from_model)} → ${escape(route.to_model)} (${escape(route.thread_id)}, ${escape(route.turn_id)})`).join("; ")}</div>` : ""}</section>
     <section><h3>Receipts</h3>${receipts ? `<ol class="receipt-list">${receipts}</ol>` : '<p class="muted small">No execution receipts retained. A state label alone is not proof.</p>'}</section>
     <section><h3>Execution targets</h3>${renderTargets(state)}</section>
@@ -243,14 +258,11 @@ function renderInline(state: ViewState, run: RunView | undefined, options: Workb
   </article>`);
 }
 
+/** One plain "Ask ChatGPT about this" action. It only sends after a click and never starts work. */
 function renderFollowUpActions(run: RunView, options: WorkbenchOptions, task?: FollowUpTask): string {
-  const actions: Array<{ kind: FollowUpKind; label: string }> = [{ kind: "summary", label: "Summarize this run" }];
-  if (run.blocker || run.remaining_gap || run.pending_decision) actions.push({ kind: "blocker", label: "Ask about the blocker" });
-  if (task || run.pending_decision) actions.push({ kind: "choose", label: task ? "Help me choose for this task" : "Help me choose a safe next step" });
-  const messageUnavailable = !options.canSendFollowUps;
-  const hostUnavailable = !options.hostCanMessage;
-  const buttons = actions.map(action => `<button id="follow-up-${action.kind}-${escape(task?.id ?? run.id)}" type="button" class="ask" data-action="chat-follow-up" data-kind="${action.kind}"${task ? ` data-task-id="${escape(task.id)}"` : ""}${disabled(messageUnavailable)}${options.messagePending ? ' aria-disabled="true"' : ""}>${icon("chat", 14)}${escape(action.label)}</button>`).join("");
-  return `<section class="chat-followups" aria-label="Ask ChatGPT about the selected Factory state"><h4>Ask ChatGPT</h4><div class="asks">${buttons}</div><p class="small muted">Sends this run${task ? " and task" : ""} at its current revision only after your click. Nothing starts.</p>${hostUnavailable ? '<p class="small muted" role="status">ChatGPT message sending is unavailable in this host.</p>' : messageUnavailable && !options.messagePending ? '<p class="small muted" role="status">Available once the current read finishes.</p>' : ""}${options.messagePending ? '<p class="small muted" role="status">Sending your message…</p>' : ""}</section>`;
+  const kind: FollowUpKind = task ? "choose" : run.blocker || run.remaining_gap || run.pending_decision ? "blocker" : "summary";
+  const note = !options.hostCanMessage ? "ChatGPT message sending is unavailable in this host." : options.messagePending ? "Sending your message…" : !options.canSendFollowUps ? "Available once the current read finishes." : "Sends only after your click. Nothing starts.";
+  return `<div class="chat-followups"><button id="follow-up-${kind}-${escape(task?.id ?? run.id)}" type="button" class="ask" data-action="chat-follow-up" data-kind="${kind}"${task ? ` data-task-id="${escape(task.id)}"` : ""}${disabled(!options.canSendFollowUps)}${options.messagePending ? ' aria-disabled="true"' : ""} aria-describedby="follow-up-note">${icon("chat", 14)}Ask ChatGPT about this</button><p class="small muted" id="follow-up-note" role="status">${escape(note)}</p></div>`;
 }
 
 const field = (name: string, label: string, control: string, hint = ""): string => `<div class="field"><label for="${name}">${label}</label>${control}${hint ? `<p class="field-hint" id="${name}-hint">${hint}</p>` : ""}</div>`;

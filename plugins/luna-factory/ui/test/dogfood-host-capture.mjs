@@ -32,6 +32,8 @@ const cases = [
   { file: "inline-campaign-light.png", width: 720, height: 420, params: { surface: "inline", scenario: "campaign" } },
   { file: "campaign-github-ready-light.png", width: 1440, height: 1000, params: { surface: "global", mode: "fullscreen", scenario: "campaign", graph: "1", node: "issue-103" }, inspect: true },
   { file: "campaign-github-unavailable-narrow.png", width: 420, height: 900, params: { surface: "thread", scenario: "campaign", graph: "1", node: "issue-103", github: "unavailable" }, inspect: true },
+  { file: "campaign-plan-updated-light.png", width: 1280, height: 900, params: { surface: "global", mode: "fullscreen", scenario: "campaign", graph: "1", node: "issue-109", proposal: "applied" } },
+  { file: "campaign-task-edit-narrow.png", width: 420, height: 900, params: { surface: "thread", theme: "dark", scenario: "campaign", graph: "1", node: "issue-109" }, edit: true },
 ];
 /** Read-only tools a capture may call. GitHub reads are display-only and never mutate. */
 const readOnlyTools = ["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory", "list_factory_campaigns", "read_factory_agent_timeline", "read_factory_delivery", "inspect_factory_issue_graph"];
@@ -67,6 +69,7 @@ try {
       if (item.agent) {
         await frame.locator(`.crew [data-thread-id="${item.agent}"]`).click();
         await frame.locator(`.crew [data-thread-id="${item.agent}"][aria-pressed="true"]`).waitFor();
+        await page.waitForFunction(() => JSON.stringify(window.lunaDogfoodHost.contexts.at(-1) ?? {}).includes("agent_label"));
         const context = await page.evaluate(() => window.lunaDogfoodHost.contexts.at(-1));
         assert(JSON.stringify(context).includes("agent_label"), "Agent selection did not reach model context");
         assert(!/"(?:agent_)?thread(?:_id)?"/.test(JSON.stringify(context)), "Model context carried a raw agent thread field");
@@ -94,7 +97,17 @@ try {
         await frame.locator(".graph-inspector .github-report").waitFor();
         if (item.inspect) await frame.locator(".graph-inspector .github-report").evaluate(element => element.scrollIntoView({ block: "center" }));
       }
-      if (item.params.proposal) await frame.locator('[aria-label="Review graph change"]').scrollIntoViewIfNeeded();
+      if (item.params.proposal === "applied") {
+        await frame.locator(".plan-updated").waitFor();
+        const visible = await frame.locator("main").evaluate(element => { const copy = element.cloneNode(true); copy.querySelector("#evidence-audit")?.remove(); return copy.textContent ?? ""; });
+        assert(!/75d01e55|revision \d|Base revision/i.test(visible), "The applied-change note exposed an ID or revision");
+      } else if (item.params.proposal) await frame.locator('[aria-label="Review graph change"]').scrollIntoViewIfNeeded();
+      if (item.edit) {
+        const toggle = frame.locator(`#edit-toggle-${item.params.node}`);
+        await toggle.click();
+        await frame.locator(`#edit-${item.params.node}:not([hidden])`).waitFor();
+        await frame.locator(".graph-inspector .inspector-actions").evaluate(element => { element.scrollIntoView({ block: "start" }); window.scrollBy(0, -(document.querySelector(".appbar")?.getBoundingClientRect().height ?? 0) - 8); });
+      }
       if (item.params.font) assert(await frame.locator(".graph-inspector .route-list dd").first().evaluate(element => parseFloat(getComputedStyle(element).fontSize)) >= 18, "Host font size was ignored");
       const host = await page.evaluate(() => ({ calls: window.lunaDogfoodHost.calls, messages: window.lunaDogfoodHost.messages.length }));
       assert(host.calls.every(name => readOnlyTools.includes(name)), "Visual capture attempted mutation or execution");

@@ -1,5 +1,5 @@
 import type { ViewState } from "./controller";
-import { providerLabel, type FactoryGraph, type GraphChange, type RunView } from "./domain";
+import { parentProvenanceLabel, providerLabel, type FactoryGraph, type GraphChange, type RunView } from "./domain";
 import { roster, livenessLabel, type Agent } from "./agents";
 import { canvasSize, edgePath, fitGeometry, layoutWaves, nodePosition, type MapGeometry, type MapNode, type WaveLayout } from "./campaign-map";
 import { coordinatorToken, icon, taskGlyph, taskTone, taskToneLabel, workerToken } from "./lunar";
@@ -30,21 +30,23 @@ export function renderMission(state: ViewState, run: RunView, followUps: (task?:
   const layout = layoutWaves(tasks);
   const lanes = state.viewMode === "lanes";
   const loading = !graph && state.graphLoading;
-  const caption = graph ? (graph.planning_only ? "Planned tasks · execution has not started" : "Persisted tasks and attempt history") : run.control ? "Tasks from the run ledger" : "Task detail unavailable";
   const met = layout.prerequisitesMet.size;
+  const planned = graph?.planning_only === true;
+  const caption = tasks.length
+    ? [`${tasks.length} ${planned ? "planned " : ""}${tasks.length === 1 ? "task" : "tasks"}`, met ? `${met} ready to start` : "", layout.remainingChain.length > 1 ? `longest path ${layout.remainingChain.length} tasks` : ""].filter(Boolean).join(" · ")
+    : graph || run.control ? "No tasks yet" : "Task detail unavailable";
   return `<section class="mission" aria-label="Campaign">
     <div class="mission-main">
-      <div class="viewbar">
+    <div class="viewbar">
         <div class="segmented" role="group" aria-label="View">
           <button type="button" id="view-map" data-action="view-mode" data-mode="map" aria-pressed="${!lanes}">${icon("map")}Map</button>
           <button type="button" id="view-lanes" data-action="view-mode" data-mode="lanes" aria-pressed="${lanes}">${icon("lanes")}Lanes</button>
         </div>
-        <p class="viewbar-caption">${esc(caption)}${tasks.length ? ` · ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"}${met ? ` · ${met} with prerequisites met` : ""}${layout.remainingChain.length ? ` · longest remaining chain ${layout.remainingChain.length}` : ""}` : ""}</p>
-        <button class="button quiet small" type="button" id="action-graph" data-action="graph"${disabled(!state.connected || !!state.pending || state.graphLoading)}>${icon("refresh")}${state.graphLoading ? "Reading…" : graph ? "Refresh plan" : "Read plan"}</button>
+        <p class="viewbar-caption">${esc(caption)}</p>
       </div>
-      ${state.graphStale ? '<div class="notice error" role="status">This plan may be stale. Its last valid view is kept; refresh before changing it.</div>' : ""}
+      ${state.graphStale ? '<div class="notice error" role="status">This plan may be out of date. Refresh it before making changes.</div>' : ""}
       ${renderCrew(agents, state, run)}
-      ${lanes ? renderLanes(run, agents, state) : loading ? '<div class="canvas-empty" role="status">Reading the plan…</div>' : tasks.length ? renderMap(tasks, layout, agents, state, fitGeometry(layout.waves.length, canvasWidth)) : '<div class="canvas-empty"><h3>No tasks yet</h3><p>Ask ChatGPT to import tasks into this plan. Changes are proposed first and applied only after you confirm.</p></div>'}
+      ${lanes ? renderLanes(run, agents, state) : loading ? '<div class="canvas-empty" role="status">Reading the plan…</div>' : tasks.length ? renderMap(tasks, layout, agents, state, fitGeometry(layout.waves.length, canvasWidth)) : '<div class="canvas-empty"><h3>No tasks yet</h3><p>Ask ChatGPT to add tasks to this plan. You review every change before it applies.</p></div>'}
     </div>
     ${renderInspector(state, run, tasks, graph, layout, agents, followUps)}
   </section>`;
@@ -52,7 +54,7 @@ export function renderMission(state: ViewState, run: RunView, followUps: (task?:
 
 function renderCrew(agents: Agent[], state: ViewState, run: RunView): string {
   if (!agents.length) {
-    const why = run.planning_only ? "No agents yet. Execution hasn't started on this plan." : "The server reports no agent identities for this run.";
+    const why = run.planning_only ? "No agents yet." : "No agents are reported for this run.";
     return `<div class="crew empty" aria-label="Agents">${orbit([])}<p>${esc(why)}</p></div>`;
   }
   return `<div class="crew" aria-label="Agents">${orbit(agents)}<ul class="crew-list">${agents.map(agent => `<li><button type="button" class="crew-agent${state.selectedAgent === agent.thread ? " selected" : ""}" id="agent-${esc(agent.ordinal)}" data-action="select-agent" data-thread-id="${esc(agent.thread)}" aria-pressed="${state.selectedAgent === agent.thread}">${agentToken(agent, 22)}<span><strong>${esc(agent.label)}</strong><small>${agent.role === "coordinator" ? "Coordinator" : "Worker"} · ${esc(livenessLabel[agent.liveness])}${agent.taskId ? ` · ${esc(clip(taskTitle(state, run, agent.taskId), 36))}` : ""}</small></span></button></li>`).join("")}</ul></div>`;
@@ -79,7 +81,6 @@ function renderMap(tasks: MapTask[], layout: WaveLayout, agents: Agent[], state:
   const byId = new Map(tasks.map(task => [task.id, task]));
   const chain = new Set(layout.remainingChain);
   const selected = state.selectedNodeId;
-  const neighbors = new Set<string>(selected ? [selected, ...(byId.get(selected)?.dependencies ?? []), ...(layout.dependents.get(selected) ?? [])] : []);
   const edges = tasks.flatMap(task => task.dependencies.filter(id => byId.has(id)).map(id => {
     const from = nodePosition(layout, id, g); const to = nodePosition(layout, task.id, g);
     if (!from || !to) return "";
@@ -90,7 +91,7 @@ function renderMap(tasks: MapTask[], layout: WaveLayout, agents: Agent[], state:
   })).join("");
   const waves = layout.waves.map((wave, index) => {
     const done = wave.filter(id => taskTone(byId.get(id)?.state ?? "") === "done").length;
-    return `<li class="wave${done === wave.length ? " settled" : ""}" style="--wave-x:${g.padX + index * (g.nodeWidth + g.columnGap)}px"><h3 class="wave-label">Wave ${index + 1}<span>${wave.length} ${wave.length === 1 ? "task" : "tasks"}${done ? ` · ${done} done` : ""}</span></h3><ol class="wave-nodes">${wave.map(id => {
+    return `<li class="wave${done === wave.length ? " settled" : ""}" style="--wave-x:${g.padX + index * (g.nodeWidth + g.columnGap)}px"><h3 class="wave-label">Step ${index + 1}<span>${wave.length} ${wave.length === 1 ? "task" : "tasks"}${done ? ` · ${done} done` : ""}</span></h3><ol class="wave-nodes">${wave.map(id => {
       const task = byId.get(id)!;
       const position = nodePosition(layout, id, g)!;
       const tone = taskTone(task.state);
@@ -100,9 +101,9 @@ function renderMap(tasks: MapTask[], layout: WaveLayout, agents: Agent[], state:
       const owner = agents.find(agent => agent.thread === task.owner_thread);
       const prerequisites = task.dependencies.map(dependency => byId.get(dependency)?.title ?? dependency);
       const missing = layout.missing.get(id)?.length ?? 0;
-      return `<li><button type="button" id="node-${esc(id)}" class="map-node tone-${tone}${changed ? " changed" : ""}${id === selected ? " selected" : ""}${chain.has(id) ? " chain" : ""}${layout.prerequisitesMet.has(id) ? " met" : ""}${selected && !neighbors.has(id) ? " dim" : ""}" style="--x:${position.x}px;--y:${position.y + 24}px" data-action="graph-node" data-node-id="${esc(id)}" aria-pressed="${id === selected}" aria-describedby="node-state-${esc(id)}">
+      return `<li><button type="button" id="node-${esc(id)}" class="map-node tone-${tone}${changed ? " changed" : ""}${id === selected ? " selected" : ""}${chain.has(id) ? " chain" : ""}${layout.prerequisitesMet.has(id) ? " met" : ""}" style="--x:${position.x}px;--y:${position.y + 24}px" data-action="graph-node" data-node-id="${esc(id)}" aria-pressed="${id === selected}" aria-describedby="node-state-${esc(id)}">
         <span class="node-top">${taskGlyph(tone)}<span class="node-title">${esc(task.title || id)}</span></span>
-        <span class="node-meta" id="node-state-${esc(id)}">${id === "objective" ? "Objective · " : ""}${task.source && sourceNumber(task.source) ? `<span class="node-ref">${esc(sourceNumber(task.source)!)}</span> · ` : ""}${esc(taskToneLabel[tone])}${missing ? ` · ${missing} unknown prerequisite${missing === 1 ? "" : "s"}` : ""}</span>
+        <span class="node-meta" id="node-state-${esc(id)}">${task.source && sourceNumber(task.source) ? `<span class="node-ref">${esc(sourceNumber(task.source)!)}</span> · ` : ""}${esc(taskToneLabel[tone])}${missing ? ` · ${missing} missing prerequisite${missing === 1 ? "" : "s"}` : ""}</span>
         ${deliveryChip(state, state.selectedId ?? undefined, id)}
         <span class="node-after">${prerequisites.length ? `After ${esc(prerequisites.join(", "))}` : "No prerequisites"}</span>
         ${owner ? `<span class="dock" title="${esc(owner.label)} · ${esc(livenessLabel[owner.liveness])}">${agentToken(owner, 20)}<span class="sr-only">Owned by ${esc(owner.label)}</span></span>` : ""}
@@ -112,7 +113,7 @@ function renderMap(tasks: MapTask[], layout: WaveLayout, agents: Agent[], state:
   return `<div class="map-scroll"><div class="map-canvas" style="--map-w:${size.width}px;--map-h:${size.height + 24}px;--node-w:${g.nodeWidth}px">
     <svg class="map-edges" width="${size.width}" height="${size.height + 24}" viewBox="0 0 ${size.width} ${size.height + 24}" aria-hidden="true" focusable="false">${edges}</svg>
     <ol class="map-waves" aria-label="Tasks by wave">${waves}</ol>
-  </div></div>${layout.cyclic ? '<p class="notice">The server reported a dependency loop. Waves are approximate until it is resolved.</p>' : ""}`;
+  </div></div>${layout.cyclic ? '<p class="notice">Some tasks wait on each other in a loop, so the waves are approximate.</p>' : ""}`;
 }
 
 type Source = NonNullable<MapTask["source"]>;
@@ -144,50 +145,63 @@ function renderInspector(state: ViewState, run: RunView, tasks: MapTask[], graph
   const criteria = graph?.criteria ?? run.control?.criteria ?? [];
   const attempts = graph?.attempts ?? run.control?.attempts ?? [];
   const attributed = agent ? run.receipts.filter(receipt => receiptAgent(receipt, agents) === agent).length : 0;
-  const agentSection = agent ? `<section class="inspector-agent" aria-label="Selected agent">${agentToken(agent, 30)}<div><div class="eyebrow">${agent.role === "coordinator" ? "Coordinator" : "Worker"}</div><h3>${esc(agent.label)}</h3><p>${esc(livenessLabel[agent.liveness])}${agent.taskId ? ` · owns ${esc(byId.get(agent.taskId)?.title ?? agent.taskId)}` : " · no task binding reported"}</p><p class="small muted">${attempts.filter(attempt => attempt.thread_id === agent.thread).length} recorded attempts. ${attributed ? `${attributed} retained ${attributed === 1 ? "receipt" : "receipts"} recorded on this agent's thread.` : "No retained receipts are attributed to this agent."} ${esc(timelineNote(state, agent.thread))}</p></div></section>` : "";
+  const agentAttempts = agent ? attempts.filter(attempt => attempt.thread_id === agent.thread).length : 0;
+  const agentSection = agent ? `<section class="inspector-agent" aria-label="Selected agent">${agentToken(agent, 30)}<div><div class="eyebrow">${agent.role === "coordinator" ? "Coordinator" : "Worker"}</div><h3>${esc(agent.label)}</h3><p>${esc(livenessLabel[agent.liveness])}${agent.taskId ? ` · working on ${esc(byId.get(agent.taskId)?.title ?? agent.taskId)}` : ""}</p><p class="small muted">${esc(`${attributed} ${attributed === 1 ? "receipt" : "receipts"} · ${agentAttempts} ${agentAttempts === 1 ? "attempt" : "attempts"}.`)} ${esc(timelineNote(state, agent.thread))}</p></div></section>` : "";
   const blocker = blockerCopy(run);
-  if (!selected) return `<aside class="graph-inspector inspector" aria-label="Selected task inspector">${agentSection}<p class="muted">Select a task to see why it's in its wave, what it unblocks, and its proof.</p>${followUps()}</aside>`;
+  if (!selected) return `<aside class="graph-inspector inspector" aria-label="Selected task inspector">${agentSection}<p class="muted inspector-empty">Select a task to see what it waits on, what it unblocks, and when it's done.</p>${followUps()}</aside>`;
   const tone = taskTone(selected.state);
   const owner = agents.find(item => item.thread === selected.owner_thread);
   const wave = (layout.depth.get(selected.id) ?? 0) + 1;
   const unblocks = layout.dependents.get(selected.id) ?? [];
   const list = (ids: string[], empty: string) => ids.length ? `<ul class="task-list">${ids.map(id => { const task = byId.get(id); return `<li>${taskGlyph(taskTone(task?.state ?? ""), 14)}<span>${esc(task?.title ?? id)}<small>${esc(taskToneLabel[taskTone(task?.state ?? "")])}</small></span></li>`; }).join("")}</ul>` : `<p class="small muted">${empty}</p>`;
-  const proof = selected.criterion_ids.map(id => { const criterion = criteria.find(item => item.id === id); return `<li class="proof-${esc(criterion?.status ?? "unverified")}"><strong>${esc(criterion ? criterion.status === "unproved" ? "Evidence pending" : criterion.status === "proven" ? "Proven" : "Failed" : "Unverified")}</strong><span>${esc(criterion?.description ?? id)}</span>${criterion?.check_refs.length ? `<small>Checks: ${criterion.check_refs.map(esc).join(", ")}</small>` : ""}</li>`; }).join("");
+  const proof = selected.criterion_ids.map(id => { const criterion = criteria.find(item => item.id === id); return `<li class="proof-${esc(criterion?.status ?? "unverified")}"><span>${esc(criterion?.description ?? "This check was not described")}</span><strong>${esc(criterion ? criterion.status === "unproved" ? "Not done yet" : criterion.status === "proven" ? "Done" : "Needs attention" : "Not checked")}</strong>${criterion?.check_refs.length ? `<small>Checks: ${criterion.check_refs.map(esc).join(", ")}</small>` : ""}</li>`; }).join("");
   const taskAttempts = attempts.filter(attempt => attempt.task_id === selected.id);
   const graphNode = graph?.nodes.find(node => node.id === selected.id);
+  const reason = reasonText(selected.reason);
+  // An owner row only appears once there is something to say about one.
+  const ownerRow = owner ? `${esc(owner.label)} · ${esc(livenessLabel[owner.liveness])}` : selected.owner_thread ? "An agent the server no longer lists" : tone === "candidate" ? "" : "No agent assigned";
   return `<aside class="graph-inspector inspector" aria-label="Selected task inspector">
     ${agentSection}
-    <div class="eyebrow">Task · wave ${wave}${selected.source ? ` · ${esc(sourceLabel(selected.source))}${sourceNumber(selected.source) ? ` ${esc(sourceNumber(selected.source)!)}` : ""}` : ""}</div>
+    <div class="eyebrow">Step ${wave}${selected.source ? ` · ${esc(sourceLabel(selected.source))}${sourceNumber(selected.source) ? ` ${esc(sourceNumber(selected.source)!)}` : ""}` : ""}</div>
     <h3>${esc(selected.title || selected.id)}</h3>
-    <p class="inspector-state">${taskGlyph(tone)}<span>${esc(taskToneLabel[tone])}${selected.admission ? ` · admission ${esc(selected.admission.toLowerCase())}` : ""}</span></p>
-    <dl class="route-list"><dt>Owner</dt><dd>${owner ? `${esc(owner.label)} · ${esc(livenessLabel[owner.liveness])}` : selected.owner_thread ? "An agent the server no longer lists" : "No agent assigned"}</dd><dt>Reason</dt><dd>${esc(reasonText(selected.reason))}</dd>${blocker ? `<dt>Run blocker</dt><dd class="blocker-kind">${esc(blocker)}</dd>` : ""}${selected.source ? `<dt>Source</dt><dd>${sourceReference(selected.source)}<small class="mono">${esc(selected.source.item_id)}</small></dd>` : ""}${"target_preference" in selected ? `<dt>Planning note</dt><dd>${esc(selected.target_preference ?? "No target preference")}</dd>` : ""}</dl>
-    <h4>Waits on</h4>${list(selected.dependencies, "No prerequisites.")}
-    <h4>Unblocks</h4>${list(unblocks, "Nothing in this plan waits on it.")}
-    <h4>Proof</h4>${proof ? `<ul class="graph-proof">${proof}</ul>` : '<p class="small muted">No criterion bindings.</p>'}
+    <dl class="route-list"><dt>Status</dt><dd class="inspector-state">${taskGlyph(tone)}<span>${esc(taskToneLabel[tone])}</span></dd>${blocker ? `<dt>Blocked by</dt><dd class="blocker-kind">${esc(blocker)}</dd>` : ""}${ownerRow ? `<dt>Owner</dt><dd>${ownerRow}</dd>` : ""}${reason ? `<dt>Note</dt><dd>${esc(reason)}</dd>` : ""}${selected.source ? `<dt>Source</dt><dd>${sourceReference(selected.source)}</dd>` : ""}</dl>
+    ${campaignParentNote(state, run)}
+    <h4>What it waits on</h4>${list(selected.dependencies, "Nothing.")}
+    <h4>What it unblocks</h4>${list(unblocks, "Nothing else in this plan waits on it.")}
+    <h4>Done when</h4>${proof ? `<ul class="graph-proof">${proof}</ul>` : '<p class="small muted">No completion check is linked to this task.</p>'}
     ${selected.source?.provider === "github" ? deliverySection(state, run.id, selected.id) : ""}
-    ${followUps({ id: selected.id, title: selected.title })}
     ${taskAttempts.length ? `<h4>Attempts</h4><ul class="attempt-list">${taskAttempts.map(attempt => `<li><strong>${esc(attempt.status.replaceAll("_", " "))}</strong><span>${esc(agents.find(item => item.thread === attempt.thread_id)?.label ?? "Unlisted agent")}</span></li>`).join("")}</ul>` : ""}
+    <div class="inspector-actions">${followUps({ id: selected.id, title: selected.title })}${graphNode ? `<button type="button" class="button small edit-toggle" id="edit-toggle-${esc(selected.id)}" data-action="toggle-disclosure" aria-controls="edit-${esc(selected.id)}" aria-expanded="false">Edit</button>` : ""}</div>
     ${graphNode ? renderPlanEditor(state, graph!, graphNode) : ""}
   </aside>`;
 }
 
+function campaignParentNote(state: ViewState, run: RunView): string {
+  const campaign = state.campaigns?.find(item => item.planning_run_id === run.id || item.run_ids.includes(run.id));
+  return campaign ? `<p class="inspector-note small muted">Parent issue ${esc(providerLabel(campaign.parent.forge.provider))} ${esc(campaign.parent.forge.repository)}#${campaign.parent.forge.number} · ${esc(parentProvenanceLabel(campaign))}</p>` : "";
+}
+
 const reasons: Record<string, string> = {
-  planning_candidate_no_authority: "Planned. No execution authority has been granted.", evidence_missing: "Evidence has not been collected.",
+  evidence_missing: "Evidence has not been collected.",
 };
+/** Plain reason, or nothing. "Planned with no authority" is already said by the status and the not-running line. */
 function reasonText(reason: string | null): string {
-  if (!reason) return "No blocker reported";
-  return reasons[reason] ?? (/^[a-z_]+$/.test(reason) ? "Reported by the server; see Evidence and audit." : reason);
+  if (!reason || reason === "planning_candidate_no_authority") return "";
+  return reasons[reason] ?? (/^[a-z_]+$/.test(reason) ? "" : reason);
 }
 
 function renderPlanEditor(state: ViewState, graph: FactoryGraph, selected: FactoryGraph["nodes"][number]): string {
   const locked = !state.connected || !!state.pending || state.graphStale || state.graphLoading || !graph.planning_only && (graph.claim.held || graph.claim.status !== "released");
   const nodeLocked = locked || selected.admission !== "candidate" || !!selected.owner_thread || !!selected.attempt_ids.length;
   const eligible = state.backends?.targets.filter(target => target.operator_enabled && target.planning_eligible && target.qualification !== "unsupported") ?? [];
-  return `<details id="edit-${esc(selected.id)}" class="planning-editor"><summary>Edit this planned task</summary><p class="field-hint">Selecting a task only inspects it. Saving records a proposal for review. Only a confirmed application changes the plan, and no work is dispatched.</p><form data-form="graph-node" data-input-identity="${esc(graph.run_id)}:${esc(selected.id)}:${graph.revision}">
-      ${nodeLocked && !locked ? '<p class="field-hint">Only planned tasks with no execution history can be edited.</p>' : ""}
-      <div class="field"><label for="dependencies">Prerequisite tasks</label><select id="dependencies" name="dependencies" multiple size="${Math.min(5, Math.max(2, graph.nodes.length - 1))}"${disabled(nodeLocked)}>${graph.nodes.filter(node => node.id !== selected.id).map(node => `<option value="${esc(node.id)}"${selected.dependencies.includes(node.id) ? " selected" : ""}>${esc(node.title)}</option>`).join("")}</select><p class="field-hint">Choose the tasks that must finish first. ${selected.dependencies.length ? "Clearing all selections proposes removal of existing prerequisites." : "There are no prerequisites yet. Empty selection leaves the plan unchanged."} The server rejects cycles.</p></div><button class="button" type="submit" value="dependencies"${disabled(nodeLocked)}>Save prerequisite proposal</button>
-      <details id="target-${esc(selected.id)}" class="target-editor"><summary>Optional planning target note</summary><div class="field target-field"><label for="target_id">Planning target note</label><select id="target_id" name="target_id"${disabled(nodeLocked || !eligible.length)}>${targetOptions(selected.target_preference ?? null, eligible)}</select><p class="field-hint">A planning preference does not authorize execution or verify subscription access.</p></div><button class="button" type="submit" value="target"${disabled(nodeLocked || !eligible.length)}>Save planning note proposal</button></details>
-    </form></details>`;
+  return `<div id="edit-${esc(selected.id)}" class="planning-editor" data-disclosure hidden><form data-form="graph-node" data-input-identity="${esc(graph.run_id)}:${esc(selected.id)}:${graph.revision}">
+      ${nodeLocked && !locked ? '<p class="field-hint">Only planned tasks that have never run can be edited.</p>' : ""}
+      <fieldset class="field dependency-field" id="dependencies"${disabled(nodeLocked)}><legend>Waits on</legend><div class="check-options">${graph.nodes.filter(node => node.id !== selected.id).map(node => `<label class="check-option"><input type="checkbox" name="dependencies" value="${esc(node.id)}"${selected.dependencies.includes(node.id) ? " checked" : ""}><span>${esc(node.title)}</span></label>`).join("")}</div><p class="field-hint">Tasks that must finish first. ${selected.dependencies.length ? "Clear every box to remove them." : ""} Loops are rejected.</p></fieldset>
+      <div class="editor-row"><button class="button small" type="submit" value="dependencies"${disabled(nodeLocked)}>Propose this order</button></div>
+      <div class="field target-field"><label for="target_id">Preferred target</label><select id="target_id" name="target_id"${disabled(nodeLocked || !eligible.length)}>${targetOptions(selected.target_preference ?? null, eligible)}</select><p class="field-hint">A planning preference does not authorize execution or verify subscription access.</p></div>
+      <div class="editor-row"><button class="button small" type="submit" value="target"${disabled(nodeLocked || !eligible.length)}>Propose this target</button></div>
+      <p class="field-hint">You review each proposal before the plan changes. Nothing runs.</p>
+    </form></div>`;
 }
 
 /**
@@ -199,15 +213,20 @@ export function targetOptions(current: string | null, eligible: Array<{ id: stri
   const placeholder = current === null
     ? '<option value="" selected disabled>No preference</option>'
     : eligible.some(target => target.id === current) ? "" : `<option value="${esc(current)}" selected disabled>${esc(current)} · current note</option>`;
-  return placeholder + (offered || '<option value="" disabled>Read targets with Refresh plan</option>');
+  return placeholder + (offered || '<option value="" disabled>Targets appear after you refresh the plan</option>');
 }
 
-/** Proposal review stays prominent: nothing applies without an exact, confirmed revision. */
+/**
+ * A proposed change stays prominent: nothing applies without an explicit, revision-fenced confirmation.
+ * An applied change is only a quiet "Plan updated" note that the user can dismiss and that clears on the next read.
+ */
 export function renderProposalReview(state: ViewState): string {
   const { graph, proposal } = state;
   if (!graph || !proposal) return "";
+  if (proposal.status === "applied") return `<div class="plan-updated" role="status" aria-label="Plan updated">${taskGlyph("done", 14)}<strong>Plan updated</strong><span>${esc(changeDescription(proposal.change, graph, state, true))}</span><button type="button" class="link-button" id="dismiss-plan-updated" data-action="dismiss-change">Dismiss</button></div>`;
   const locked = !state.connected || !!state.pending || state.graphStale || state.graphLoading || !graph.planning_only && (graph.claim.held || graph.claim.status !== "released");
-  return `<section class="graph-review" aria-label="Review graph change"><div class="eyebrow">${proposal.status === "applied" ? "Applied plan change" : "Review before applying"}</div><h3>${esc(changeTitle(proposal.change))}</h3><p>${esc(changeDescription(proposal.change, graph))}</p>${proposal.status === "proposed" ? `<label class="change-confirmation"><input id="confirm-graph-change" type="checkbox" data-confirm-identity="${esc(proposal.id)}:${graph.revision}"${disabled(locked || proposal.base_revision + 1 !== graph.revision)}> I confirm this exact plan change at revision ${graph.revision}.</label><div class="review-actions"><button id="apply-graph-change" class="button primary" type="button" data-action="apply-change" disabled>Apply confirmed plan change</button><span class="small muted">Records this change to the plan. No work is dispatched.</span></div>` : `<p class="small">Applied at revision ${proposal.applied_revision ?? "unknown"}.</p>`}<p class="small muted">Base revision ${proposal.base_revision} · change ${esc(proposal.id)}</p></section>`;
+  const current = proposal.base_revision + 1 === graph.revision;
+  return `<section class="graph-review" aria-label="Review graph change"><div class="eyebrow">Review before applying</div><h3>${esc(changeTitle(proposal.change))}</h3><p>${esc(changeDescription(proposal.change, graph, state))}</p>${current ? "" : '<p class="small">The plan changed after this was proposed. Refresh and propose it again.</p>'}<label class="change-confirmation"><input id="confirm-graph-change" type="checkbox" data-confirm-identity="${esc(proposal.id)}:${graph.revision}"${disabled(locked || !current)}> I confirm this plan change.</label><div class="review-actions"><button id="apply-graph-change" class="button primary" type="button" data-action="apply-change" disabled>Apply change</button><span class="small muted">Updates the plan only. Nothing runs.</span></div></section>`;
 }
 
 export function renderTargets(state: ViewState): string {
@@ -215,18 +234,21 @@ export function renderTargets(state: ViewState): string {
 }
 
 function changeTitle(change: GraphChange): string {
-  return change.kind === "set_target" ? "Change execution preference" : change.kind === "set_dependencies" ? "Change prerequisite tasks" : "Import candidate tasks";
+  return change.kind === "set_target" ? "Change the preferred target" : change.kind === "set_dependencies" ? "Change what a task waits on" : "Add tasks to the plan";
 }
-function changeDescription(change: GraphChange, graph: FactoryGraph): string {
-  if (change.kind === "set_target") return `${change.node_id}: prefer ${change.target_id}.`;
-  if (change.kind === "set_dependencies") return `${change.node_id}: current prerequisites ${graph.nodes.find(node => node.id === change.node_id)?.dependencies.join(", ") || "none"}; proposed prerequisites ${change.dependencies.join(", ") || "none"}.`;
-  return `${change.nodes.length} candidates: ${change.nodes.map(node => node.title).join(", ")}.`;
+/** Task titles and target labels, never node or target identifiers. */
+function changeDescription(change: GraphChange, graph: FactoryGraph, state: ViewState, applied = false): string {
+  const title = (id: string) => graph.nodes.find(node => node.id === id)?.title || "a task";
+  const titles = (ids: string[]) => ids.length ? ids.map(title).join(", ") : "nothing";
+  if (change.kind === "set_target") return `${title(change.node_id)} prefers ${state.backends?.targets.find(target => target.id === change.target_id)?.label ?? "the chosen target"}.`;
+  if (change.kind === "set_dependencies") return `${title(change.node_id)} waits on ${titles(change.dependencies)}${!applied && graph.nodes.find(node => node.id === change.node_id)?.dependencies.length ? ` instead of ${titles(graph.nodes.find(node => node.id === change.node_id)!.dependencies)}` : ""}.`;
+  return `${change.nodes.length} ${change.nodes.length === 1 ? "task" : "tasks"}: ${change.nodes.map(node => node.title).join(", ")}.`;
 }
 /** Where this agent's activity can be seen. Observations are never attempts or proof. */
 function timelineNote(state: ViewState, thread: string): string {
   const capability = state.capabilities?.agent_timeline;
-  if (!capability) return "A per-agent timeline isn't available from this server yet.";
+  if (!capability) return "";
   if (!capability.enabled) return capability.detail;
   const view = state.timelineRunId === state.selectedId ? state.timelines[thread] : undefined;
-  return view?.status === "observed" ? `Lanes shows ${view.events.length} events observed in Codex. They are not Factory proof.` : "Open Lanes to read what Codex observed for this agent.";
+  return view?.status === "observed" ? `Lanes shows ${view.events.length} ${view.events.length === 1 ? "event" : "events"} observed in Codex (not Factory proof).` : "Open Lanes to see what Codex observed.";
 }

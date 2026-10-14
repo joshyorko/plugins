@@ -43,7 +43,7 @@ function observation(run: RunView, agent: Agent, index: number, state: ViewState
 export function renderLanes(run: RunView, agents: Agent[], state: ViewState, now = Date.now() / 1000): string {
   const receipts = [...run.receipts].sort((a, b) => a.created_at - b.created_at);
   if (!receipts.length && !agents.length) {
-    return `<section class="lanes empty" aria-label="Agent lanes"><h3>No activity recorded yet</h3><p>${run.planning_only ? "Execution hasn't started on this plan, so there is nothing to replay." : "This run has no retained receipts and no reported agents."}</p></section>`;
+    return `<section class="lanes empty" aria-label="Agent lanes"><h3>No activity recorded yet</h3><p>${run.planning_only ? "No work has been recorded for this plan yet." : "This run has no retained receipts and no reported agents."}</p></section>`;
   }
   // Same order as the controller's roster, so the read bound matches what is shown.
   const observations = agents.map((agent, index) => ({ agent, observed: observation(run, agent, index, state) }));
@@ -84,19 +84,19 @@ export function renderLanes(run: RunView, agents: Agent[], state: ViewState, now
   const chosen = observations.find(({ agent }) => agent.thread === state.selectedAgent);
   const observing = state.capabilities?.agent_timeline?.enabled === true;
   const notes = [
-    attribution ? "Agent lanes show receipts the server recorded on that agent's thread; the rest stay on Run receipts." : "",
-    observing ? "Agent ticks observed in Codex are not Factory proof and never change attention or the map." : "",
+    attribution ? "Each receipt sits on the agent that recorded it; the rest stay under Run receipts." : "",
+    observing ? "Ticks observed in Codex are not Factory proof and never change the plan." : "",
   ].filter(Boolean);
   return `<section class="lanes" aria-label="Agent lanes">
     ${observing ? `<p class="lanes-legend small muted" aria-hidden="true"><span class="legend-receipt"></span>Factory receipt<span class="legend-observed"></span>${OBSERVED}</p>` : ""}
     <div class="lanes-axis" aria-hidden="true"><span>${esc(clock(start, now))}</span><span>${live ? "now " : "last event "}${esc(clock(end, now))}</span></div>
     <ol class="lane-list">
-      <li class="lane run-lane"><div class="lane-label static"><span class="run-dot" aria-hidden="true"></span><span><strong>Run receipts</strong><small>No listed agent</small></span></div><div class="lane-track">${ticks || `<span class="track-note">${receipts.length ? "Every retained receipt is on an agent lane" : "No receipts retained"}</span>`}${nowLine}</div></li>
+      <li class="lane run-lane"><div class="lane-label static"><span class="run-dot" aria-hidden="true"></span><span><strong>Run receipts</strong><small>Not tied to an agent</small></span></div><div class="lane-track">${ticks || `<span class="track-note">${receipts.length ? "Every receipt is on an agent lane" : "No receipts yet"}</span>`}${nowLine}</div></li>
       ${agentRows}
     </ol>
     ${chosen && "timeline" in chosen.observed ? renderObserved(chosen.agent, chosen.observed.timeline, agents, now) : ""}
     ${receipts.length ? `<ol class="lane-events" aria-label="Recorded events, newest first">${[...receipts].reverse().map(receipt => { const agent = receiptAgent(receipt, agents); return `<li><time datetime="${new Date(receipt.created_at * 1000).toISOString()}">${esc(clock(receipt.created_at, now))}</time><strong>${esc(kindLabel(receipt.kind))}${agent ? ` <small class="lane-agent">${esc(agent.label)}</small>` : ""}</strong><span>${esc(receipt.summary)}</span></li>`; }).join("")}</ol>` : ""}
-    <p class="lanes-note small muted">Showing the latest ${receipts.length} retained receipts. ${notes.length ? notes.join(" ") : "Agent lanes fill in when the server reports receipt attribution."}</p>
+    <p class="lanes-note small muted">Latest ${receipts.length} ${receipts.length === 1 ? "receipt" : "receipts"}. ${notes.length ? notes.join(" ") : "Agent lanes fill in once the server says which agent recorded each receipt."}</p>
   </section>`;
 }
 

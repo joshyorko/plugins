@@ -108,7 +108,7 @@ describe("receipt attribution in Lanes", () => {
     expect(lanes.map(lane => lane.querySelector("strong")?.textContent)).toEqual(["Run receipts", "Luna", "Worker 1", "Worker 2"]);
     expect([ticks(0), ticks(1), ticks(2), ticks(3)]).toEqual([1, 2, 2, 0]);
     expect(lanes[3]?.querySelector(".lane-track.unavailable")?.textContent).toBe("No receipts attributed to this agent");
-    expect(root.textContent).toContain("recorded on that agent's thread");
+    expect(root.textContent).toContain("sits on the agent that recorded it");
   });
   it("keeps receipts naming an unlisted thread unattributed and older servers on the run lane", () => {
     const run = fixtureSwarmRun();

@@ -38,6 +38,8 @@ else {
 }
 const focusNode = params.get("node") ?? "task-b";
 if (params.get("proposal") === "1") graph.proposal = { id: "fixture-change", base_revision: graph.graph.revision - 1, actor: "local_operator", idempotency_key: "fixture-key", fingerprint: "fixture-hash", subject: run.current_subject, status: "proposed", applied_revision: null, change: { kind: "set_dependencies", node_id: "task-b", dependencies: [] } };
+// The shape a ChatGPT-applied change returns: a UUID change id and revision numbers that must never reach the main view.
+if (params.get("proposal") === "applied") graph.proposal = { id: "75d01e55-9b57-450c-a0af-65afadca112c", base_revision: graph.graph.revision - 1, actor: "local_operator", idempotency_key: "fixture-applied-key", fingerprint: "fixture-hash", subject: run.current_subject, status: "applied", applied_revision: graph.graph.revision, change: { kind: "set_target", node_id: focusNode, target_id: "native-local" } };
 const homeRuns = scenario === "home" ? [decisionRun(), fixtureSwarmRun(), campaign.run, fixtureRun({ id: "friday-41", repository: "friday", objective: "Tighten the nightly handoff", state: "CONVERGED", active_workers: 0, claim_held: false, blocker: null, remaining_gap: null, delta: "Owner accepted the current subject.", updated_at: 1791130000 }), blockedRun()] : [run];
 // Only the synthetic swarm advertises the app-only timeline read; its results are fixtures too.
 const timelines = scenario === "swarm" ? fixtureTimelines(run.id) : {};

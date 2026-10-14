@@ -48,6 +48,8 @@ export class WorkbenchController {
   private selectionEpoch = 0;
   private contextRestoreEpoch: number | null = null;
   private changeRetry: { fingerprint: string; key: string } | null = null;
+  /** Applied changes whose "Plan updated" note the user dismissed. Display state only. */
+  private readonly dismissedChanges = new Set<string>();
   private readonly detailsLoaded = new Set<string>();
   private timelineVersion = 0;
   private timelineLoading = false;
@@ -417,7 +419,9 @@ export class WorkbenchController {
     const minimum = Math.max(this.state.graph?.revision ?? 0, this.selected?.control?.revision ?? 0);
     if (graph.revision < minimum) throw new Error("A stale graph revision was returned; your newer view is preserved.");
     this.state.graph = graph; this.state.graphStale = false;
-    this.state.proposal = envelope.proposal ?? [...graph.changes].reverse().find(change => change.status === "proposed" && change.base_revision + 1 === graph.revision) ?? null;
+    const next = envelope.proposal ?? [...graph.changes].reverse().find(change => change.status === "proposed" && change.base_revision + 1 === graph.revision) ?? null;
+    // A dismissed "Plan updated" note stays dismissed when later reads return the same applied change.
+    this.state.proposal = next?.status === "applied" && this.dismissedChanges.has(next.id) ? null : next;
     if (!graph.nodes.some(node => node.id === this.state.selectedNodeId)) this.state.selectedNodeId = graph.nodes[0]?.id ?? null;
   }
   async proposeChange(input: GraphChange): Promise<boolean> {
@@ -444,6 +448,12 @@ export class WorkbenchController {
     if (this.changeRetry?.fingerprint !== fingerprint) this.changeRetry = { fingerprint, key: crypto.randomUUID() };
     return this.graphMutation("propose_factory_change", { run_id: graph.run_id, expected_revision: graph.revision, idempotency_key: this.changeRetry.key, change });
   }
+  /** Hides the "Plan updated" note. Display only: the applied change stays in the server's history. */
+  dismissAppliedChange(): void {
+    if (this.state.proposal?.status !== "applied") return;
+    this.dismissedChanges.add(this.state.proposal.id);
+    this.state.proposal = null; this.changed();
+  }
   async applyChange(confirmed = false): Promise<boolean> {
     const { graph, proposal } = this.state;
     if (!confirmed || !this.state.connected || !graph || !proposal || proposal.status !== "proposed" || proposal.base_revision + 1 !== graph.revision || this.state.graphStale || this.state.pending || this.state.graphLoading) return false;
@@ -462,7 +472,8 @@ export class WorkbenchController {
       await this.readGraphRun(String(args.run_id));
       if (!this.state.connected || version !== this.graphVersion || this.state.selectedId !== args.run_id) return false;
       this.syncContext();
-      this.state.notice = tool === "propose_factory_change" ? "Change proposed. Review its exact scope below, then apply it." : "Graph change applied. This records the plan; execution was not started.";
+      // The applied change shows as its own quiet "Plan updated" note, so it needs no second notice.
+      this.state.notice = tool === "propose_factory_change" ? "Change proposed. Review it below, then apply it." : null;
       this.changeRetry = null;
       return true;
     } catch (error) { if (this.state.selectedId === args.run_id) { this.state.graphStale = true; this.state.error = `${errorMessage(error)} Refresh before retrying; the change may have reached the server.`; } return false; }

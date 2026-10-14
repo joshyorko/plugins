@@ -2,7 +2,7 @@ import { App, applyDocumentTheme, applyHostStyleVariables } from "@modelcontextp
 import { applyDeepLink, HostBridge, surfaceFromHostContext } from "./bridge";
 import { WorkbenchController, type Bridge } from "./controller";
 import { allowedFinishes, finishLabels, settingsSchema, startRequest, UI_VERSION, type FollowUpKind } from "./domain";
-import { renderWorkbench, type Editor, type WorkbenchOptions } from "./view";
+import { renderWorkbench, toggleDisclosure, type Editor, type WorkbenchOptions } from "./view";
 import { SinceTracker, type Baseline } from "./narrative";
 import { registerViewTools } from "./view-tools";
 import { submitNewRun } from "./submission";
@@ -57,6 +57,12 @@ mount.addEventListener("click", event => {
     case "graph-node": if (target.dataset.nodeId) controller.selectNode(target.dataset.nodeId); break;
     case "view-mode": if (target.dataset.mode === "map" || target.dataset.mode === "lanes") controller.setViewMode(target.dataset.mode); break;
     case "select-agent": if (target.dataset.threadId) controller.selectAgent(controller.state.selectedAgent === target.dataset.threadId ? null : target.dataset.threadId); break;
+    case "dismiss-change": controller.dismissAppliedChange(); break;
+    case "toggle-disclosure": {
+      toggleDisclosure(mount, target);
+      if (target.getAttribute("aria-expanded") === "true") document.getElementById(target.getAttribute("aria-controls") ?? "")?.querySelector<HTMLElement>("input:not(:disabled), select:not(:disabled)")?.focus();
+      break;
+    }
     case "apply-change": void controller.applyChange(mount.querySelector<HTMLInputElement>("#confirm-graph-change")?.checked === true); break;
     case "share-context": void controller.select(controller.state.selectedId); break;
     case "start": showEditor("start"); break;

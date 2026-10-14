@@ -166,14 +166,14 @@ export const campaignListSchema = z.object({ campaigns: z.array(campaignSchema).
 export type CampaignView = z.infer<typeof campaignSchema>;
 const providerLabels: Record<string, string> = { github: "GitHub", local: "Local", fixture: "Fixture" };
 export function providerLabel(provider: string): string { return providerLabels[provider] ?? provider; }
-const provenanceLabels: Record<CampaignView["parent"]["provenance"], string> = { supplied: "supplied, not verified", github_app: "fetched by Luna's GitHub App" };
-/**
- * "GitHub example/plugins#67 · supplied, not verified". The provenance always says who asserted the
- * parent: caller-supplied data is never labelled as reported by GitHub.
- */
+const provenanceLabels: Record<CampaignView["parent"]["provenance"], string> = { supplied: "Linked by you", github_app: "Retrieved by Luna" };
+/** Friendly issue reference for the main view; provenance stays in the task inspector. */
 export function parentLabel(campaign: Pick<CampaignView, "parent">): string {
-  const { forge, provenance } = campaign.parent;
-  return `${providerLabel(forge.provider)} ${forge.repository}#${forge.number} · ${provenanceLabels[provenance]}`;
+  const { forge } = campaign.parent;
+  return `${providerLabel(forge.provider)} ${forge.repository}#${forge.number}`;
+}
+export function parentProvenanceLabel(campaign: Pick<CampaignView, "parent">): string {
+  return provenanceLabels[campaign.parent.provenance];
 }
 export function campaignStatusLabel(status: CampaignView["status"]): string {
   return { planned: "Planned · not started", promoted: "Promoted", finished: "Finished", stopped: "Stopped" }[status];

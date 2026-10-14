@@ -32,10 +32,10 @@ describe("authenticated dogfood regressions reproduced in disposable fixtures", 
     const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
     controller.receiveInitial({ structuredContent: run }); controller.setConnected(true);
     renderWorkbench(root, controller.state, null, false);
-    expect(root.querySelector(".decision-panel .eyebrow")?.textContent).toBe("Plan navigation");
+    expect(root.querySelector(".decision-panel")).toBeNull();
     expect(root.querySelector(".delivery-strip")?.closest("details")).not.toBeNull();
     expect(root.textContent).not.toContain("0 min");
-    expect(root.textContent).toContain("Execution has not started");
+    expect(root.textContent).toContain("1 planned task");
   });
   it("keeps a real server-authorized answer in Needs me", () => {
     const run = fixtureRun({ state: "NEEDS_INPUT", pending_decision: { id: "decision", question: "Choose the approved scope" } });
@@ -72,7 +72,7 @@ describe("authenticated dogfood regressions reproduced in disposable fixtures", 
     renderWorkbench(root, controller.state, null, false);
     expect(root.querySelector("#confirm-graph-change")).not.toBeNull();
     expect(root.querySelector<HTMLButtonElement>('[data-action="apply-change"]')?.disabled).toBe(true);
-    expect(root.querySelector('select[name="target_id"]')?.closest("details")).not.toBeNull();
+    expect(root.querySelector('select[name="target_id"]')?.closest(".planning-editor[hidden]")).not.toBeNull();
     expect(root.querySelector('option[value="codex-cloud"]')).toBeNull();
     controller.state.capabilities = fixtureWorkbench.capabilities;
     renderWorkbench(root, controller.state, "start", false);
