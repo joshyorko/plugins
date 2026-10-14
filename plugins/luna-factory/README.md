@@ -10,7 +10,7 @@ The stacked implementation's [integration-readiness report](docs/integration-rea
 
 Luna's optional, read-only [GitHub App](docs/github-app.md) adds source-bound issue-graph intake and GitHub-reported PR and check telemetry. It's off by default, and its data is never Factory proof.
 
-The [2026-10-14 research reconciliation](docs/research/2026-10-14-reconciliation.md) records the status of each open Mission Control issue against merged work, with source, CI, deployment, host acceptance, provider qualification and convergence kept separate.
+The 2026-10-14 research reconciliation, in the source repository at `docs/research/2026-10-14-reconciliation.md` (not staged into the installed package), records the status of each open Mission Control issue against merged work, with source, CI, deployment, host acceptance, provider qualification and convergence kept separate.
 
 ## Build from this checkout
 
