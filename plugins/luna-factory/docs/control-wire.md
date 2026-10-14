@@ -501,7 +501,7 @@ They still pin the released UI hash. This slice changes no deployed service.
 
 ## Tool catalog
 
-The current catalog has 29 tools: 20 are model-visible and 9 are app-only.
+The current catalog has 32 tools: 23 are model-visible and 9 are app-only.
 
 - **Model-visible:** `start_factory`, `list_factory_runs`, `get_factory_run`,
   `get_factory_capabilities`, `steer_factory_run`, `cancel_factory_run`,
@@ -509,7 +509,9 @@ The current catalog has 29 tools: 20 are model-visible and 9 are app-only.
   `get_factory_graph`, `get_factory_backends`, `inspect_factory_cas`,
   `inspect_factory_issue_graph`, `read_factory_delivery`, `propose_factory_change`,
   `apply_factory_change`, `create_factory_campaign`, `list_factory_campaigns`,
-  `get_factory_campaign` and `promote_factory_campaign`.
+  `get_factory_campaign`, `promote_factory_campaign`,
+  `list_factory_github_repositories`, `connect_factory_github_repository` and
+  `create_factory_local_repository`.
 - **App-only:** `search_factory_mentions`, `open_factory`, `open_factory_panel`,
   `refresh_factory`, `read_factory_settings`, `update_factory_settings`,
   `discover_factory_repositories`, `request_factory_repository` and
@@ -518,11 +520,12 @@ The current catalog has 29 tools: 20 are model-visible and 9 are app-only.
 `server/tests/mcp_contract.rs` and `server/tests/output_schemas.rs` pin the total.
 Any bridge or toolkit pin must be refreshed against these exact bytes. The
 container canaries (`container/acceptance_canary.py`,
-`container/planning_graph_canary.py`) pin 29 tools and assert that every
+`container/planning_graph_canary.py`) pin 32 tools and assert that every
 campaign tool is model- and app-visible, that both GitHub reads are read-only and
-model- and app-visible, and that
-`read_factory_agent_timeline` is read-only and app-only; the acceptance canary
-never calls it.
+model- and app-visible, that the three workspace tools are model- and app-visible
+with only the listing read-only, and that
+`read_factory_agent_timeline` is read-only and app-only. The canaries never call
+the timeline or workspace tools.
 
 ## Observed agent timeline (#75)
 
@@ -568,3 +571,38 @@ operator runbook, permissions and egress decision are in [GitHub App](github-app
   "success".
 - **Capabilities.** `capabilities.github` is `{configured, reason}` only. Credentials, key paths
   and tokens are never projected.
+
+## Workspaces: pick a GitHub repository or start a new one
+
+Three model-and-app tools let the user pick a repository from Luna's GitHub App
+installation or start a new local one. All three are off until the operator sets
+`workspaces` in `operator.json`; turning a flag on is the operator's approval. See
+[GitHub App](github-app.md#workspaces-connect-or-create-a-repository) for the
+operator section.
+
+| Tool | Input | Result |
+| --- | --- | --- |
+| `list_factory_github_repositories` | optional `cursor` (`page:<n>`, 1 to 512 characters) | `reported_by: "github"`, `provenance: "github_app"`, `configured`, `available`, `reason`, up to 100 `repositories` (`full_name` lowercase, `private`, `default_branch`, `description` redacted with `safe_summary` to 280 characters, `connected_alias`, `connectable`, `blocked_reason`), `next_cursor`, `observed_at`. Read-only, open world |
+| `connect_factory_github_repository` | `repository` (`owner/repo`), `idempotency_key` | `status` (`connected` or `already_connected`), `alias`, `repository:{alias, identity}`, `full_name`, `default_branch`, `provenance: "github_app"`. Not read-only, not destructive, idempotent, open world |
+| `create_factory_local_repository` | `name` (`^[a-z0-9][a-z0-9._-]{0,63}$`), `idempotency_key` | `status` (`created` or `already_exists`), `alias`, `repository:{alias, identity}`. Not read-only, not destructive, idempotent, closed world |
+
+- **Approval.** A connected or created repository is an approved alias with recorded
+  provenance (`github_app_installation` or `local_create`) and finish authority
+  `local_candidate`. It appears wherever approved repositories appear:
+  `capabilities.repositories` (with a `provenance` field), the workbench, and the
+  repository accepted by `start_factory`, `create_factory_graph` and
+  `create_factory_campaign`. `repository.identity` is the value `create_factory_graph`
+  reports as `graph.repository.identity`. The approval lasts while the matching flag
+  stays on and the root is unchanged.
+- **Capabilities.** `capabilities.workspaces: {connect_github, create_local}` reports
+  the two flags and never a path.
+- **Disabled.** With a flag off, the matching tool fails with `github_connect_not_enabled`
+  or `local_create_not_enabled` and does nothing. The listing then answers
+  `available: false` with that reason and makes no request.
+- **Replay.** The same `idempotency_key` with the same input returns the recorded
+  result. The same key with a different input fails with `idempotency_conflict`. Another
+  key for a repository that is already connected or created answers `already_connected`
+  or `already_exists`. A repository already approved through the operator config, with a
+  remote naming it, is `already_connected` under that alias.
+- **Never.** No push, branch, pull request, run, claim, receipt, native dispatch or
+  execution qualification (#71). Listing data is display data, never proof.

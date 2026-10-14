@@ -230,6 +230,12 @@ pub fn tool_definitions() -> Vec<Tool> {
         definition("get_factory_campaign", "Factory campaign", "Read one campaign, its planning graph summary (task counts by state and revision) and its linked runs, without inference.", object(json!({"campaign_id":campaign_id}), &["campaign_id"]), true),
         definition("promote_factory_campaign", "Promote campaign to execution", "Request promotion of a campaign's reviewed plan into execution, fenced to the planning graph revision. Input is validated first; a valid request then fails closed with execution_not_qualified while capabilities.execution.eligible is false. It never upgrades the planning graph and records nothing.", object(json!({"campaign_id":campaign_id,"expected_revision":revision,"idempotency_key":token}), &["campaign_id","expected_revision","idempotency_key"]), false),
     ]);
+    let idempotency_key = json!({"type":"string","minLength":1,"maxLength":128});
+    tools.extend([
+        definition("list_factory_github_repositories", "List GitHub repositories", "Opt-in read-only list of the repositories Luna's GitHub App installation can see, one page at a time. Each entry says whether it is already connected (its approved alias) and whether it can be connected (allowlisted and the app has contents: read). Off unless the operator enabled workspaces.connect_github. GitHub data is reported, never proof.", object(json!({"cursor":{"type":"string","minLength":1,"maxLength":512}}), &[]), true),
+        definition("connect_factory_github_repository", "Connect GitHub repository", "Clone one allowlisted repository from Luna's GitHub App installation into the operator's workspace root with a read-only token narrowed to that repository, and register it as an approved repository alias so it can be planned immediately. Operator opt-in (workspaces.connect_github). No push, branch, pull request, run, dispatch or execution. Retrying the same idempotency_key returns the same result.", object(json!({"repository":{"type":"string","minLength":3,"maxLength":140,"pattern":"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"},"idempotency_key":idempotency_key}), &["repository","idempotency_key"]), false),
+        definition("create_factory_local_repository", "Create local repository", "Start a new local repository in the operator's workspace root: git init with one empty initial commit, registered as an approved repository alias. Operator opt-in (workspaces.create_local). No GitHub call, run, dispatch or execution. Retrying the same idempotency_key returns the same result.", object(json!({"name":{"type":"string","minLength":1,"maxLength":64,"pattern":"^[a-z0-9][a-z0-9._-]{0,63}$"},"idempotency_key":idempotency_key}), &["name","idempotency_key"]), false),
+    ]);
     for tool in &mut tools {
         let name = tool.name.as_ref();
         if matches!(
@@ -280,6 +286,9 @@ pub fn tool_definitions() -> Vec<Tool> {
                 | "list_factory_campaigns"
                 | "get_factory_campaign"
                 | "promote_factory_campaign"
+                | "list_factory_github_repositories"
+                | "connect_factory_github_repository"
+                | "create_factory_local_repository"
         ) {
             tool.meta = Some(
                 serde_json::from_value(json!({"ui":{"visibility":["model","app"]}}))
@@ -293,7 +302,9 @@ pub fn tool_definitions() -> Vec<Tool> {
         }
         if matches!(
             name,
-            "inspect_factory_issue_graph" | "read_factory_delivery"
+            "inspect_factory_issue_graph"
+                | "read_factory_delivery"
+                | "list_factory_github_repositories"
         ) {
             // Read-only, but it reads an external system (GitHub).
             tool.annotations = Some(serde_json::from_value(json!({"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":true})).expect("github read annotations"));
@@ -306,6 +317,14 @@ pub fn tool_definitions() -> Vec<Tool> {
                 | "create_factory_campaign"
         ) {
             tool.annotations = Some(serde_json::from_value(json!({"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false})).expect("planning annotations"));
+        }
+        if matches!(
+            name,
+            "connect_factory_github_repository" | "create_factory_local_repository"
+        ) {
+            // Writes only under the operator's workspace root; connecting reads GitHub.
+            let open_world = name == "connect_factory_github_repository";
+            tool.annotations = Some(serde_json::from_value(json!({"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true,"openWorldHint":open_world})).expect("workspace annotations"));
         }
         tool.output_schema = Some(
             serde_json::from_value(crate::schemas::output_schema(name))

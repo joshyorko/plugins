@@ -249,7 +249,7 @@ class ContainerBuildTests(unittest.TestCase):
 
     def test_canaries_expect_the_timeline_tool_app_only_and_never_call_it(self):
         self.assertIn("read_factory_agent_timeline", CANARY.FORBIDDEN_TOOL_CALLS)
-        self.assertEqual(CANARY.TOOL_COUNT, 29)
+        self.assertEqual(CANARY.TOOL_COUNT, 32)
         self.assertNotIn("read_factory_agent_timeline", CANARY.ALLOWED_TOOL_CALLS)
         with self.assertRaisesRegex(RuntimeError, "policy rejected"):
             CANARY.McpClient("http://127.0.0.1:1/mcp").call("read_factory_agent_timeline")
@@ -268,6 +268,29 @@ class ContainerBuildTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "app-only"):
                 CANARY.require_app_only_timeline(broken)
+
+    def test_canaries_expect_workspace_tools_and_never_call_them(self):
+        tools = [
+            {"name": name, "annotations": {"readOnlyHint": read_only}, "_meta": {"ui": {"visibility": ["model", "app"]}}}
+            for name, read_only in CANARY.WORKSPACE_TOOLS.items()
+        ]
+        CANARY.require_workspace_tools(tools)
+        client = CANARY.McpClient("http://127.0.0.1:1/mcp")
+        for name in CANARY.WORKSPACE_TOOLS:
+            self.assertIn(name, CANARY.FORBIDDEN_TOOL_CALLS)
+            self.assertNotIn(name, CANARY.ALLOWED_TOOL_CALLS)
+            with self.assertRaisesRegex(RuntimeError, "policy rejected"):
+                client.call(name)
+        for path in (CONTAINER_DIR / "acceptance_canary.py", CONTAINER_DIR / "planning_graph_canary.py"):
+            self.assertIn("require_workspace_tools(tools)", path.read_text())
+        for broken in (
+            tools[1:],
+            [{**tools[0], "_meta": {"ui": {"visibility": ["app"]}}}, *tools[1:]],
+            [{**tools[0], "annotations": {"readOnlyHint": False}}, *tools[1:]],
+            [*tools, tools[2]],
+        ):
+            with self.assertRaisesRegex(RuntimeError, "workspace tool"):
+                CANARY.require_workspace_tools(broken)
 
     def test_planning_graph_canary_uses_only_planning_tools(self):
         self.assertTrue({"create_factory_graph", "get_factory_graph", "propose_factory_change", "apply_factory_change"}.issubset(CANARY.ALLOWED_TOOL_CALLS))

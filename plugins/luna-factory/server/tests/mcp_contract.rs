@@ -19,7 +19,7 @@ fn every_structured_tool_declares_an_object_output_contract() {
 #[test]
 fn graph_catalog_requires_revision_and_is_callable_by_both_audiences() {
     let tools = tool_definitions();
-    assert_eq!(tools.len(), 29);
+    assert_eq!(tools.len(), 32);
     for name in [
         "create_factory_graph",
         "get_factory_graph",
@@ -172,7 +172,7 @@ fn campaign_catalog_is_model_and_app_visible_with_read_only_reads_and_fenced_pro
                 .is_none_or(|v| v.iter().any(|c| c == "model"))
         })
         .count();
-    assert_eq!(models, 20);
+    assert_eq!(models, 23);
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn github_reads_are_read_only_open_world_and_callable_by_both_audiences() {
                 .is_none_or(|v| v.iter().any(|c| c == "model"))
         })
         .count();
-    assert_eq!(model_visible, 20);
+    assert_eq!(model_visible, 23);
     let delivery = tools
         .iter()
         .find(|t| t.name == "read_factory_delivery")
@@ -444,8 +444,8 @@ fn reconciliation_is_callable_in_the_model_filtered_catalog() {
                 .is_none_or(|visibility| visibility.iter().any(|context| context == "model"))
         })
         .collect();
-    // docs/control-wire.md "Tool catalog": 29 tools, 20 model-visible, 9 app-only.
-    assert_eq!(models.len(), 20);
+    // docs/control-wire.md "Tool catalog": 32 tools, 23 model-visible, 9 app-only.
+    assert_eq!(models.len(), 23);
     assert!(
         !models
             .iter()
