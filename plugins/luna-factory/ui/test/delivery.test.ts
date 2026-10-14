@@ -108,7 +108,7 @@ describe("GitHub-reported delivery contract", () => {
     expect(section.textContent).toContain("changes requested");
     expect(section.textContent).not.toContain("Ready for review");
     // Luna's own proof is untouched by GitHub's report.
-    expect(failing.querySelector(".graph-proof")?.textContent).toContain("Evidence pending");
+    expect(failing.querySelector(".graph-proof")?.textContent).toContain("Not done yet");
     expect(runTier(plan.run)).toBe(runTier(controller.selected!));
     const proofWithout = (await campaign({ capabilities: null })).controller;
     expect(render(proofWithout, "issue-103").querySelector(".graph-proof")?.textContent).toBe(render(controller, "issue-103").querySelector(".graph-proof")?.textContent);

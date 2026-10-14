@@ -98,7 +98,7 @@ export function deliverySection(state: ViewState, runId: string | undefined, nod
   const report = deliveryFor(state, runId, nodeId);
   if (!report) return "";
   const { delivery, node } = report;
-  const caveat = '<p class="small muted">Shown for context only. GitHub results are not Luna proof, and nothing here can merge or integrate.</p>';
+  const caveat = '<p class="small muted github-caveat">For context only. GitHub results are not Luna proof, and nothing here can merge or integrate.</p>';
   const retry = delivery.retry_at !== null ? ` Luna will not ask GitHub again for about ${Math.max(1, Math.round((delivery.retry_at - delivery.observed_at) / 60))} min.` : "";
   const header = `<h4>Reported by GitHub</h4>`;
   if (!node) {
@@ -121,9 +121,9 @@ export function deliverySection(state: ViewState, runId: string | undefined, nod
     return `<div class="pr-report">
       <p><strong>Pull request #${esc(pull.number)}</strong> · ${esc(pullState(pull))} · ${esc(review)}</p>
       ${ready}
-      <p class="small diff-stat"><span class="add">+${esc(additions)}</span> <span class="del">−${esc(deletions)}</span>${files !== null ? ` · ${esc(files)} ${files === 1 ? "file" : "files"}` : ""}${pull.head_sha ? ` · head <span class="mono">${esc(pull.head_sha.slice(0, 7))}</span>` : ""}</p>
+      <p class="small diff-stat"><span class="add">+${esc(additions)}</span> <span class="del">−${esc(deletions)}</span>${files !== null ? ` · ${esc(files)} ${files === 1 ? "file" : "files"}` : ""}</p>
       <p class="small">${esc(checksSentence(pull))}${pull.checks.truncated ? ` · showing ${items.length} of ${pull.checks.total}` : ""}</p>
-      ${items.length ? `<ul class="check-list">${items.map(item => `<li>${dot(item.outcome)}<span>${esc(item.name)}<small>${esc(outcomeLabels[item.outcome])}${item.summary ? ` · ${esc(item.summary)}` : ""}</small></span></li>`).join("")}</ul>` : ""}
+      ${items.length ? `<ul class="check-list">${items.map(item => `<li>${dot(item.outcome)}<span>${esc(item.name)} <small>${esc(outcomeLabels[item.outcome])}${item.summary ? ` · ${esc(item.summary)}` : ""}</small></span></li>`).join("")}</ul>` : ""}
     </div>`;
   }).join("");
   const none = node.pull_requests.length ? "" : '<p class="small muted">GitHub reports no linked pull request for this issue.</p>';

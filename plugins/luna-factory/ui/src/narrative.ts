@@ -25,7 +25,7 @@ export function nowSentence(run: RunView): string {
   if (tier === "needs") return run.pending_decision?.question || "A native approval is waiting in Codex.";
   if (tier === "planned") {
     const tasks = run.control?.tasks.length ?? 0;
-    return `Execution hasn't started. ${tasks === 1 ? "1 planned task" : `${tasks} planned tasks`}${run.remaining_gap ? ` · ${run.remaining_gap}` : ""}.`;
+    return `${tasks === 1 ? "1 planned task" : `${tasks} planned tasks`}${run.remaining_gap ? ` · ${run.remaining_gap}` : ""}.`;
   }
   if (tier === "finished") return run.delta || "Every mandatory criterion is proven.";
   return run.blocker || run.delta || run.remaining_gap || "No change has been reported yet.";
@@ -43,7 +43,7 @@ export function blockerCopy(run: RunView): string | null {
     case "diagnosis_required": return "A diagnosis is needed before another repair";
     case "native_approval": return "Waiting on an approval in native Codex";
     case "effect_outcome_unknown": return "An effect's outcome is unknown";
-    case "liveness_unknown": return "Owned execution isn't proved stopped yet";
+    case "liveness_unknown": return "Status unknown";
     case "unknown": return "Blocker not categorized by the server";
     case "none": case "planning_only": return null;
   }

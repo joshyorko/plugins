@@ -141,7 +141,7 @@ try {
       if (item.home) {
         const row = frame.locator(`.group-campaigns .campaign-parent-row[data-run-id="${runId}"]`);
         await row.waitFor();
-        assert((await row.textContent()).includes(`GitHub ${snapshot.repository.toLowerCase()}#67 · supplied, not verified`), "Campaign row lost its parent label");
+        assert((await row.textContent()).includes(`GitHub ${snapshot.repository.toLowerCase()}#67`), "Campaign row lost its parent label");
         await frame.locator(`.group-campaigns .campaign-child[data-run-id="${runId}"]`).waitFor();
         assert.equal(await frame.locator(`.group-planned [data-run-id="${runId}"]`).count(), 0, "Linked plan was also listed ungrouped");
       }

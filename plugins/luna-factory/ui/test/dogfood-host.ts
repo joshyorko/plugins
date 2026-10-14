@@ -14,9 +14,9 @@ const largeFontStyles = McpUiHostStylesSchema.parse({ variables: { "--font-text-
 const campaign = fixtureCampaignPlan();
 const decisionRun = () => fixtureRun({ id: "review-301", state: "NEEDS_INPUT", pending_decision: { id: "fixture-decision", question: "Which approved scope should the owner use?" }, active_workers: 0, updated_at: 1791141000 });
 const blockedRun = () => {
-  const run = fixtureRun({ id: "blocked-77", state: "BLOCKED", pending_decision: null, active_workers: 0, blocker: "Native ownership is unverified. Keep the claim held.", updated_at: 1791139000, created_at: 1791132000 });
+  const run = fixtureRun({ id: "blocked-77", state: "BLOCKED", pending_decision: null, active_workers: 0, blocker: "Luna can't confirm the earlier run stopped.", updated_at: 1791139000, created_at: 1791132000 });
   // Server-shaped: unproved liveness with a held claim projects read-only reconciliation, never a decision.
-  const reconcile = { kind: "reconcile" as const, label: "Reconcile native ownership", reason: "read_only_native_reconciliation", tool: "reconcile_factory_run", allowed: true };
+  const reconcile = { kind: "reconcile" as const, label: "Check running work", reason: "read_only_native_reconciliation", tool: "reconcile_factory_run", allowed: true };
   run.presentation!.primary_action = reconcile;
   run.presentation!.actions = [reconcile, ...run.presentation!.actions.filter(action => action.kind === "cancel")];
   run.presentation!.blocker_kind = { kind: "liveness_unknown" };
@@ -38,6 +38,8 @@ else {
 }
 const focusNode = params.get("node") ?? "task-b";
 if (params.get("proposal") === "1") graph.proposal = { id: "fixture-change", base_revision: graph.graph.revision - 1, actor: "local_operator", idempotency_key: "fixture-key", fingerprint: "fixture-hash", subject: run.current_subject, status: "proposed", applied_revision: null, change: { kind: "set_dependencies", node_id: "task-b", dependencies: [] } };
+// The shape a ChatGPT-applied change returns: a UUID change id and revision numbers that must never reach the main view.
+if (params.get("proposal") === "applied") graph.proposal = { id: "75d01e55-9b57-450c-a0af-65afadca112c", base_revision: graph.graph.revision - 1, actor: "local_operator", idempotency_key: "fixture-applied-key", fingerprint: "fixture-hash", subject: run.current_subject, status: "applied", applied_revision: graph.graph.revision, change: { kind: "set_target", node_id: focusNode, target_id: "native-local" } };
 const homeRuns = scenario === "home" ? [decisionRun(), fixtureSwarmRun(), campaign.run, fixtureRun({ id: "friday-41", repository: "friday", objective: "Tighten the nightly handoff", state: "CONVERGED", active_workers: 0, claim_held: false, blocker: null, remaining_gap: null, delta: "Owner accepted the current subject.", updated_at: 1791130000 }), blockedRun()] : [run];
 // Only the synthetic swarm advertises the app-only timeline read; its results are fixtures too.
 const timelines = scenario === "swarm" ? fixtureTimelines(run.id) : {};

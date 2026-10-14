@@ -26,7 +26,8 @@ describe("accessible workbench", () => {
     const { root, controller } = render(null, fixtureRun({ state: "NEEDS_INPUT", blocker: "Choose a safe scope", pending_decision: { id: "decision-1", question: "Choose a safe scope" } }));
     renderWorkbench(root, controller.state, null, false, { surface: "global", canSendFollowUps: true });
     const buttons = root.querySelectorAll<HTMLButtonElement>('[data-action="chat-follow-up"]');
-    expect(buttons.length).toBeGreaterThanOrEqual(3);
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]?.textContent).toContain("Ask ChatGPT about this");
     expect(root.textContent).toContain("only after your click");
     expect(root.textContent).toContain("Nothing starts");
     expect(Array.from(buttons).every(button => !button.disabled)).toBe(true);
@@ -209,7 +210,7 @@ describe("accessible workbench", () => {
     expect(text.indexOf("Make Luna Factory a first-class workbench")).toBeLessThan(text.indexOf(story));
     expect(text.indexOf(story)).toBeLessThan(text.indexOf("Keep the migration local?"));
     expect(root.querySelector(".decision-panel .eyebrow")?.textContent).toBe("Needs you");
-    expect(text).toContain("1 of 2 criteria proven");
+    expect(text).toContain("1 of 2 done");
     expect(root.querySelectorAll(".needs-you .button.primary")).toHaveLength(1);
   });
   it("renders stopped unresolved separately from finished verified and retains unknown liveness", () => {
@@ -221,7 +222,8 @@ describe("accessible workbench", () => {
     const { root } = render(null, run);
     expect(root.textContent).toContain("Stopped with work unresolved");
     expect(root.textContent).toContain("unknown");
-    expect(root.textContent).toContain("worker-retained: unknown");
+    expect(root.textContent).toMatch(/(Worker \d+|Unlisted worker): unknown/);
+    expect(root.textContent).not.toContain("worker-retained");
     expect(root.textContent).toContain("Repository claim");
   });
   it("offers an allowed secondary stop only from the server action list", () => {
@@ -245,7 +247,9 @@ describe("accessible workbench", () => {
     const { root } = render(null, run);
     expect(root.querySelector(".decision-panel .button.primary")?.textContent).toBe("Wait for observed work");
     const secondary = root.querySelector('[data-kind="steer"]');
-    expect(secondary?.closest("details")?.textContent).toContain("Other available actions");
+    expect(secondary?.closest(".decision-panel .run-controls")).not.toBeNull();
+    expect(secondary?.classList.contains("primary")).toBe(false);
+    expect(root.querySelector(".decision-panel details")).toBeNull();
   });
   it("hides machine reason codes behind plain copy and keeps legacy action read-only", () => {
     const run = fixtureRun({ blocker: null });
@@ -253,7 +257,8 @@ describe("accessible workbench", () => {
     run.presentation.primary_action = { ...run.presentation.primary_action, kind: "reconcile", label: "Reconcile existing work", reason: "owned_liveness_unknown", tool: "reconcile_factory_run", allowed: true };
     run.presentation.actions = [run.presentation.primary_action];
     const { root } = render(null, run);
-    expect(root.textContent).toContain("Owned execution has not been proved stopped.");
+    expect(root.textContent).toContain("Luna can't confirm the earlier run stopped.");
+    expect(root.querySelector('[data-kind="reconcile"][data-tool="reconcile_factory_run"]')?.textContent).toBe("Check running work");
     expect(root.textContent).not.toContain("owned_liveness_unknown");
     const legacy = fixtureRun();
     delete legacy.control;

@@ -46,7 +46,7 @@ describe("narrative and attention", () => {
   it("uses the server's result label outside the two UI-owned tiers", () => {
     const run = fixtureRun({ state: "RUNNING" });
     expect(statusLabel(run)).toBe(run.presentation?.result.label);
-    expect(nowSentence(fixturePlanningRun())).toContain("Execution hasn't started");
+    expect(nowSentence(fixturePlanningRun())).toContain("1 planned task");
   });
   it("reports only server changes after this session began", () => {
     let clock = 1_000;
@@ -78,7 +78,7 @@ describe("agents and lanes", () => {
     expect(html).toContain("No receipts attributed to this agent");
     const legacy = { ...run, receipts: run.receipts.map(({ thread_id: _thread, ...receipt }) => receipt) };
     expect(renderLanes(legacy, roster(legacy, null), controller.state)).toContain("Per-agent timeline not reported by this server");
-    expect(renderLanes(fixturePlanningRun(), [], controller.state)).toContain("Execution hasn't started on this plan");
+    expect(renderLanes(fixturePlanningRun(), [], controller.state)).toContain("No work has been recorded for this plan yet");
   });
 });
 
@@ -208,8 +208,9 @@ describe("campaign grouping", () => {
     const row = entity?.querySelector<HTMLAnchorElement>(".campaign-parent-row");
     expect(row?.dataset.runId).toBe("campaign-actions-v2");
     expect(row?.getAttribute("href")).toBe("/runs/campaign-actions-v2");
-    expect(row?.textContent).toContain("GitHub example/actions#101 · supplied, not verified");
-    expect(row?.textContent).toContain("14 planned tasks · Execution hasn't started.");
+    expect(row?.textContent).toContain("GitHub example/actions#101");
+    expect(row?.textContent).not.toContain("supplied, not verified");
+    expect(row?.textContent).toContain("14 planned tasks · No runs yet.");
     expect(row?.textContent).toContain("Planned · not started");
     const children = Array.from(entity?.querySelectorAll<HTMLElement>(".campaign-children > li") ?? []);
     expect(children.map(child => child.querySelector(".child-kind")?.textContent ?? child.textContent)).toEqual(["Plan", "No execution runs yet"]);
@@ -278,7 +279,20 @@ describe("campaign grouping", () => {
     controller.state.campaigns = [fixtureCampaign()];
     const root = document.createElement("div");
     renderWorkbench(root, controller.state, null, false);
-    expect(root.querySelector(".campaign-head .eyebrow")?.textContent).toContain("GitHub example/actions#101 · supplied, not verified");
+    expect(root.querySelector(".campaign-head .campaign-parent")?.textContent).toBe("from #101");
+    expect(root.querySelector<HTMLAnchorElement>(".campaign-head .campaign-parent a")?.href).toBe("https://github.com/example/actions/issues/101");
+    expect(root.querySelector(".campaign-head .campaign-parent")?.textContent).not.toContain("supplied, not verified");
+    expect(root.querySelector(".graph-inspector")?.textContent).not.toContain("Parent issue");
+    controller.state.campaigns = [fixtureCampaign({ parent: { ...fixtureCampaign().parent, display: null } })];
+    renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector(".campaign-head .campaign-parent")?.textContent).toBe("from #101");
+    expect(root.querySelector(".campaign-head .campaign-parent a")).toBeNull();
+    expect(root.querySelector(".decision-panel")).toBeNull();
+    expect(root.querySelector(".map-node .node-title")?.textContent).toBeTruthy();
+    expect(root.querySelector(".map-node")?.classList.contains("dim")).toBe(false);
+    expect(root.querySelector('[data-action="graph"]')).toBeNull();
+    expect(root.textContent).not.toContain("0 of 1 criterion proven");
+    expect(root.textContent).not.toContain("No changes since");
     const primary = root.cloneNode(true) as HTMLElement;
     primary.querySelector("#evidence-audit")?.remove();
     primary.querySelector(".planning-editor")?.remove();
@@ -301,10 +315,9 @@ describe("campaign grouping", () => {
     ]) expect(campaignListSchema.safeParse({ campaigns: [{ ...fixtureCampaign(), parent: bad }] }).success, JSON.stringify(bad)).toBe(false);
     expect(campaignListSchema.safeParse({ campaigns: [{ ...fixtureCampaign(), repository: "actions" }] }).success).toBe(false);
   });
-  it("labels supplied parents as unverified and never as reported by GitHub", () => {
-    expect(parentLabel(fixtureCampaign())).toBe("GitHub example/actions#101 · supplied, not verified");
-    expect(parentLabel(fixtureCampaign({ parent: { ...fixtureCampaign().parent, provenance: "github_app" } }))).toBe("GitHub example/actions#101 · fetched by Luna's GitHub App");
-    expect(parentLabel(fixtureCampaign())).not.toMatch(/reported by/i);
+  it("keeps parent provenance in plain words outside the main campaign label", () => {
+    expect(parentLabel(fixtureCampaign())).toBe("GitHub example/actions#101");
+    expect(parentLabel(fixtureCampaign({ parent: { ...fixtureCampaign().parent, provenance: "github_app" } }))).toBe("GitHub example/actions#101");
   });
   it("counts records the server skipped as unreadable without rendering them", async () => {
     const { controller } = homeController(() => ({ structuredContent: { campaigns: [fixtureCampaign()], skipped: [{ id: "broken", reason: "campaign_record_corrupt" }] } }));
@@ -391,7 +404,7 @@ describe("observed agent timelines", () => {
     expect([count(1, ".tick.observed"), count(2, ".tick.observed")]).toEqual([6, 7]);
     expect(lanes[2]?.querySelector("small")?.textContent).toContain("2 receipts");
     expect(lanes[3]?.querySelector(".lane-track.unavailable")?.textContent).toContain("declined this read");
-    expect(root.querySelector(".lanes-note")?.textContent).toContain("recorded on that agent's thread");
+    expect(root.querySelector(".lanes-note")?.textContent).toContain("sits on the agent that recorded it");
     expect(root.querySelector(".lanes-note")?.textContent).toContain("not Factory proof");
   });
   it("labels every no-observation state with a server-supplied reason", async () => {
