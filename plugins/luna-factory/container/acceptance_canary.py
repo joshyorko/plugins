@@ -38,7 +38,7 @@ CAMPAIGN_TOOLS = {
     "promote_factory_campaign",
 }
 CAMPAIGN_READ_TOOLS = {"list_factory_campaigns", "get_factory_campaign"}
-TOOL_COUNT = 27
+TOOL_COUNT = 29
 
 
 def campaign_tools_visible(tools: list[dict[str, Any]]) -> bool:
@@ -60,6 +60,9 @@ FORBIDDEN_TOOL_CALLS = {
     "inspect_factory_cas",
     # Reads native Codex history through CAS; the canary never contacts CAS.
     "read_factory_agent_timeline",
+    # Opt-in GitHub App reads: present in the catalog, never called by a canary.
+    "inspect_factory_issue_graph",
+    "read_factory_delivery",
 }
 APP_ONLY_TIMELINE_TOOL = "read_factory_agent_timeline"
 
@@ -147,6 +150,13 @@ def run(url: str, mode: str, expected_ui_sha256: str = RELEASE_UI_SHA256) -> dic
     ):
         raise RuntimeError("MCP tool catalog mismatch")
     require_app_only_timeline(tools)
+    for name in ("inspect_factory_issue_graph", "read_factory_delivery"):
+        github_read = next(tool for tool in tools if tool.get("name") == name)
+        if (
+            github_read.get("annotations", {}).get("readOnlyHint") is not True
+            or github_read.get("_meta", {}).get("ui", {}).get("visibility") != ["model", "app"]
+        ):
+            raise RuntimeError("GitHub read tool contract mismatch")
     mention = next(tool for tool in tools if tool.get("name") == "search_factory_mentions")
     metadata = mention.get("_meta", {})
     if (

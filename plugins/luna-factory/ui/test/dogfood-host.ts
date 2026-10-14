@@ -1,6 +1,6 @@
 import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { McpUiHostStylesSchema } from "@modelcontextprotocol/ext-apps";
-import { fixtureBackends, fixtureCampaign, fixtureCampaignPlan, fixtureGraph, fixturePlanningRun, fixtureRun, fixtureSwarmRun, fixtureTimelineCapability, fixtureTimelines, fixtureWorkbench } from "./fixtures";
+import { fixtureBackends, fixtureCampaign, fixtureCampaignPlan, fixtureDelivery, fixtureDeliveryUnavailable, fixtureGraph, fixturePlanningRun, fixtureRun, fixtureSwarmRun, fixtureTimelineCapability, fixtureTimelines, fixtureWorkbench } from "./fixtures";
 
 const params = new URLSearchParams(location.search);
 const element = document.getElementById("factory");
@@ -41,7 +41,9 @@ if (params.get("proposal") === "1") graph.proposal = { id: "fixture-change", bas
 const homeRuns = scenario === "home" ? [decisionRun(), fixtureSwarmRun(), campaign.run, fixtureRun({ id: "friday-41", repository: "friday", objective: "Tighten the nightly handoff", state: "CONVERGED", active_workers: 0, claim_held: false, blocker: null, remaining_gap: null, delta: "Owner accepted the current subject.", updated_at: 1791130000 }), blockedRun()] : [run];
 // Only the synthetic swarm advertises the app-only timeline read; its results are fixtures too.
 const timelines = scenario === "swarm" ? fixtureTimelines(run.id) : {};
-const workbench = { ...fixtureWorkbench, runs: homeRuns, selected_run: scenario === "home" ? null : run, capabilities: { ...fixtureWorkbench.capabilities, execution: { eligible: false, reason: "qualification_unverified" }, ...(scenario === "swarm" ? { agent_timeline: fixtureTimelineCapability } : {}) } };
+// Only the campaign plan has GitHub sources; other scenarios show the default-off integration.
+const github = scenario === "campaign" || scenario === "home" ? { configured: true, reason: "configured_reachability_unverified" } : { configured: false, reason: "github_app_not_configured" };
+const workbench = { ...fixtureWorkbench, runs: homeRuns, selected_run: scenario === "home" ? null : run, capabilities: { ...fixtureWorkbench.capabilities, execution: { eligible: false, reason: "qualification_unverified" }, github, ...(scenario === "swarm" ? { agent_timeline: fixtureTimelineCapability } : {}) } };
 interface SimulatorInstrumentation { calls: string[]; contexts: unknown[]; messages: unknown[]; sizes: unknown[]; initialized: boolean; disconnect(): Promise<void>; }
 const instrumentation: SimulatorInstrumentation = { calls: [], contexts: [], messages: [], sizes: [], initialized: false, disconnect: async () => { await host.teardownResource({}); await host.close(); } };
 declare global { interface Window { lunaDogfoodHost: SimulatorInstrumentation; } }
@@ -62,6 +64,8 @@ host.oncalltool = async request => {
   }
   if (request.name === "get_factory_run") return { content: [], structuredContent: homeRuns.find(item => item.id === request.arguments?.run_id) ?? run };
   if (["refresh_factory", "open_factory"].includes(request.name)) return { content: [], structuredContent: workbench };
+  // Synthetic GitHub-reported telemetry: display only, never proof.
+  if (request.name === "read_factory_delivery") return { content: [], structuredContent: params.get("github") === "unavailable" ? fixtureDeliveryUnavailable(run.id) : fixtureDelivery(run.id) };
   return { isError: true, content: [{ type: "text", text: "The synthetic visual host is read-only; no mutation was sent." }] };
 };
 host.onupdatemodelcontext = async request => { instrumentation.contexts.push(request); return { _meta: { "openai/modelContext": { updateId: `fixture-${instrumentation.contexts.length}` } } }; };

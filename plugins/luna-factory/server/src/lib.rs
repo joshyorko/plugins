@@ -15,6 +15,7 @@ pub mod presentation;
 pub mod backends;
 pub mod campaign;
 pub mod extensions;
+pub mod github;
 pub mod graph;
 pub mod mentions;
 pub mod schemas;

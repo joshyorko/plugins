@@ -44,6 +44,11 @@ struct CampaignId {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct DeliveryRead {
+    run_id: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Refresh {
     run_id: Option<String>,
 }
@@ -323,6 +328,12 @@ impl McpServer {
             }
             "inspect_factory_cas" => self.factory.inspect_cas(parse(args)?).await,
             "read_factory_agent_timeline" => self.factory.read_agent_timeline(parse(args)?).await,
+            "inspect_factory_issue_graph" => self.factory.inspect_issue_graph(parse(args)?).await,
+            "read_factory_delivery" => {
+                self.factory
+                    .delivery(&parse::<DeliveryRead>(args)?.run_id)
+                    .await
+            }
             "list_factory_runs" => {
                 Ok(json!({"runs":self.factory.list(parse::<List>(args)?.limit).await?}))
             }
