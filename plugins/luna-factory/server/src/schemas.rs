@@ -150,7 +150,9 @@ fn definitions() -> Map<String, Value> {
         "profiles":{"type":"array","items":object(json!({"alias":text(64),"effort":string(),"supported":boolean()}))},
         "limits":object(json!({"capacity":{"type":"integer","minimum":1,"maximum":8},"repair_attempts":{"type":"integer","minimum":0,"maximum":10},"wall_seconds":{"type":"integer","minimum":30,"maximum":86400}})),
         "observed_routing":{"const":"unverified"},"status_inference_calls":{"const":0},
-        "execution":object(json!({"eligible":{"const":false},"reason":string()})),
+        // Persisted exact-profile qualification (#71); path-free, operator-recorded only.
+        "execution":object(json!({"eligible":boolean(),"reason":text(256),
+            "profiles":array(object(json!({"alias":text(64),"status":enumeration(&["qualified","denied"]),"reason":text(256),"max_capacity":nullable(json!({"type":"integer","minimum":1,"maximum":8}))})),64)})),
         "routing_telemetry":object(json!({"model":string(),"effort":string(),"provider":string()})),
         "control_policy":object(json!({"wire_schema":{"const":1},"sqlite_schema":{"const":2},"managed_admission":string(),"native_child_policy":string(),"semantic_acceptance":string(),"independent_checks":array(string(),32),"native_output_completeness":string(),"native_environment":string(),"delivery_certification":string()})),
         "live_proof":string()
