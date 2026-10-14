@@ -78,6 +78,9 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/server/tests/campaign.rs",
     # #75: observed agent timeline.
     "plugins/luna-factory/server/src/timeline.rs",
+    # Workspaces: connect GitHub repositories and create local ones (#67, #76).
+    "plugins/luna-factory/server/src/repositories.rs",
+    "plugins/luna-factory/server/src/workspaces.rs",
     "plugins/luna-factory/server/tests/cas_timeline.rs",
     "plugins/luna-factory/server/tests/http_security.rs",
     "plugins/luna-factory/server/tests/http_integration.rs",

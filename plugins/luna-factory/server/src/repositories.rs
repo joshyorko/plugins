@@ -43,6 +43,10 @@ pub struct Registration {
     pub relative: String,
     pub max_finish: String,
     pub status: Approval,
+    /// Set only for workspace repositories (connected or created under the
+    /// operator's `workspaces.root`). Never persisted in this table's payload.
+    #[serde(skip)]
+    pub provenance: Option<crate::workspaces::Provenance>,
 }
 impl Registration {
     pub fn public(&self) -> Value {
@@ -82,7 +86,11 @@ fn identity(hash: &mut Sha256, metadata: &fs::Metadata) {
         let _ = (hash, metadata);
     }
 }
-fn candidate(alias: &str, policy: &Repository, relative: &Path) -> Result<Option<Candidate>> {
+pub(crate) fn candidate(
+    alias: &str,
+    policy: &Repository,
+    relative: &Path,
+) -> Result<Option<Candidate>> {
     if relative
         .components()
         .any(|c| !matches!(c, Component::Normal(_)))
@@ -190,17 +198,28 @@ pub fn discover(config: &Config) -> Result<Vec<Candidate>> {
     Ok(candidates)
 }
 fn resolve(config: &Config, registration: &Registration) -> Result<Candidate> {
-    let policy = config
-        .discovery_roots
-        .get(&registration.root_alias)
-        .context("discovery_root_revoked")?;
+    let policy = match registration.provenance {
+        // Workspace approval lasts while the operator keeps the matching flag on
+        // and the same root configured.
+        Some(provenance) => config
+            .workspaces
+            .as_ref()
+            .filter(|workspaces| workspaces.enabled(provenance))
+            .map(crate::workspaces::Workspaces::policy)
+            .context("workspace_approval_revoked")?,
+        None => config
+            .discovery_roots
+            .get(&registration.root_alias)
+            .cloned()
+            .context("discovery_root_revoked")?,
+    };
     ensure!(
         finish_rank(&registration.max_finish)? <= finish_rank(&policy.max_finish)?,
         "repository_authority_exceeded"
     );
     let candidate = candidate(
         &registration.root_alias,
-        policy,
+        &policy,
         Path::new(&registration.relative),
     )?
     .context("repository_candidate_changed")?;
@@ -257,6 +276,7 @@ pub fn request(config: &Config, store: &mut Store, input: RegistrationRequest) -
         relative: found.relative,
         max_finish: input.max_finish,
         status: Approval::Pending,
+        provenance: None,
     };
     Ok(store.request_repository(&registration)?.public())
 }
