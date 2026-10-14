@@ -136,7 +136,8 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
     await controller.select(runId); await controller.loadGraph();
     expect(controller.state.error).toBeNull();
     expect(controller.selected && classifyRun(controller.selected)).toBe("recent");
-    expect(root.querySelector(".decision-panel .eyebrow")?.textContent).toBe("Plan");
+    // A planned run has no decision box (removed in the calm campaign view).
+    expect(root.querySelector(".decision-panel .eyebrow")).toBeNull();
     for (const title of titleCases) {
       expect(controller.state.graph?.nodes.find(node => node.id === title.id)?.title).toBe(title.public);
       expect(controller.selected?.control?.tasks.find(node => node.id === title.id)?.title).toBe(title.public);
