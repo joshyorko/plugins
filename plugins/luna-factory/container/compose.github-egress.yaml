@@ -1,0 +1,56 @@
+# Opt-in GitHub-only egress (docs/github-app.md, Option A). Apply on top of compose.yaml:
+#   podman compose --env-file "$DEPLOY_ROOT/.env" \
+#     --file plugins/luna-factory/container/compose.yaml \
+#     --file plugins/luna-factory/container/compose.github-egress.yaml up --detach --wait
+# Luna stays on the internal network only. The proxy is its single route out, and it
+# tunnels only CONNECT api.github.com:443 and github.com:443 (container/egress_proxy.py).
+services:
+  github-egress-proxy:
+    # Same pinned digest as PYTHON_BASE in Containerfile, so no new third-party image.
+    image: docker.io/library/python:3.13-slim-trixie@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+    pull_policy: missing
+    user: "65532:65532"
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 32
+    mem_limit: 64m
+    cpus: 0.25
+    restart: "on-failure:3"
+    stop_grace_period: 5s
+    entrypoint: ["python3", "-I", "-B", "/opt/luna-egress/egress_proxy.py"]
+    command: ["--listen-host", "0.0.0.0", "--listen-port", "3128"]
+    volumes:
+      - type: bind
+        source: ./egress_proxy.py
+        target: /opt/luna-egress/egress_proxy.py
+        read_only: true
+        bind:
+          create_host_path: false
+          selinux: z
+    networks:
+      - private
+      - github-egress
+    healthcheck:
+      test: ["CMD", "python3", "-I", "-c", "import socket; socket.create_connection(('127.0.0.1', 3128), 2).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  luna-factory:
+    depends_on:
+      - github-egress-proxy
+    environment:
+      HTTPS_PROXY: http://github-egress-proxy:3128
+      https_proxy: http://github-egress-proxy:3128
+      NO_PROXY: 127.0.0.1,localhost,::1
+      no_proxy: 127.0.0.1,localhost,::1
+
+networks:
+  github-egress:
+    driver: bridge
+    internal: false

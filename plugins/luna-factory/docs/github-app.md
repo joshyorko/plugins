@@ -121,32 +121,90 @@ widen what Luna reads.
 5. **Approve the local repository in Luna** as usual: an operator `repositories` entry or an
    approved registration. Its Git remote must name `github.com/owner/repo`, for example
    `origin https://github.com/joshyorko/plugins.git`.
-6. **Choose the egress option** (see below) and restart the service. Restarting is an operator
+6. **Enable egress** for the OCI container with the override (see below), or use a host
+   service, and restart the service. Restarting is an operator
    action, and this change doesn't perform it.
 7. **Verify.** `get_factory_capabilities` reports `github: {configured: true, reason:
    "configured_reachability_unverified"}`. Reachability is reported per read. Then ask ChatGPT to
    inspect a parent issue, or run the live check below.
 
-### Egress: an owner decision is required
+### Egress: opt-in GitHub-only proxy (Option A)
 
-`container/compose.yaml` puts the service on an `internal: true` network, so the OCI container has
-**no egress**, and this change deliberately doesn't alter that. Configured inside the container
-today, every read reports `github_unreachable`. Pick one option:
+`container/compose.yaml` puts the service on an `internal: true` network, so by default the OCI
+container has **no egress**, and configured inside the container every read reports
+`github_unreachable`. That default is unchanged. The owner chose Option A, which is implemented as
+a separate compose override you apply explicitly.
 
-- **Option A: allow egress to `api.github.com` only.** For example:
-  - Add an egress proxy on a second, non-internal network that permits only `CONNECT
-    api.github.com:443`, and set `HTTPS_PROXY` for the service. Luna honours the standard proxy
-    variables for HTTPS origins only. The proxy sees the hostname but not the TLS-protected token.
-  - Or apply host firewall rules limited to GitHub's published API ranges.
+**What it adds.** `container/compose.github-egress.yaml` adds one service, `github-egress-proxy`,
+and one network:
 
-  Either way it's a compose and network change the owner must review. Luna itself still refuses
-  redirects and non-HTTPS origins.
-- **Option B: run the reader on the host.** Configure `github_app` only on a host-run
-  `luna-factoryd`, the local service, which already has the network. The OCI container stays fully
-  internal and keeps reporting `github_app_not_configured`. This needs no container change, but
-  intake and telemetry then live on the host service's ledger.
+- The proxy runs `container/egress_proxy.py`, a small standard-library asyncio CONNECT proxy, on
+  the **same pinned Python base image digest** as `PYTHON_BASE` in `container/Containerfile`. No
+  new third-party image or package is added. The script is bind-mounted read-only.
+- It sits on the existing internal `private` network and on a second, non-internal
+  `github-egress` network. It publishes no host port.
+- It's hardened like the Luna service: UID `65532:65532`, read-only root, all capabilities
+  dropped, `no-new-privileges`, and PID, memory and CPU limits.
+- The Luna service itself stays on `private` only. The override sets `HTTPS_PROXY` and
+  `https_proxy` to `http://github-egress-proxy:3128`, and `NO_PROXY`/`no_proxy` to
+  `127.0.0.1,localhost,::1`. `HTTP_PROXY` is deliberately unset.
 
-Until the owner chooses, leave `github_app` unset in the OCI `operator.json`.
+**What the proxy permits.** Exactly two tunnels:
+
+- `CONNECT api.github.com:443` (the GitHub App reads)
+- `CONNECT github.com:443` (Git over HTTPS, for example `git clone https://github.com/...`)
+
+Everything else is refused before any upstream connection is opened:
+
+- Any other host, including other `*.github.com` names and IP literals: `403`.
+- Any other port: `403`.
+- Any method other than `CONNECT`, and absolute-form or origin-form requests such as
+  `GET https://api.github.com/...`: `405`.
+- A malformed `CONNECT` target (a scheme, a path, userinfo, brackets or no port), or a request
+  head over 8 KiB: `400`, or the connection is closed.
+- An allowed name that resolves only to a loopback, private or link-local address: `502`.
+
+The proxy logs one line per request, `allowed host:port` or `denied host:port` (`denied
+invalid-request` when there's no well-formed target). It never logs headers or tunnel bytes, and
+it can't see the token, which travels inside TLS. Luna's HTTP client honours the standard proxy
+variables for HTTPS origins and still refuses redirects and non-HTTPS origins. Git honours
+`https_proxy` too.
+
+**Turn it on.** Add the override as a second `--file` to every `config`, `up`, `stop` and `down`
+command for that deployment:
+
+```sh
+podman compose --env-file "$DEPLOY_ROOT/.env" \
+  --file plugins/luna-factory/container/compose.yaml \
+  --file plugins/luna-factory/container/compose.github-egress.yaml \
+  config --quiet
+podman compose --env-file "$DEPLOY_ROOT/.env" \
+  --file plugins/luna-factory/container/compose.yaml \
+  --file plugins/luna-factory/container/compose.github-egress.yaml \
+  up --detach --force-recreate --wait --wait-timeout 60
+podman compose --env-file "$DEPLOY_ROOT/.env" \
+  --file plugins/luna-factory/container/compose.yaml \
+  --file plugins/luna-factory/container/compose.github-egress.yaml \
+  logs github-egress-proxy
+```
+
+- It combines with other overrides, such as `compose.planning-canary.yaml`; list
+  `compose.yaml` first.
+- The proxy script path is relative to the compose files, so `egress_proxy.py` must sit next to
+  `compose.github-egress.yaml`. If a deployment snapshots the compose files into its own
+  directory (the dogfood preview copies only `compose.yaml` and `compose.planning-canary.yaml`),
+  copy `compose.github-egress.yaml` **and** `egress_proxy.py` there too, and add the extra
+  `--file`. The script must stay world-readable (mode `0644`), because the proxy runs as UID 65532.
+- The published OCI image doesn't include any compose file or the proxy. Egress is purely a
+  deployment choice, and the image fingerprint doesn't change.
+- **Turn it off** by recreating the service without the override, then removing the leftover
+  proxy container with `podman compose ... --file compose.yaml --file compose.github-egress.yaml
+  down` before the plain `up`, or with `up --remove-orphans`.
+
+**Option B (not chosen, still possible).** Configure `github_app` only on a host-run
+`luna-factoryd`, which already has the network, and leave `github_app` unset in the OCI
+`operator.json`. The OCI container then stays fully internal and keeps reporting
+`github_app_not_configured`.
 
 ## `inspect_factory_issue_graph` (#76)
 
@@ -307,7 +365,7 @@ The result also carries `proof: "none"` and `merge_capability: "none"`.
 | `github_app_config_invalid`, `github_client_unavailable` | The block failed validation at use, or the HTTPS client couldn't be built |
 | `github_app_key_unreadable`, `github_app_key_not_regular_file`, `github_app_key_symlinked`, `github_app_key_permissions_too_open`, `github_app_key_invalid`, `github_app_key_format_unsupported` | Fix the key file (see step 2) |
 | `repository_not_in_github_app_allowlist`, `repository_not_approved_in_luna`, `repository_alias_required`, `repository_alias_not_bound_to_github_repository`, `repository_identity_unavailable` | Ineligible. No request was made |
-| `github_unreachable`, `github_timeout` | No route to GitHub, for example the OCI internal network (see Egress) |
+| `github_unreachable`, `github_timeout` | No route to GitHub, for example the OCI container without the egress override (see Egress) |
 | `rate_limited` | Wait until `retry_at` |
 | `github_app_not_installed`, `github_installation_mismatch`, `github_app_not_read_only`, `github_token_scope_mismatch` | Installation or permission problem. Fix it in the app settings |
 | `github_authentication_failed`, `github_permission_denied`, `github_not_found`, `github_gone`, `github_redirect_refused`, `github_service_unavailable`, `github_invalid_response`, `github_response_too_large` | Request-level failure |
@@ -333,8 +391,8 @@ The UI maps these to plain sentences and never shows the raw code.
   LUNA_GITHUB_LIVE=1 LUNA_GITHUB_KEY=/absolute/path/to/luna-github-app.pem \
     cargo test --locked --test github_live -- --ignored --nocapture
   ```
-  It needs network access to `api.github.com` from where it runs, which means Option B or a host
-  shell. It never prints the key, the JWT or tokens.
+  It needs network access to `api.github.com` from where it runs, which means a host shell. It
+  never prints the key, the JWT or tokens.
 
 ## Not supported in this slice
 

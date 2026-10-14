@@ -168,8 +168,9 @@ Legend: **✅ implemented in #68** · **✅ #69/#70/#73/#77** implemented by tha
   `campaign-github-unavailable-narrow.png`. The capture allowlists include `read_factory_delivery`
   and `inspect_factory_issue_graph`. A capture fails if delivery is read while the synthetic host
   reports the app as unconfigured.
-- **Not claimed:** a live GitHub read. That's the integrator's opt-in `github_live` check, and the
-  OCI egress decision is still the owner's. See [GitHub App](github-app.md#egress-an-owner-decision-is-required).
+- **Not claimed:** a live GitHub read. That's the integrator's opt-in `github_live` check. OCI
+  egress is Option A, an opt-in GitHub-only CONNECT proxy override; the default compose stays
+  no-egress. See [GitHub App](github-app.md#egress-opt-in-github-only-proxy-option-a).
 
 ## Implementation order
 

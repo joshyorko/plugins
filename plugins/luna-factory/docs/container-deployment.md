@@ -173,6 +173,17 @@ XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000
 
 The existing host listener on 18787 and its Codex MCP entry must remain unchanged. The OCI canary uses 18788 and has no tunnel configuration.
 
+## Optional GitHub-only egress
+
+The default deployment has no egress. To let a configured GitHub App reach GitHub, add
+`container/compose.github-egress.yaml` as an extra `--file` after `compose.yaml` on every
+`config`, `up`, `stop` and `down` command. It adds a hardened `github-egress-proxy` service, on the
+same pinned Python base image, that tunnels only `CONNECT api.github.com:443` and
+`CONNECT github.com:443`, and points Luna's `HTTPS_PROXY` at it. Luna stays on the internal network.
+Keep `egress_proxy.py` next to the override file. See
+[GitHub App](github-app.md#egress-opt-in-github-only-proxy-option-a) for what it permits and how
+to turn it off.
+
 ## Back up the private state
 
 Use SQLite's online backup API while the service is running. It includes committed WAL data in the destination database.

@@ -98,6 +98,10 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/server/Cargo.toml",
     "plugins/luna-factory/tests/fixtures/github/issue-graph-67.json",
     "plugins/luna-factory/tests/test_container_build.py",
+    # #76 Option A: opt-in GitHub-only egress proxy (deployment files, not image inputs).
+    "plugins/luna-factory/container/compose.github-egress.yaml",
+    "plugins/luna-factory/container/egress_proxy.py",
+    "plugins/luna-factory/tests/test_egress_proxy.py",
     "plugins/luna-factory/scripts/package_runtime.py",
     "plugins/luna-factory/tests/test_package_runtime.py",
     "plugins/luna-factory/tests/test_release_archive.py",
