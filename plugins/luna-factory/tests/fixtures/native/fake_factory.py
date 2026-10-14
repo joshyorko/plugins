@@ -17,6 +17,18 @@ active={"owner":bool(history and history[-1]["status"]=="inProgress"),"child":bo
 def emit(value):
     print(json.dumps(value), flush=True)
 
+def revoke_qualifications():
+    """Test-only: revoke every grant in the fixture's temporary DB from this separate
+    process and connection, as an operator `revoke-qualification` would."""
+    import sqlite3
+    db = sqlite3.connect(str(home / "state/runs.sqlite"), timeout=5)
+    for fingerprint, payload in db.execute("SELECT fingerprint,payload FROM execution_qualifications").fetchall():
+        value = json.loads(payload)
+        value["revoked_at"] = 1
+        db.execute("UPDATE execution_qualifications SET payload=? WHERE fingerprint=?", (json.dumps(value), fingerprint))
+    db.commit()
+    db.close()
+
 def report_for(turn):
     report=json.loads((home / "report.json").read_text())
     if report.pop("_fixture_bind_dispatch",False):
@@ -38,6 +50,8 @@ for line in sys.stdin:
     params = message.get("params", {})
     result = {}
     mode = (home / "mode").read_text() if (home / "mode").exists() else ""
+    if mode == "revoke_on_" + str(method):
+        revoke_qualifications()
     if method == "initialize":
         result = {"userAgent": "synthetic-factory"}
     elif method == "model/list":

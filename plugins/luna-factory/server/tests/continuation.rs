@@ -1,4 +1,5 @@
 //! Live-monitor continuation through a disposable protocol fixture, never real Codex.
+#[allow(dead_code)]
 mod support;
 use luna_factoryd::{
     config::Config,
@@ -51,7 +52,11 @@ fn setup() -> (support::FixtureDir, Factory, StartRequest) {
     std::fs::write(&skill, "Synthetic continuation fixture; no inference.").unwrap();
     let config: Config = serde_json::from_value(json!({"listen":"127.0.0.1:8787","database":dir.path().join("state/runs.sqlite"),"codex_binary":binary,"skill_path":skill,"repositories":{"fixture":{"root":repo,"max_finish":"local_candidate"}},"profiles":{"default":{"effort":"high"}},"limits":{"capacity":2,"repair_attempts":2,"wall_seconds":300}})).unwrap();
     let request = serde_json::from_value(json!({"repository":"fixture","objective":"Bounded continuation fixture","acceptance":["A1 current task-scoped proof"],"non_goals":[],"finish":"local_candidate","profile":"default","capacity":1,"repair_attempts":2,"wall_seconds":300,"idempotency_key":"continuation"})).unwrap();
-    (dir, Factory::new(config).unwrap(), request)
+    (
+        dir,
+        Factory::new(support::qualified(config)).unwrap(),
+        request,
+    )
 }
 
 fn calls(dir: &tempfile::TempDir, method: &str) -> Vec<Value> {
@@ -407,7 +412,7 @@ fn recovery_of_completed_report_never_runs_its_continuation_directive() {
         drop(base);
         config.native_transport = "existing_daemon".into();
         dir.serve(&mut config);
-        let factory = Factory::new(config.clone()).unwrap();
+        let factory = Factory::new(support::qualified(config.clone())).unwrap();
         let original = factory.start(request).await.unwrap();
         let mut result = report(&original);
         result["candidates"] = json!([candidate("task-a", &[])]);
@@ -422,7 +427,7 @@ fn recovery_of_completed_report_never_runs_its_continuation_directive() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
         let id = original["id"].as_str().unwrap();
-        let factory = Factory::new(config).unwrap();
+        let factory = Factory::new(support::qualified(config)).unwrap();
         factory.reconcile_startup().await.unwrap();
         let _ = factory.reconcile(id, None).await;
         let recovered = factory.get(id).await.unwrap();
@@ -536,7 +541,7 @@ fn lost_continuation_ack_reconcile_and_restart_never_redispatch() {
         drop(base);
         config.native_transport = "existing_daemon".into();
         dir.serve(&mut config);
-        let factory = Factory::new(config.clone()).unwrap();
+        let factory = Factory::new(support::qualified(config.clone())).unwrap();
         let original = factory.start(request).await.unwrap();
         let id = original["id"].as_str().unwrap();
         let mut result = report(&original);
@@ -562,7 +567,7 @@ fn lost_continuation_ack_reconcile_and_restart_never_redispatch() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
         let id = original["id"].as_str().unwrap();
-        let restarted = Factory::new(config).unwrap();
+        let restarted = Factory::new(support::qualified(config)).unwrap();
         let _ = restarted.reconcile(id, None).await;
         assert_eq!(calls(&dir, "turn/start").len(), 2);
         let final_run = restarted.get(id).await.unwrap();

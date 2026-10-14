@@ -1122,8 +1122,8 @@ impl Factory {
         self.get(&run.id).await
     }
     async fn launch(&self, run: &mut Run) -> Result<()> {
-        self.require_qualified(run)?;
         self.validate_current_authority(run).await?;
+        self.require_qualified(run)?;
         let control = run.control.as_ref().context("control_missing")?;
         crate::control::admit_task(control, &control.tasks["objective"])?;
         ensure!(now() < run.deadline_at, "time_budget_exhausted");
@@ -1720,6 +1720,7 @@ impl Factory {
         message: Option<&str>,
         automatic: bool,
     ) -> Result<()> {
+        self.validate_current_authority(run).await?;
         // Before any Dispatch/EffectIntent event or receipt: an unqualified profile
         // leaves an honest blocker and never an unknown effect.
         if let Err(error) = self.require_qualified(run) {
@@ -1730,7 +1731,6 @@ impl Factory {
             self.store.lock().await.save(run)?;
             return Err(error);
         }
-        self.validate_current_authority(run).await?;
         if automatic || run.graph_repository_stamp.is_some() {
             self.validate_graph_repository(run).await?;
         }
@@ -1895,8 +1895,8 @@ impl Factory {
             run.route_observations.is_empty(),
             "continuation_route_unverified"
         );
-        self.require_qualified(run)?;
         self.validate_current_authority(run).await?;
+        self.require_qualified(run)?;
         self.validate_graph_repository(run).await?;
         ensure!(
             run.claim_held && run.observed_claim == crate::store::ObservedClaim::Owned,
@@ -2519,8 +2519,8 @@ impl Factory {
     ) -> Result<Value> {
         let _guard = self.mutation.lock().await;
         let mut run = self.store.lock().await.get(id)?;
-        self.require_qualified(&run)?;
         self.validate_current_authority(&run).await?;
+        self.require_qualified(&run)?;
         ensure!(
             run.state == "RUNNING" && run.turn_id.as_deref() == Some(expected_turn),
             "stale_turn_or_not_running"
@@ -2663,9 +2663,9 @@ impl Factory {
         }
         let guard = self.mutation.lock().await;
         let mut run = self.store.lock().await.get(id)?;
+        self.validate_current_authority(&run).await?;
         // Before any native connection, recovery read, claim or event.
         self.require_qualified(&run)?;
-        self.validate_current_authority(&run).await?;
         let answer_fingerprint = message.map(|message| {
             format!(
                 "{:x}",

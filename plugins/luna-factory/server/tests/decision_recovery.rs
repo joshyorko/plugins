@@ -1,4 +1,5 @@
 //! Actual Factory regression tests over a labeled subprocess fixture. No live inference.
+#[allow(dead_code)]
 mod support;
 use luna_factoryd::{
     config::Config,
@@ -128,7 +129,7 @@ async fn restart_cannot_turn_unavailable_stdio_ownership_into_cessation_or_redis
     let deadline = run.deadline_at;
     let id = run.id.clone();
     drop(store);
-    let factory = Factory::new(config).unwrap();
+    let factory = Factory::new(support::qualified(config)).unwrap();
     factory.reconcile_startup().await.unwrap();
     let original = factory.get(&id).await.unwrap();
     let error = factory
@@ -187,7 +188,7 @@ async fn terminal_decision_survives_factory_startup() {
     run.control.as_mut().unwrap().migrated = true;
     store.save(&mut run).unwrap();
     drop(store);
-    let factory = Factory::new(config).unwrap();
+    let factory = Factory::new(support::qualified(config)).unwrap();
     let actual = factory.get(&run.id).await.unwrap();
     assert_eq!(
         actual["state"], "NEEDS_INPUT",
@@ -203,7 +204,7 @@ async fn terminal_decision_survives_reconcile_and_remains_answerable_with_zero_r
     let (dir, mut config, mut request) = setup();
     request.repair_attempts = 0;
     config.native_transport = "existing_daemon".into();
-    let factory = Factory::new(config.clone()).unwrap();
+    let factory = Factory::new(support::qualified(config.clone())).unwrap();
     let mut store = Store::open(&config).unwrap();
     let mut run = store.admit(&config, &request).unwrap().run;
     run.thread_id = Some("owner".into());
@@ -243,7 +244,7 @@ async fn terminal_decision_survives_reconcile_and_remains_answerable_with_zero_r
 #[tokio::test]
 async fn replayed_child_failure_does_not_consume_two_repairs() {
     let (dir, config, request) = setup();
-    let factory = Factory::new(config).unwrap();
+    let factory = Factory::new(support::qualified(config)).unwrap();
     let run = factory.start(request).await.unwrap();
     let id = run["id"].as_str().unwrap();
     std::fs::write(dir.path().join("mode"), "child_failure").unwrap();
@@ -270,7 +271,7 @@ async fn replayed_child_failure_does_not_consume_two_repairs() {
 #[tokio::test]
 async fn failure_before_resume_ack_is_not_overwritten_by_resume_snapshot() {
     let (dir, config, request) = setup();
-    let factory = Factory::new(config).unwrap();
+    let factory = Factory::new(support::qualified(config)).unwrap();
     let run = factory.start(request).await.unwrap();
     let id = run["id"].as_str().unwrap();
     factory.cancel(id).await.unwrap();
@@ -289,7 +290,7 @@ async fn failure_before_resume_ack_is_not_overwritten_by_resume_snapshot() {
 async fn transport_close_preserves_accepted_terminal_decision() {
     let (dir, config, mut request) = setup();
     request.repair_attempts = 0;
-    let factory = Factory::new(config).unwrap();
+    let factory = Factory::new(support::qualified(config)).unwrap();
     let run = factory.start(request).await.unwrap();
     let id = run["id"].as_str().unwrap();
     let subject =
@@ -339,7 +340,7 @@ async fn decision_report(
 async fn late_duplicate_answer_must_not_answer_next_decision() {
     let (dir, config, mut request) = setup();
     request.repair_attempts = 0;
-    let factory = Factory::new(config).unwrap();
+    let factory = Factory::new(support::qualified(config)).unwrap();
     let run = factory.start(request).await.unwrap();
     let id = run["id"].as_str().unwrap();
     let first = decision_report(&dir, &factory, &run, "Use option A or B?", json!([])).await;
@@ -416,7 +417,7 @@ async fn late_duplicate_answer_must_not_answer_next_decision() {
             [recovered_config.database.to_str().unwrap()],
         )
         .unwrap();
-    let recovered = Factory::new(recovered_config).unwrap();
+    let recovered = Factory::new(support::qualified(recovered_config)).unwrap();
     let count = calls(&dir).len();
     let replayed = recovered
         .resume_with_decision(id, Some("Option A"), Some(decision_id))

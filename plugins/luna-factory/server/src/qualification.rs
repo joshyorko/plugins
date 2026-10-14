@@ -317,7 +317,10 @@ pub fn capability(config: &Config) -> Value {
     } else if config.profiles.is_empty() {
         NOT_QUALIFIED.to_string()
     } else {
-        profiles[0]["reason"].as_str().unwrap_or(NOT_QUALIFIED).to_string()
+        profiles[0]["reason"]
+            .as_str()
+            .unwrap_or(NOT_QUALIFIED)
+            .to_string()
     };
     json!({"eligible":eligible,"reason":reason,"profiles":profiles})
 }
@@ -390,7 +393,8 @@ pub fn record(config: &Config, request: RecordRequest<'_>) -> Result<Value> {
     );
     let profile = ExecutionProfile::from_config(config, request.alias)?;
     ensure!(
-        profile.codex_binary_identity != UNAVAILABLE || config.native_transport == "existing_daemon",
+        profile.codex_binary_identity != UNAVAILABLE
+            || config.native_transport == "existing_daemon",
         "codex_binary_identity_unavailable"
     );
     let fingerprint = profile.fingerprint();
