@@ -257,7 +257,8 @@ describe("accessible workbench", () => {
     run.presentation.primary_action = { ...run.presentation.primary_action, kind: "reconcile", label: "Reconcile existing work", reason: "owned_liveness_unknown", tool: "reconcile_factory_run", allowed: true };
     run.presentation.actions = [run.presentation.primary_action];
     const { root } = render(null, run);
-    expect(root.textContent).toContain("Owned execution has not been proved stopped.");
+    expect(root.textContent).toContain("Luna can't confirm the earlier run stopped.");
+    expect(root.querySelector('[data-kind="reconcile"][data-tool="reconcile_factory_run"]')?.textContent).toBe("Check running work");
     expect(root.textContent).not.toContain("owned_liveness_unknown");
     const legacy = fixtureRun();
     delete legacy.control;

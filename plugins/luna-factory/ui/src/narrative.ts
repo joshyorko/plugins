@@ -43,7 +43,7 @@ export function blockerCopy(run: RunView): string | null {
     case "diagnosis_required": return "A diagnosis is needed before another repair";
     case "native_approval": return "Waiting on an approval in native Codex";
     case "effect_outcome_unknown": return "An effect's outcome is unknown";
-    case "liveness_unknown": return "Owned execution isn't proved stopped yet";
+    case "liveness_unknown": return "Status unknown";
     case "unknown": return "Blocker not categorized by the server";
     case "none": case "planning_only": return null;
   }

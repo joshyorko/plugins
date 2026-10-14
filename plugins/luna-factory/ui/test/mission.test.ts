@@ -279,9 +279,14 @@ describe("campaign grouping", () => {
     controller.state.campaigns = [fixtureCampaign()];
     const root = document.createElement("div");
     renderWorkbench(root, controller.state, null, false);
-    expect(root.querySelector(".campaign-head .campaign-parent")?.textContent).toContain("GitHub example/actions#101");
+    expect(root.querySelector(".campaign-head .campaign-parent")?.textContent).toBe("from #101");
+    expect(root.querySelector<HTMLAnchorElement>(".campaign-head .campaign-parent a")?.href).toBe("https://github.com/example/actions/issues/101");
     expect(root.querySelector(".campaign-head .campaign-parent")?.textContent).not.toContain("supplied, not verified");
-    expect(root.querySelector(".graph-inspector")?.textContent).toContain("Parent issue GitHub example/actions#101 · Linked by you");
+    expect(root.querySelector(".graph-inspector")?.textContent).not.toContain("Parent issue");
+    controller.state.campaigns = [fixtureCampaign({ parent: { ...fixtureCampaign().parent, display: null } })];
+    renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector(".campaign-head .campaign-parent")?.textContent).toBe("from #101");
+    expect(root.querySelector(".campaign-head .campaign-parent a")).toBeNull();
     expect(root.querySelector(".decision-panel")).toBeNull();
     expect(root.querySelector(".map-node .node-title")?.textContent).toBeTruthy();
     expect(root.querySelector(".map-node")?.classList.contains("dim")).toBe(false);

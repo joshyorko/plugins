@@ -29,10 +29,10 @@ const reasonCopy = (reason: string | null): string => {
   const messages: Record<string, string> = {
     planning_only: "The saved plan is ready to review.", evidence_missing: "Evidence has not been collected.", owned_execution_active: "Owned execution is active.", read_only_status: "Reads current status without inference.",
     pending_owner_decision: "The completed owner decision needs an answer.", current_owned_turn: "Correction is fenced to the current turn.",
-    stop_requires_native_cessation_proof: "Ownership stays held until native cessation is observed.", same_goal_remaining_budget: "Continue the same objective within its remaining limits.",
-    effect_outcome_unknown: "Reconcile the existing effect before any new work.", owned_liveness_unknown: "Owned execution has not been proved stopped.",
+    stop_requires_native_cessation_proof: "Check current running work before continuing.", same_goal_remaining_budget: "Continue the same objective within its remaining limits.",
+    effect_outcome_unknown: "Reconcile the existing effect before any new work.", owned_liveness_unknown: "Luna can't confirm the earlier run stopped.",
     time_budget_exhausted: "The original time limit is exhausted.", repair_budget_exhausted: "The original repair limit is exhausted.",
-    diagnosis_required: "Two attempts made no progress; a diagnosis is required.", read_only_native_reconciliation: "Observe existing native work without starting or stopping it.",
+    diagnosis_required: "Two attempts made no progress; a diagnosis is required.", read_only_native_reconciliation: "Check current running work before continuing.",
     inspect_native_evidence: "Inspect retained native evidence.", native_approval_requires_native_ui: "This approval can only be answered in native Codex.",
   };
   // Unmapped codes are never shown raw; prose reasons from the server are already plain language.
@@ -42,7 +42,10 @@ const deliverableLabel = (kind: "local_candidate" | "push" | "pr_ready"): string
 const disabled = (value: boolean): string => value ? " disabled" : "";
 const button = (action: string, label: string, options: { primary?: boolean; disabled?: boolean; icon?: "plus" | "refresh" | "settings" | "close"; quiet?: boolean; iconOnly?: boolean } = {}): string => `<button type="button" id="action-${action}" data-action="${action}" class="button${options.primary ? " primary" : ""}${options.quiet ? " quiet" : ""}${options.iconOnly ? " icon-only" : ""}"${options.iconOnly ? ` aria-label="${escape(label)}" title="${escape(label)}"` : ""}${disabled(options.disabled ?? false)}>${options.icon ? icon(options.icon) : ""}${options.iconOnly ? "" : escape(label)}</button>`;
 type PresentedAction = NonNullable<RunView["presentation"]>["actions"][number];
-const actionButton = (action: PresentedAction, primary = false, busy = false): string => `<button type="button" class="button${primary ? " primary" : ""}" id="control-${escape(action.kind)}" data-action="control" data-kind="${escape(action.kind)}" data-tool="${escape(action.tool ?? "")}"${disabled(busy || !action.allowed || !action.tool)} aria-describedby="action-reason">${escape(action.label)}</button>`;
+const actionButton = (action: PresentedAction, primary = false, busy = false): string => {
+  const label = action.kind === "reconcile" ? "Check running work" : action.kind === "steer" ? "Reply to Luna" : action.label;
+  return `<button type="button" class="button${primary ? " primary" : ""}" id="control-${escape(action.kind)}" data-action="control" data-kind="${escape(action.kind)}" data-tool="${escape(action.tool ?? "")}"${disabled(busy || !action.allowed || !action.tool)} aria-describedby="action-reason">${escape(label)}</button>`;
+};
 const statusMark = (tier: Tier, label: string): string => `<span class="status tier-${tier}"><span class="status-shape" aria-hidden="true"></span>${escape(label)}</span>`;
 function proofLine(run: RunView): string {
   const counts = run.control ? run.presentation?.criteria : undefined;
@@ -84,7 +87,6 @@ export function renderWorkbench(root: HTMLElement, state: ViewState, editor: Edi
     <main id="main" class="main">
       <div class="status-area" aria-live="polite" aria-atomic="true">${state.pending ? `<div class="notice pending"><span class="spinner" aria-hidden="true"></span>${state.pending.tool === "cancel_factory_run" ? "Stopping owned execution. Waiting for verified status…" : "Waiting for the server…"}</div>` : state.refreshing ? '<div class="quiet-status">Reading persisted state…</div>' : ""}${state.notice ? `<div class="notice success">${escape(state.notice)}</div>` : ""}${state.error ? `<div class="notice error" role="alert"><span>${escape(state.error)}</span>${button("refresh", "Refresh", { disabled: !state.connected || Boolean(state.pending) }).replace('id="action-refresh"', 'id="action-refresh-error"')}</div>` : ""}${state.contextError ? `<div class="notice">${escape(state.contextError)}</div>` : ""}</div>
       ${surface === "thread" ? '<div class="thread-inspector-label">This conversation</div>' : ""}${editor ? renderEditor(editor, state, run) : !state.initialized ? `<section class="empty welcome">${lunaMark(40)}<h1>Opening Luna Factory</h1><p>Waiting for the host's first snapshot.</p><p class="muted">Open Luna Factory from your MCP Apps host to connect.</p></section>` : state.selectedId ? run ? renderCampaign(run, state, options) : '<section class="empty"><h1>Opening this run</h1><p>The exact run is being read from the server.</p></section>' : renderHome(state, canStart, options)}
-      <footer class="footer"><span>${state.refreshing ? "Reading current state" : "Status reads use no inference"}</span><span>Execution stays unavailable until independently qualified</span></footer>
     </main></div>`;
   const newForm = root.querySelector<HTMLFormElement>("form");
   if (draft && newForm && oldKind === newForm.dataset.form && oldForm?.dataset.inputIdentity === newForm.dataset.inputIdentity) {
@@ -210,14 +212,14 @@ function renderCampaign(run: RunView, state: ViewState, options: WorkbenchOption
   // never read it; an uncategorized blocker keeps the generic label.
   const category = presentation?.blocker_kind?.kind === "unknown" ? null : blockerCopy(run);
   const eyebrow = attention ? "Needs you" : run.planning_only ? "Plan" : category ?? (run.blocker ? "Execution blocker" : "Next safe action");
-  const headline = attention ? run.pending_decision?.question || action.label : run.planning_only ? "" : run.blocker || action.label;
+  const headline = attention ? run.pending_decision?.question || action.label : run.planning_only ? "" : presentation?.blocker_kind?.kind === "liveness_unknown" ? "Luna can't confirm the earlier run stopped." : run.blocker || action.label;
   const campaign = state.campaigns?.find(item => item.planning_run_id === run.id || item.run_ids.includes(run.id));
   return `<section class="campaign-head">
       <div class="eyebrow">${escape(run.repository)}</div>
       <h1>${escape(run.objective)}</h1>
-      ${campaign ? `<p class="campaign-parent">Parent issue ${escape(parentLabel(campaign))}</p>` : ""}
+      ${campaign ? `<p class="campaign-parent">from ${campaign.parent.display?.url ? `<a class="source-link" href="${escape(campaign.parent.display.url)}" target="_blank" rel="noopener noreferrer">#${campaign.parent.forge.number}</a>` : `#${campaign.parent.forge.number}`}</p>` : ""}
       <p class="statusline">${statusMark(tier, statusLabel(run))}${run.planning_only ? "" : proofLine(run)}<span class="fresh">${escape(freshness(activityAt(run), options.now))}</span>${run.created_at !== undefined ? `<span class="started"><time datetime="${new Date(run.created_at * 1000).toISOString()}">${run.planning_only ? "Created" : "Started"} ${escape(clock(run.created_at, options.now))}</time></span>` : ""}</p>
-      <div class="story">${changes?.lines.length ? `<p class="story-kicker">Since you last looked at ${escape(clock(changes.since))}</p><ul>${changes.lines.map(line => `<li>${escape(line)}</li>`).join("")}</ul>` : `<p class="story-now">${escape(attention ? run.delta || "No new change was reported." : nowSentence(run))}</p>`}${run.remaining_gap && tier !== "planned" ? `<p class="story-gap"><span>Still needed</span>${escape(run.remaining_gap)}</p>` : ""}</div>
+      <div class="story">${changes?.lines.length ? `<p class="story-kicker">Since you last looked at ${escape(clock(changes.since))}</p><ul>${changes.lines.map(line => `<li>${escape(line)}</li>`).join("")}</ul>` : `<p class="story-now">${escape(attention ? run.delta || "No new change was reported." : nowSentence(run))}</p>`}${run.remaining_gap && tier !== "planned" ? `<p class="story-gap">${escape(run.remaining_gap === "Owner acceptance of the current subject is still required." ? "Waiting for you to accept the result." : `Still needed: ${run.remaining_gap}`)}</p>` : ""}</div>
     </section>
     ${run.planning_only && !attention ? "" : `<section class="decision-panel tier-${attention ? "needs" : tier}${attention ? " needs-you" : " compact"}" aria-labelledby="decision-title"><div class="eyebrow"${category && !attention && !run.planning_only ? ` data-blocker-kind="${escape(presentation?.blocker_kind?.kind ?? "")}"` : ""}>${escape(eyebrow)}</div><h2 id="decision-title">${escape(headline)}</h2><p id="action-reason">${escape(reasonCopy(presentation ? action.reason : null))}${presentation ? "" : " Refresh to load the server's action and proof view."}</p><div class="run-controls">${actionButton(action, !run.planning_only || attention, busy)}${secondary.map(item => actionButton(item, false, busy)).join("")}</div></section>`}
     ${renderProposalReview(state)}

@@ -152,7 +152,7 @@ describe("typed blocker copy", () => {
     const copy = fixtureBlockerKinds.map(kind => { const run = fixtureRun(); run.presentation!.blocker_kind = kind; return [kind.kind === "budget_exhausted" ? `budget:${kind.budget}` : kind.kind, blockerCopy(run)]; });
     expect(Object.fromEntries(copy)).toEqual({
       "budget:time": "Time budget used up", "budget:repair": "Repair budget used up", diagnosis_required: "A diagnosis is needed before another repair",
-      native_approval: "Waiting on an approval in native Codex", effect_outcome_unknown: "An effect's outcome is unknown", liveness_unknown: "Owned execution isn't proved stopped yet",
+      native_approval: "Waiting on an approval in native Codex", effect_outcome_unknown: "An effect's outcome is unknown", liveness_unknown: "Status unknown",
       planning_only: null, none: null, unknown: "Blocker not categorized by the server",
     });
   });

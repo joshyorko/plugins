@@ -27,7 +27,7 @@ export function fixtureRun(overrides: Partial<RunView> = {}): RunView {
     const kind = run.state === "NEEDS_INPUT" && run.pending_decision ? "answer" : ["RUNNING", "VERIFYING"].includes(run.state) && run.turn_id ? "steer" : ["BLOCKED", "QUIESCENT", "INTERRUPTED", "FAILED", "CANCELLED"].includes(run.state) ? "resume" : ["CONVERGED", "CANCELLED"].includes(run.state) ? "inspect" : "wait";
     const tool = kind === "answer" ? "resume_factory_run" : kind === "steer" ? "steer_factory_run" : kind === "resume" ? "resume_factory_run" : null;
     const reason = kind === "answer" ? "A decision is waiting" : kind === "steer" ? "The owner turn is active" : kind === "resume" ? "The run is stopped" : "Wait for a new observed result";
-    const primary = { kind, label: kind === "answer" ? "Answer the owner" : kind === "steer" ? "Steer the owner" : kind === "resume" ? "Resume same run" : kind === "inspect" ? "Inspect this outcome" : "Wait for an observed result", reason, tool, allowed: tool !== null } as const;
+    const primary = { kind, label: kind === "answer" ? "Answer the owner" : kind === "steer" ? "Reply to Luna" : kind === "resume" ? "Resume same run" : kind === "inspect" ? "Inspect this outcome" : "Wait for an observed result", reason, tool, allowed: tool !== null } as const;
     const resultKind = run.state === "CONVERGED" ? "finished_verified" : ["CANCELLED", "INTERRUPTED", "FAILED", "QUIESCENT"].includes(run.state) ? "stopped_unresolved" : run.state === "NEEDS_INPUT" ? "needs_input" : ["RUNNING", "VERIFYING", "STARTING", "CANCELLING"].includes(run.state) ? "working" : "unverified";
     const resultLabel = resultKind === "finished_verified" ? "Finished and verified" : resultKind === "stopped_unresolved" ? "Stopped with work unresolved" : resultKind === "needs_input" ? "Waiting for your decision" : resultKind === "working" ? "Work in progress" : "Outcome unverified";
     run.presentation = {
@@ -163,8 +163,8 @@ export function fixtureSwarmRun(): RunView {
   });
   run.control!.tasks = [
     { id: "objective", title: run.objective, criterion_ids: ["A1", "A2"], dependencies: [], state: "running", admission: "admitted", reason: null, owner_thread: "owner-a", attempt_ids: ["attempt-1"] },
-    { id: "child:child-1", title: "Observed native child", criterion_ids: [], dependencies: [], state: "running", admission: "unverified", reason: null, owner_thread: "child-1", attempt_ids: [] },
-    { id: "child:child-2", title: "Observed native child", criterion_ids: [], dependencies: [], state: "verify", admission: "unverified", reason: null, owner_thread: "child-2", attempt_ids: [] },
+    { id: "child:child-1", title: "Codex task", criterion_ids: [], dependencies: [], state: "running", admission: "unverified", reason: null, owner_thread: "child-1", attempt_ids: [] },
+    { id: "child:child-2", title: "Codex task", criterion_ids: [], dependencies: [], state: "verify", admission: "unverified", reason: null, owner_thread: "child-2", attempt_ids: [] },
   ];
   run.presentation!.result = { kind: "working", label: "Work in progress" };
   run.presentation!.owner = { thread_id: "owner-a", turn_id: "turn-a", liveness: "active" };

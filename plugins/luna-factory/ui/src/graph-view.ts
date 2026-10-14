@@ -1,5 +1,5 @@
 import type { ViewState } from "./controller";
-import { parentProvenanceLabel, providerLabel, type FactoryGraph, type GraphChange, type RunView } from "./domain";
+import { providerLabel, type FactoryGraph, type GraphChange, type RunView } from "./domain";
 import { roster, livenessLabel, type Agent } from "./agents";
 import { canvasSize, edgePath, fitGeometry, layoutWaves, nodePosition, type MapGeometry, type MapNode, type WaveLayout } from "./campaign-map";
 import { coordinatorToken, icon, taskGlyph, taskTone, taskToneLabel, workerToken } from "./lunar";
@@ -165,7 +165,6 @@ function renderInspector(state: ViewState, run: RunView, tasks: MapTask[], graph
     <div class="eyebrow">Step ${wave}${selected.source ? ` · ${esc(sourceLabel(selected.source))}${sourceNumber(selected.source) ? ` ${esc(sourceNumber(selected.source)!)}` : ""}` : ""}</div>
     <h3>${esc(selected.title || selected.id)}</h3>
     <dl class="route-list"><dt>Status</dt><dd class="inspector-state">${taskGlyph(tone)}<span>${esc(taskToneLabel[tone])}</span></dd>${blocker ? `<dt>Blocked by</dt><dd class="blocker-kind">${esc(blocker)}</dd>` : ""}${ownerRow ? `<dt>Owner</dt><dd>${ownerRow}</dd>` : ""}${reason ? `<dt>Note</dt><dd>${esc(reason)}</dd>` : ""}${selected.source ? `<dt>Source</dt><dd>${sourceReference(selected.source)}</dd>` : ""}</dl>
-    ${campaignParentNote(state, run)}
     <h4>What it waits on</h4>${list(selected.dependencies, "Nothing.")}
     <h4>What it unblocks</h4>${list(unblocks, "Nothing else in this plan waits on it.")}
     <h4>Done when</h4>${proof ? `<ul class="graph-proof">${proof}</ul>` : '<p class="small muted">No completion check is linked to this task.</p>'}
@@ -174,11 +173,6 @@ function renderInspector(state: ViewState, run: RunView, tasks: MapTask[], graph
     <div class="inspector-actions">${followUps({ id: selected.id, title: selected.title })}${graphNode ? `<button type="button" class="button small edit-toggle" id="edit-toggle-${esc(selected.id)}" data-action="toggle-disclosure" aria-controls="edit-${esc(selected.id)}" aria-expanded="false">Edit</button>` : ""}</div>
     ${graphNode ? renderPlanEditor(state, graph!, graphNode) : ""}
   </aside>`;
-}
-
-function campaignParentNote(state: ViewState, run: RunView): string {
-  const campaign = state.campaigns?.find(item => item.planning_run_id === run.id || item.run_ids.includes(run.id));
-  return campaign ? `<p class="inspector-note small muted">Parent issue ${esc(providerLabel(campaign.parent.forge.provider))} ${esc(campaign.parent.forge.repository)}#${campaign.parent.forge.number} · ${esc(parentProvenanceLabel(campaign))}</p>` : "";
 }
 
 const reasons: Record<string, string> = {

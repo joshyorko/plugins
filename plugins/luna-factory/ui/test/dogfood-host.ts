@@ -14,9 +14,9 @@ const largeFontStyles = McpUiHostStylesSchema.parse({ variables: { "--font-text-
 const campaign = fixtureCampaignPlan();
 const decisionRun = () => fixtureRun({ id: "review-301", state: "NEEDS_INPUT", pending_decision: { id: "fixture-decision", question: "Which approved scope should the owner use?" }, active_workers: 0, updated_at: 1791141000 });
 const blockedRun = () => {
-  const run = fixtureRun({ id: "blocked-77", state: "BLOCKED", pending_decision: null, active_workers: 0, blocker: "Native ownership is unverified. Keep the claim held.", updated_at: 1791139000, created_at: 1791132000 });
+  const run = fixtureRun({ id: "blocked-77", state: "BLOCKED", pending_decision: null, active_workers: 0, blocker: "Luna can't confirm the earlier run stopped.", updated_at: 1791139000, created_at: 1791132000 });
   // Server-shaped: unproved liveness with a held claim projects read-only reconciliation, never a decision.
-  const reconcile = { kind: "reconcile" as const, label: "Reconcile native ownership", reason: "read_only_native_reconciliation", tool: "reconcile_factory_run", allowed: true };
+  const reconcile = { kind: "reconcile" as const, label: "Check running work", reason: "read_only_native_reconciliation", tool: "reconcile_factory_run", allowed: true };
   run.presentation!.primary_action = reconcile;
   run.presentation!.actions = [reconcile, ...run.presentation!.actions.filter(action => action.kind === "cancel")];
   run.presentation!.blocker_kind = { kind: "liveness_unknown" };
