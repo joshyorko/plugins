@@ -1,0 +1,137 @@
+# Execution qualification (#71, first slice)
+
+Ordinary Factory execution is denied unless the local operator has recorded a current
+qualification for the exact execution profile. This slice adds the persisted record,
+enforces it at every native effect path, and reports it in capabilities. It does not
+qualify any profile itself and does not enable execution anywhere.
+
+## Record model
+
+An execution profile is derived from the operator config plus a profile alias:
+
+| Field | Source |
+| --- | --- |
+| `factory_version` | `CARGO_PKG_VERSION` of the running binary |
+| `transport` | `native_transport` (`stdio` or `existing_daemon`) |
+| `codex_binary` | Absolute, symlink-resolved `codex_binary` path |
+| `codex_binary_identity` | `size=<bytes>;mtime=<secs>.<nanos>`, or `unavailable` |
+| `native_socket` | Optional configured socket path |
+| `model` | `gpt-6-luna` (`native::LUNA_MODEL`) |
+| `profile` | Profile alias |
+| `effort` | The profile's configured effort |
+
+The fingerprint is the sha256 of the sorted-key JSON of these fields. Changing any of
+them, including rebuilding or replacing the Codex binary, changes the fingerprint and
+denies execution until the operator records a grant for the new profile.
+
+Grants live in the existing SQLite database, in an additive
+`execution_qualifications(fingerprint PRIMARY KEY, profile_alias, payload)` table
+created with `CREATE TABLE IF NOT EXISTS`. `user_version` is unchanged, so older
+binaries still open the database. They never read the table, and they keep their own
+behavior. The payload is
+`{profile, scope, max_capacity, evidence_sha256, evidence_ref, recorded_at, expires_at?, revoked_at?}`.
+
+- `scope` is `ordinary` (may authorize Factory runs) or `qualification_only` (may
+  authorize only the operator canary; never `start_factory`, continuation, repair,
+  steer or resume).
+- `max_capacity` (1 to 8, default 1) bounds the requested run capacity.
+- `evidence_sha256` and `evidence_ref` identify the evidence file. Its content is
+  never echoed.
+
+## Reason codes
+
+| Code | Meaning |
+| --- | --- |
+| `execution_not_qualified` | No grant for this profile, or the table or database is missing, unreadable or malformed |
+| `execution_profile_mismatch` | Grants exist for this alias, but none matches the current fingerprint |
+| `execution_qualification_revoked` | The matching grant was revoked |
+| `execution_qualification_expired` | The matching grant expired |
+| `execution_qualification_scope` | The matching grant's scope doesn't cover this use |
+| `execution_capacity_not_qualified` | Requested capacity exceeds the grant's `max_capacity` |
+
+MCP errors carry the bare code. Run blockers read
+`execution_not_qualified: <code>; nothing was dispatched`.
+
+## Enforcement
+
+The gate opens a fresh read-only SQLite connection for every check, so a revocation
+written by another process (the CLI or another service) takes effect before the next
+native byte.
+
+| Path | Check |
+| --- | --- |
+| `Factory::start` (`start_factory`) | After request validation and before `store.admit`. A refusal creates no run row, claim or receipt, and makes no native spawn or connection. |
+| `launch` | At the top, inside the `thread/start` and `turn/start` dispatch guards, and again before the `turn/start` Dispatch intent. A guard refusal settles the not-sent thread-start intent instead of leaving it unknown. |
+| `dispatch_existing_owner_locked` (continuation, repair, resume and answer dispatch) | At the top, before any Dispatch or EffectIntent event or receipt. Also before the Dispatch event and inside the `turn/start` guard. |
+| Automatic continuation | Before the diagnosis event. The run blocks with the honest blocker. |
+| `steer_at_revision` | Before EffectIntent and inside a guarded `turn/steer` send. |
+| `resume_*` | Before any native connection, recovery read, claim or event. Also before the resume EffectIntent and inside a guarded `thread/resume` send. |
+
+The checks run after the existing read-only authority validation, so configuration-drift
+codes keep their precedence. Containment (`turn/interrupt`, terminal stop, cancel),
+`reconcile`, startup passive recovery, planning (`create_factory_graph`, propose and
+apply) and every read stay available without qualification.
+
+A guard refusal is typed (`qualification::ExecutionDenied`). The guard runs after the
+transport owns its writer and before any byte is written, so a refused intent is
+settled as not sent. It never becomes `effect_outcome_unknown`.
+
+## Capabilities
+
+`capabilities.execution` is `{eligible, reason, profiles:[{alias, status, reason, max_capacity}]}`.
+`eligible` is true only when some configured profile has a current `ordinary` grant.
+Path fields are never included. `max_capacity` is null unless the grant is current.
+
+## Operator runbook (CLI only; there is no MCP write path)
+
+```
+luna-factoryd qualification-profile --config C --profile A
+luna-factoryd record-qualification --config C --profile A --evidence FILE \
+  --scope ordinary|qualification_only [--max-capacity 1] [--expires-in-days N]
+luna-factoryd revoke-qualification --config C --fingerprint FP
+luna-factoryd qualifications --config C
+luna-factoryd qualification-canary --config C --profile A --workspace DIR [--output FILE]
+```
+
+`record-qualification` refuses unless all of these hold:
+
+- The evidence JSON is readable and at most 1 MiB.
+- Its `profile_fingerprint` equals the current fingerprint.
+- The profile has no `codex_profile` override.
+- The binary identity is available (for `stdio`).
+
+Scope `ordinary` also requires `qualification_run` to have:
+
+- `harness: "luna-factory.qualification-canary.v1"`
+- `outcome: "passed"`
+- ordered `started_at` and `finished_at` values
+- a non-empty `checks` list in which every check passed
+- `cessation.verified: true`
+
+Recording again for the same fingerprint replaces the grant.
+
+## Canary harness contract
+
+`qualification-canary` requires a current `qualification_only` grant for the exact
+profile. The workspace must be an absolute, symlink-free, disposable git repository
+root with no remotes. It must not overlap any configured or approved repository root
+or discovery root, must not share their Git identity, and must not contain the
+database. The canary uses no repository alias, admits no run and isn't reachable via MCP.
+
+**Not yet implemented.** After the preconditions pass, the command refuses with
+`qualification_canary_not_yet_implemented`. It starts no native process and writes no
+evidence. The bounded owner turn hasn't been built yet. That turn would use capacity 1
+and a tiny wall budget, write a fixed canary file, have Luna compute that file's hash
+itself, and require verified cessation. Until it exists, no evidence file that passes
+the `ordinary` check is produced by Luna. An operator who hand-authors one is making
+an unverified local assertion.
+
+## Remaining for full #71
+
+- Live subscription inference through the canary on the operator runtime, with recorded evidence.
+- Real callback ownership: proof that native events are bound to the owned thread and turn.
+- Crash windows between intent, send and acknowledgement under qualification.
+- Independent native checks beyond `file_sha256`.
+- Verified cessation of the owner and every descendant on the operator runtime.
+- After a guard refusal at `turn/start`, the persisted Dispatch attempt stays
+  `turn_start_pending`. It is never replayed, and recovery treats it conservatively.

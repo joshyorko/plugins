@@ -92,6 +92,18 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/tests/test_release_archive.py",
     "plugins/luna-factory/plugin.json",
     "plugins/luna-factory/skills/setup/SKILL.md",
+    # #71: persisted exact-profile execution qualification.
+    "plugins/luna-factory/README.md",
+    "plugins/luna-factory/docs/execution-qualification.md",
+    "plugins/luna-factory/server/src/native.rs",
+    "plugins/luna-factory/server/src/qualification.rs",
+    "plugins/luna-factory/server/tests/continuation.rs",
+    "plugins/luna-factory/server/tests/decision_recovery.rs",
+    "plugins/luna-factory/server/tests/qualification.rs",
+    "plugins/luna-factory/server/tests/review_regressions.rs",
+    "plugins/luna-factory/server/tests/support/mod.rs",
+    "plugins/luna-factory/tests/fixtures/native/fake_continuation.py",
+    "plugins/luna-factory/tests/fixtures/native/fake_factory.py",
 }
 ALLOWED_RELEASE_PREFIXES = (
     "plugins/luna-factory/container/",

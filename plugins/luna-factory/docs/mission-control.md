@@ -116,7 +116,7 @@ disabled under `prefers-reduced-motion`.
 | Per-agent timeline | Receipts whose `thread_id` matches a rostered agent tick on that agent's lane (#69). An agent with none keeps a hatched lane: "No receipts attributed to this agent", or "Per-agent timeline not reported by this server" when the server reports no attribution. Richer per-agent events wait for #75. |
 | Unknown blocker kind | Read as `unknown`. The decision panel keeps its generic label; the inspector reads "Blocker not categorized by the server". |
 | Unknown reason code | "The server reported this action without further detail." Never the raw code. |
-| Execution unqualified | Start stays disabled. The footer states that execution stays unavailable until independently qualified. |
+| Execution unqualified | Start stays disabled. The footer states that execution stays unavailable until independently qualified. The server refuses `start_factory` with a stable `execution_*` code even when called directly (#71). |
 
 ## Contract matrix
 
@@ -150,8 +150,8 @@ Legend: **✅ implemented in #68** · **✅ #69/#70/#73/#77** implemented by tha
 | "luna yolo" from `owner/repo#N` | Fetch, plan and run in one ask | none | 🔴 | | Home hint: "Ask ChatGPT to plan work" | #76, #71 | |
 | Parallel workers | Multiple workers on independent issues | Children observed only | 🔴 | | Liveness only | #71, #79, #61 | |
 | Sol / Astra treatment | Verified escalation | `route` is reroute-only today | 🔴 | | Neutral. Reroute shown as stop evidence | #80 | `mission.test.ts` reroute |
-| Execution | Start, steer, stop | `capabilities.execution.eligible` (false) | ✅ gated | | Start disabled | #71 | `dogfood.test.ts` |
-| Campaign promotion | Plan into execution | `promote_factory_campaign` validates its input first, then fails with `execution_not_qualified` while `capabilities.execution.eligible` is false. `promotion.allowed` is always `false` | ✅ #77 fails closed | | No UI control. No event, revision or record is written | #71: a NEW executable run from one exact approved plan revision (the planning run is never flipped), duplicate-promotion replay, stale-revision rejection, acceptance-contract references | `server/tests/campaign.rs` promotion |
+| Execution | Start, steer, stop | `capabilities.execution` `{eligible, reason, profiles[]}`: true only for a current operator-recorded `ordinary` grant on the exact profile fingerprint | ✅ gated, persisted exact-profile qualification enforced at start, launch, dispatch, continuation, steer and resume, including pre-wire guards (#71 first slice) | Poll | Start disabled unless eligible. Stop, cancel, reconcile and planning stay available | Canary harness run, live inference, callback ownership, crash windows, cessation on the operator runtime (#71) | `dogfood.test.ts`, `server/tests/qualification.rs` |
+| Campaign promotion | Plan into execution | `promote_factory_campaign` validates its input first, then fails with `execution_not_qualified`, a static fail-closed floor that does not read the persisted grants. `promotion.allowed` is always `false` | ✅ #77 fails closed | | No UI control. No event, revision or record is written | #71: a NEW executable run from one exact approved plan revision (the planning run is never flipped), duplicate-promotion replay, stale-revision rejection, acceptance-contract references, and binding promotion to the persisted qualification | `server/tests/campaign.rs` promotion |
 | Multiple campaigns per repo | | One claim per repository | 🔴 | | | #82 | |
 | Brand mark asset | Logo, composer icon, MCP server icon | `assets/logo.svg`, 512 px `assets/logo.png` (moonlight night tile, `lunaMark` geometry) | ✅ in #72 | Static asset | n/a | none | `test_container_build.py` icon pin, `test_package_runtime.py` branding, `mcp_contract.rs` server icon |
 
