@@ -13,6 +13,7 @@ pub mod evidence;
 pub mod presentation;
 
 pub mod backends;
+pub mod campaign;
 pub mod extensions;
 pub mod graph;
 pub mod mentions;

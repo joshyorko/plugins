@@ -110,6 +110,54 @@ export const graphEnvelopeSchema = z.object({
   proposal: proposalSchema.nullable(),
 });
 export type GraphEnvelope = z.infer<typeof graphEnvelopeSchema>;
+const count = z.number().int().nonnegative().max(10_000);
+/**
+ * `list_factory_campaigns`. The parent's forge identity (`provider:owner/repo#number`) is separate
+ * from the physical repository (approved alias plus opaque local identity). Parent fields carry
+ * explicit provenance: `supplied` is the caller's assertion, never proof and never "reported by GitHub".
+ */
+const forgeRepository = z.string().min(3).max(201).regex(/^[a-z0-9_-][a-z0-9._-]*\/[a-z0-9_-][a-z0-9._-]*$/);
+const campaignSchema = z.object({
+  id: runId, repository: z.object({ alias: z.string().min(1).max(64), identity: z.string().regex(/^[a-f0-9]{64}$/) }),
+  parent: z.object({
+    forge: z.object({ provider: z.enum(["github", "local", "fixture"]), repository: forgeRepository, number: z.number().int().positive().refine(Number.isSafeInteger), node_id: nodeId.nullable() }),
+    key: z.string().max(256), revision: nodeId, display: z.object({ url: z.string().max(2048).nullable() }).nullable(),
+    provenance: z.enum(["supplied", "github_app"]),
+  }),
+  title: z.string().min(1).max(1000), finish: finishSchema, status: z.enum(["planned", "promoted", "finished", "stopped"]),
+  planning_run_id: runId, run_ids: z.array(runId).max(64), created_at: timestamp, updated_at: timestamp,
+  planning: z.object({ run_id: runId, revision, planning_only: z.literal(true), tasks: z.object({ total: count, candidate: count, ready: count, running: count, verify: count, done: count, blocked: count }) }),
+  runs: z.array(z.object({ id: runId, state: z.enum(states), updated_at: timestamp })).max(64),
+  // A campaign projection never authorizes execution; anything else is rejected, not shown.
+  promotion: z.object({ allowed: z.literal(false), reason: z.string().max(160) }),
+}).superRefine((campaign, context) => {
+  const { tasks } = campaign.planning;
+  const { forge } = campaign.parent;
+  const linked = new Set(campaign.run_ids);
+  if (campaign.planning.run_id !== campaign.planning_run_id || linked.has(campaign.planning_run_id) || linked.size !== campaign.run_ids.length
+    || !campaign.runs.every(run => linked.has(run.id)) || tasks.total !== tasks.candidate + tasks.ready + tasks.running + tasks.verify + tasks.done + tasks.blocked
+    || campaign.parent.key !== `${forge.provider}:${forge.repository}#${forge.number}`) {
+    context.addIssue({ code: "custom", message: "Inconsistent campaign projection" });
+  }
+});
+/** Unreadable records the server skipped instead of failing the list. Counted, never shown as campaigns. */
+const skippedCampaignSchema = z.object({ id: z.string().max(64).nullable(), reason: z.string().max(64) });
+export const campaignListSchema = z.object({ campaigns: z.array(campaignSchema).max(100), skipped: z.array(skippedCampaignSchema).max(100).default([]) });
+export type CampaignView = z.infer<typeof campaignSchema>;
+const providerLabels: Record<string, string> = { github: "GitHub", local: "Local", fixture: "Fixture" };
+export function providerLabel(provider: string): string { return providerLabels[provider] ?? provider; }
+const provenanceLabels: Record<CampaignView["parent"]["provenance"], string> = { supplied: "supplied, not verified", github_app: "fetched by Luna's GitHub App" };
+/**
+ * "GitHub example/plugins#67 · supplied, not verified". The provenance always says who asserted the
+ * parent: caller-supplied data is never labelled as reported by GitHub.
+ */
+export function parentLabel(campaign: Pick<CampaignView, "parent">): string {
+  const { forge, provenance } = campaign.parent;
+  return `${providerLabel(forge.provider)} ${forge.repository}#${forge.number} · ${provenanceLabels[provenance]}`;
+}
+export function campaignStatusLabel(status: CampaignView["status"]): string {
+  return { planned: "Planned · not started", promoted: "Promoted", finished: "Finished", stopped: "Stopped" }[status];
+}
 export type FactoryGraph = GraphEnvelope["graph"];
 export type GraphChange = z.infer<typeof graphChangeSchema>;
 export const UI_VERSION = "0.2.1";

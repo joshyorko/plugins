@@ -1,5 +1,5 @@
 import type { ViewState } from "./controller";
-import type { FactoryGraph, GraphChange, RunView } from "./domain";
+import { providerLabel, type FactoryGraph, type GraphChange, type RunView } from "./domain";
 import { roster, livenessLabel, type Agent } from "./agents";
 import { canvasSize, edgePath, fitGeometry, layoutWaves, nodePosition, type MapGeometry, type MapNode, type WaveLayout } from "./campaign-map";
 import { coordinatorToken, icon, taskGlyph, taskTone, taskToneLabel, workerToken } from "./lunar";
@@ -113,11 +113,10 @@ function renderMap(tasks: MapTask[], layout: WaveLayout, agents: Agent[], state:
   </div></div>${layout.cyclic ? '<p class="notice">The server reported a dependency loop. Waves are approximate until it is resolved.</p>' : ""}`;
 }
 
-const providers: Record<string, string> = { github: "GitHub", local: "Local", fixture: "Fixture" };
 type Source = NonNullable<MapTask["source"]>;
 /** Provider only; opaque item identities stay in the inspector's source detail. */
 export function sourceLabel(source: Source): string {
-  return providers[source.provider] ?? source.provider;
+  return providerLabel(source.provider);
 }
 /** `#N` only when the importer supplied a display number. Display data is never proof. */
 export function sourceNumber(source: Source): string | null {

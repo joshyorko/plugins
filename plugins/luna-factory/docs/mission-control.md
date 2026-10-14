@@ -1,7 +1,7 @@
 # Mission control: product design and contract reconciliation
 
 Product Design parent: #67. First slice: #68 (UI only). Reconciled against `main` at `dd304ef`,
-the squash of #66.
+the squash of #66. The campaign entity (#77) is reconciled against `e194b01`, the squash of #87.
 
 ## Product direction
 
@@ -21,8 +21,10 @@ the squash of #66.
    there.
 4. Motion only follows a real state change between two server snapshots. Reduced motion disables
    it. Nothing loops to suggest activity.
-5. Observed data is labelled "Observed in Codex" and GitHub data is labelled "reported by GitHub".
-   Neither is Factory proof, and only Luna's criteria are proof.
+5. Observed data is labelled "Observed in Codex". Caller-supplied forge data, such as a campaign
+   parent, is labelled "supplied, not verified" and never "reported by GitHub"; only data Luna
+   itself fetches with the GitHub App (#76) may be attributed to GitHub. None of it is Factory
+   proof, and only Luna's criteria are proof.
 6. Model treatments (Sol, Astra) render only from verified, policy-permitted routing (#80). Today
    any non-`gpt-6-luna` model can appear only as stop evidence, inside Evidence and audit.
 
@@ -38,7 +40,7 @@ the squash of #66.
 ## Screen hierarchy
 
 ```
-Home: Needs you · In progress · Planned · not started · History
+Home: Needs you · Parent campaigns (campaign → plan → runs) · In progress · Planned · not started · History
   └ Campaign: header (status, proof phase, freshness) · story · next action / decision
       ├ Map | Lanes  (same selection)
       ├ Crew strip    (orbit: Luna plus one satellite per reported worker)
@@ -118,12 +120,14 @@ disabled under `prefers-reduced-motion`.
 
 ## Contract matrix
 
-Legend: **✅ implemented in #68** · **✅ #69/#70/#73** implemented by that issue ·
+Legend: **✅ implemented in #68** · **✅ #69/#70/#73/#77** implemented by that issue ·
 **🟡 implementable with current data** · **🔴 needs a new contract** (issue).
 
 | UI component | Displays | Authoritative source | Today | Refresh | Stale / missing behaviour | Needed contract | Tests |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Home groups | Needs you, In progress, Planned, History | `refresh_factory` / `open_factory` → `runs[]`, `needsOperatorDecision`, `presentation.result` | ✅ | 30s app-only poll while visible | Last valid list kept, with the error shown | Campaign grouping #77 | `mission.test.ts` home grouping, `dogfood.test.ts` |
+| Home groups | Needs you, In progress, Planned, History | `refresh_factory` / `open_factory` → `runs[]`, `needsOperatorDecision`, `presentation.result` | ✅ | 30s app-only poll while visible | Last valid list kept, with the error shown | none (runs linked to a campaign move under it, below) | `mission.test.ts` home grouping, `dogfood.test.ts` |
+| Campaign grouping | Campaign row (parent label, title, planned task count, status), then its plan, then any linked runs | `list_factory_campaigns` → `campaigns[]`: `parent`, `planning.tasks`, `planning_run_id`, `run_ids`, `status` | ✅ #77 | Read after each refresh and on connect | Last valid grouping kept and marked stale. A server without the tool keeps the ungrouped tiers. A real decision on a linked run still appears in Needs you | Multiple campaigns per repo #82 | `mission.test.ts` campaign grouping, `home-light.png`, `home-campaign-mobile-dark.png`, `live-home-campaign-light.png` |
+| Open a campaign | Its planning run's Campaign Map, with the parent label in the header | campaign `planning_run_id` → `get_factory_run` / `get_factory_graph` | ✅ #77 | Same as the map | Same as the map | none | `mission.test.ts`, campaign captures |
 | Row freshness | "Updated …", plus "Started …" ("Created …" for plans) in the campaign header | `run.activity_at` (else `updated_at`), `run.created_at` | ✅ #69 | Poll | Dated when not today. "not reported" if absent; no start line without `created_at` | none. `activity_at` covers lifecycle and receipts only; graph edits carry no timestamp | `mission.test.ts`, `contracts-projection.test.ts` run timing, `graph_e2e.test.ts` |
 | Proof phase | Proven / mandatory | `presentation.criteria` (validated against control) | ✅ | Poll | "Proof unverified" without projection | none | `view.test.ts`, `mission.test.ts` |
 | Since you last looked | New receipts and update | `receipts[].created_at`, `activity_at` (else `updated_at`), baseline | ✅ persists across sessions where the host exposes widget state, otherwise session-scoped; `activity_at` #69 | Poll | Nothing shown when unchanged | Graph-change activity has no ledger timestamp, so it is not covered | `mission.test.ts`, `contracts-projection.test.ts` since-tracker |
@@ -142,10 +146,12 @@ Legend: **✅ implemented in #68** · **✅ #69/#70/#73** implemented by that is
 | Plan editor and proposal review | Explicit propose, then confirmed apply | `propose/apply_factory_change` with fencing | ✅ (unchanged from #66). #73: an empty target is never submitted | After mutation, the run is reread | Locked when stale, disconnected or pending. "No preference" is only a disabled placeholder while no note is set | Clearing a saved note needs a server `clear_target` change (not added) | `dogfood.test.ts`, `graph_e2e.test.ts`, `contracts-projection.test.ts` |
 | PR chip / checks / diff | PR state, check dots, +/- | none | 🔴 | | Omitted | #78 | |
 | Ready for review vs integration | Two distinct states | none | 🔴 | | Omitted | #78, #81 | |
-| Parent-issue campaign / "luna yolo" | Campaign from `owner/repo#N` | none | 🔴 | | Home hint: "Ask ChatGPT to plan work" | #76, #77 | |
+| Parent intake | Campaign for one parent item, with a planning graph | `create_factory_campaign` (model and app): forge identity `provider:owner/repo#number` kept separate from the physical identity (alias plus local graph identity), `provenance: "supplied"`, labelled "supplied, not verified", never proof | ✅ #77 for a supplied parent | After creation, the next home read | Duplicate forge identity in the same local repository rejected (`campaign_parent_exists`). Same key with a new payload rejected. Campaign and planning graph are admitted in one transaction, so a failure leaves no orphan graph. Corrupt rows are skipped and flagged | Authenticated GitHub fetch from `owner/repo#N` #76 | `server/tests/campaign.rs`, `live-plan-capture.mjs` (#67 from the recorded snapshot) |
+| "luna yolo" from `owner/repo#N` | Fetch, plan and run in one ask | none | 🔴 | | Home hint: "Ask ChatGPT to plan work" | #76, #71 | |
 | Parallel workers | Multiple workers on independent issues | Children observed only | 🔴 | | Liveness only | #71, #79, #61 | |
 | Sol / Astra treatment | Verified escalation | `route` is reroute-only today | 🔴 | | Neutral. Reroute shown as stop evidence | #80 | `mission.test.ts` reroute |
 | Execution | Start, steer, stop | `capabilities.execution.eligible` (false) | ✅ gated | | Start disabled | #71 | `dogfood.test.ts` |
+| Campaign promotion | Plan into execution | `promote_factory_campaign` validates its input first, then fails with `execution_not_qualified` while `capabilities.execution.eligible` is false. `promotion.allowed` is always `false` | ✅ #77 fails closed | | No UI control. No event, revision or record is written | #71: a NEW executable run from one exact approved plan revision (the planning run is never flipped), duplicate-promotion replay, stale-revision rejection, acceptance-contract references | `server/tests/campaign.rs` promotion |
 | Multiple campaigns per repo | | One claim per repository | 🔴 | | | #82 | |
 | Brand mark asset | Logo, composer icon, MCP server icon | `assets/logo.svg`, 512 px `assets/logo.png` (moonlight night tile, `lunaMark` geometry) | ✅ in #72 | Static asset | n/a | none | `test_container_build.py` icon pin, `test_package_runtime.py` branding, `mcp_contract.rs` server icon |
 
@@ -164,6 +170,17 @@ Legend: **✅ implemented in #68** · **✅ #69/#70/#73** implemented by that is
  │                                                                     └─ #82 multiple campaigns per repo
  └─ #72 brand asset unification
 ```
+
+### #77 ordering note
+
+#77 carries the parent's forge identity (`provider:owner/repo#number`, the contract shared
+with #76) and an optional validated display URL on the campaign `parent`, with
+`provenance: "supplied"`. It leaves graph-node `source` unchanged; #69 owns display data for
+graph nodes, and #76 may later record `provenance: "github_app"` for data Luna fetched itself. Promotion is in the
+contract, but it fails closed until #71 qualifies execution and defines the
+transition. #79 (parallel dispatch) and #82 (multiple campaigns per repository)
+build on this entity. Today it allows one campaign per local repository identity and
+forge identity, and it has no linked execution runs.
 
 ## Acceptance evidence for #68
 

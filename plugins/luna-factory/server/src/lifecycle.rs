@@ -23,6 +23,15 @@ pub fn terminal_threads(expected: &[String], observed: &[Value]) -> bool {
         })
 }
 
+/// The single source of `capabilities.execution`. Execution is not qualified on any
+/// connection in this version (#71); campaign promotion fails closed on this value.
+pub fn execution_qualification() -> (bool, &'static str) {
+    (
+        false,
+        "authentication_entitlement_and_adapter_qualification_unverified",
+    )
+}
+
 pub fn public_run(run: &Run) -> Value {
     let mut state = run
         .control
@@ -505,6 +514,96 @@ impl Factory {
         let run = store.get(&admission.run.id)?;
         Ok(crate::graph::envelope(&run, None))
     }
+    /// Creates the planning graph through the same planning admission as `create_graph`
+    /// and links it to one campaign in the same SQLite transaction, so no failure leaves an
+    /// orphan graph. Never connects to native Codex, acquires a claim or dispatches work;
+    /// the linked graph stays planning-only.
+    pub async fn create_campaign(&self, request: crate::campaign::CreateCampaign) -> Result<Value> {
+        let request = request.normalized();
+        let _guard = self.mutation.lock().await;
+        let mut store = self.store.lock().await;
+        let config =
+            crate::repositories::effective_config(&self.config, &store.repository_registrations()?);
+        request.validate(&config)?;
+        // Read-only prechecks give precise reasons before any write; admission repeats both
+        // inside its transaction, where they are authoritative.
+        let existing = store.campaign_by_key(&request.idempotency_key)?;
+        if let Some(existing) = &existing {
+            ensure!(
+                existing.fingerprint == request.fingerprint()?,
+                "campaign_idempotency_conflict"
+            );
+        }
+        let identity = crate::campaign::repository_identity(&config, &request.repository)?;
+        if existing.is_none() {
+            ensure!(
+                store
+                    .campaign_by_parent(&identity, &request.parent.forge.key())?
+                    .is_none(),
+                "campaign_parent_exists"
+            );
+        }
+        // Replays rerun the planning admission's alias and identity checks and never admit
+        // a second graph.
+        let (_, campaign) = store.admit_campaign(&config, &request, &identity)?;
+        Self::campaign_envelope(&store, &campaign)
+    }
+    fn campaign_envelope(store: &Store, campaign: &crate::campaign::Campaign) -> Result<Value> {
+        let planning = store.get(&campaign.planning_run_id)?;
+        Ok(
+            json!({"campaign":Self::campaign_view(store,campaign)?,"graph":crate::graph::envelope(&planning,None)["graph"]}),
+        )
+    }
+    /// SQLite-only read of the recorded campaign, its planning ledger and linked runs.
+    fn campaign_view(store: &Store, campaign: &crate::campaign::Campaign) -> Result<Value> {
+        let planning = store.get(&campaign.planning_run_id)?;
+        let runs = campaign
+            .run_ids
+            .iter()
+            .map(|id| store.get(id))
+            .collect::<Result<Vec<_>>>()?;
+        crate::campaign::project(campaign, &planning, &runs)
+    }
+    /// Lists campaigns. A corrupt row, or one whose planning run cannot be read, is skipped
+    /// and flagged in `skipped` instead of failing the whole read.
+    pub async fn campaigns(&self, limit: u32) -> Result<Value> {
+        let store = self.store.lock().await;
+        let mut campaigns = Vec::new();
+        let mut skipped = Vec::new();
+        for (id, campaign) in store.campaigns(limit)? {
+            let reason = match campaign {
+                Err(_) => "campaign_record_corrupt",
+                Ok(campaign) => match Self::campaign_view(&store, &campaign) {
+                    Ok(view) => {
+                        campaigns.push(view);
+                        continue;
+                    }
+                    Err(_) => "campaign_planning_run_unavailable",
+                },
+            };
+            // The row id is echoed only when it is a well-formed campaign id.
+            let id = (crate::control::bounded_id(&id) && id.len() <= 64).then_some(id);
+            skipped.push(json!({"id":id,"reason":reason}));
+        }
+        Ok(json!({"campaigns":campaigns,"skipped":skipped}))
+    }
+    pub async fn campaign(&self, id: &str) -> Result<Value> {
+        let store = self.store.lock().await;
+        let campaign = store.campaign(id)?;
+        Ok(json!({"campaign":Self::campaign_view(&store,&campaign)?}))
+    }
+    /// Promotion is an explicit, revision-fenced and keyed command, but this version has
+    /// no qualified execution (#71) and no promotion transition. It validates its input
+    /// first (`invalid_campaign_promotion` or a schema error), then fails closed with
+    /// `execution_not_qualified` without reading or writing any campaign, graph or journal
+    /// state, so a planning graph is never upgraded, silently or otherwise.
+    pub async fn promote_campaign(
+        &self,
+        request: crate::campaign::PromoteCampaign,
+    ) -> Result<Value> {
+        request.validate()?;
+        bail!(crate::campaign::promotion_blocker())
+    }
     async fn validate_graph_repository(&self, run: &Run) -> Result<()> {
         let config = self.effective_config().await?;
         Self::validate_graph_repository_config(run, &config)
@@ -923,7 +1022,7 @@ impl Factory {
             "repository_onboarding":{"enabled":!self.config.discovery_roots.is_empty(),"approval":"local_operator"},
             "profiles":self.config.profiles.iter().map(|(alias,profile)|json!({"alias":alias,"effort":profile.effort,"supported":profile.codex_profile.is_none()})).collect::<Vec<_>>(),
             "limits":self.config.limits,"observed_routing":"unverified","status_inference_calls":0,
-            "execution":{"eligible":false,"reason":"authentication_entitlement_and_adapter_qualification_unverified"},
+            "execution":{"eligible":execution_qualification().0,"reason":execution_qualification().1},
             "routing_telemetry":{"model":"turn-bound model/rerouted mismatch notifications only","effort":"unavailable","provider":"configuration only; downstream execution and billing unverified"},
             "control_policy":{"wire_schema":1,"sqlite_schema":2,"managed_admission":"structural","native_child_policy":"cooperative_unverified","semantic_acceptance":"owner_judgment","independent_checks":["file_sha256"],"native_output_completeness":"unverified","native_environment":"unverified","delivery_certification":"unsupported"},
             "live_proof":"Live owner/worker, native ChatGPT and tunnel acceptance must be recorded on the operator runtime."}),
