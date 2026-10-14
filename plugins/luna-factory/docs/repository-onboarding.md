@@ -22,7 +22,8 @@ explicit `repositories` entries continue to work.
 
 ## Workbench flow
 
-Choose **Add repository** from the empty state or **Settings**. The app reads the
+Open **Plan work**, then **More options** › **Add from an operator folder**. The
+link appears only when discovery roots are configured. The app reads the
 bounded discovery catalog, then lets you choose a candidate, alias and explicit
 finish authority. It sends an opaque candidate ID, never a local path. Choosing
 **Request access** persists a pending request. It does not authorize a run.
@@ -34,8 +35,8 @@ luna-factoryd repository-requests --config /absolute/path/to/private/operator.js
 luna-factoryd approve-repository --config /absolute/path/to/private/operator.json --request-id REQUEST_ID
 ```
 
-Return to **Add repository**, then choose **Refresh repositories**. The approved
-alias becomes available in **New run** without restarting the service. Explicit
+Return to **Add from an operator folder**, then choose **Refresh repositories**. The
+approved alias appears in the **Plan work** picker without restarting the service. Explicit
 operator-configured aliases take precedence. The original database stores requests
 and approvals durably, so disconnect and restart do not reset access decisions.
 

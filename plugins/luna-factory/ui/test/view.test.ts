@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
-import { renderWorkbench, type Editor } from "../src/view";
+import { describe, expect, it, vi } from "vitest";
+import { filterRepositories, renderWorkbench, type Editor } from "../src/view";
 import { WorkbenchController } from "../src/controller";
-import { fixtureGraph, fixtureRun, fixtureWorkbench } from "./fixtures";
+import { fixtureGithubRepositories, fixtureGraph, fixturePlanCapabilities, fixtureRun, fixtureWorkbench } from "./fixtures";
+import { githubRepositoryListSchema } from "../src/domain";
+import { bindRepoMenu, isRepoMenuOpen } from "../src/repo-menu";
 
 function render(editor: Editor = null, run = fixtureRun()) {
   const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
@@ -113,8 +115,9 @@ describe("accessible workbench", () => {
   it("provides real labeled form controls and bounded approved options", () => {
     const { root } = render("start");
     expect(root.querySelector('form[data-form="start"]')).not.toBeNull();
-    for (const field of root.querySelectorAll("input,select,textarea")) expect(root.querySelector(`label[for="${field.id}"]`)).not.toBeNull();
-    expect(root.querySelector('select[name="repository"]')?.textContent).toContain("plugins");
+    for (const field of root.querySelectorAll("input:not([type=hidden]),select,textarea")) expect(root.querySelector(`label[for="${field.id}"]`) ?? field.getAttribute("aria-label")).toBeTruthy();
+    expect(root.querySelector("#repo-chip")?.textContent).toContain("plugins");
+    expect(root.querySelector<HTMLInputElement>('input[name="repository"]')?.value).toBe("plugins");
     expect(root.querySelector('input[name="capacity"]')?.getAttribute("max")).toBe("4");
   });
   it("retains typed form drafts on status refresh", () => {
@@ -155,17 +158,30 @@ describe("accessible workbench", () => {
     const root = document.createElement("div");
     renderWorkbench(root, controller.state, null, false);
     expect(root.textContent).toContain("No runs yet");
-    expect(root.textContent).toContain("No repositories configured");
+    expect(root.textContent).toContain("No repositories yet");
+    expect(root.textContent).toContain("Ask your operator");
     expect(root.querySelector('[data-action="start"]')?.hasAttribute("disabled")).toBe(true);
-    expect(root.querySelector('[data-action="repositories"]')?.textContent).toContain("Add repository");
+    expect(root.querySelector('[data-action="repositories"]')).toBeNull();
   });
-  it("allows repository onboarding from settings even with no approved repositories", () => {
+  it("offers picking a repo from home when the server can connect or create one", () => {
     const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
-    controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [], capabilities: { ...fixtureWorkbench.capabilities, repositories: [] } } });
+    controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [], capabilities: { ...fixturePlanCapabilities, repositories: [] } } });
+    controller.setConnected(true);
+    const root = document.createElement("div");
+    renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector("#action-start-repository")?.textContent).toContain("Pick a repo");
+    expect(root.querySelector('[data-action="repositories"]')).toBeNull();
+    renderWorkbench(root, controller.state, "start", false);
+    expect(root.textContent).toContain("Connect a repo or start a new one");
+    expect(root.querySelector<HTMLButtonElement>('button[value="plan"]')?.disabled).toBe(false);
+  });
+  it("keeps settings free of the operator-folder flow", () => {
+    const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
+    controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [], capabilities: { ...fixtureWorkbench.capabilities, repositories: [], repository_onboarding: { enabled: true, approval: "local_operator" } } } });
     controller.setConnected(true);
     const root = document.createElement("div");
     renderWorkbench(root, controller.state, "settings", false);
-    expect(root.querySelector('[data-action="repositories"]')?.textContent).toContain("Add repository");
+    expect(root.querySelector('[data-action="repositories"]')).toBeNull();
     expect(root.querySelector('input[name="path"]')).toBeNull();
   });
   it("renders discovered choices, explicit finish caps and pending local approval without path controls", () => {
@@ -267,5 +283,280 @@ describe("accessible workbench", () => {
     expect(oldRoot.textContent).toContain("Outcome unverified");
     expect(oldRoot.querySelector(".decision-panel .button.primary")?.textContent).toBe("Refresh current state");
     expect(oldRoot.querySelector('[data-kind="cancel"]')).toBeNull();
+  });
+});
+
+function renderPlan(capabilities: Record<string, unknown>, github = true) {
+  const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
+  controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [], capabilities } });
+  controller.setConnected(true);
+  if (github) controller.state.githubRepos = githubRepositoryListSchema.parse(fixtureGithubRepositories());
+  const root = document.createElement("div");
+  document.body.replaceChildren(root);
+  renderWorkbench(root, controller.state, "start", false);
+  return { root, controller };
+}
+/** Text a person sees without opening the repo menu or More options. */
+const visibleText = (root: HTMLElement): string => {
+  const copy = root.querySelector("form")!.cloneNode(true) as HTMLElement;
+  copy.querySelector("#plan-more .plan-more-body")?.remove();
+  copy.querySelector("#repo-popover")?.remove();
+  return copy.textContent ?? "";
+};
+const items = (root: HTMLElement) => Array.from(root.querySelectorAll<HTMLElement>('#repo-menu [role^="menuitem"]'));
+const key = (target: Element, name: string) => target.dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true }));
+describe("one-box plan form", () => {
+  it("puts the request first, then one row with the repo chip and Plan it", () => {
+    const { root } = renderPlan(fixturePlanCapabilities);
+    const form = root.querySelector<HTMLFormElement>('form[data-form="start"]')!;
+    expect(form.querySelector('label[for="objective"]')?.textContent).toBe("What do you want done?");
+    const chip = form.querySelector<HTMLButtonElement>("#repo-chip")!;
+    expect(form.querySelector("#objective")!.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(chip.closest(".plan-controls")?.querySelector('button[value="plan"]')).not.toBeNull();
+    expect(chip.textContent).toContain("plugins");
+    expect(chip.getAttribute("aria-haspopup")).toBe("menu");
+    expect(chip.getAttribute("aria-expanded")).toBe("false");
+    expect(root.querySelector<HTMLElement>("#repo-popover")?.hidden).toBe(true);
+    // No scrolling radio list: the picked repo travels as one hidden field.
+    expect(form.querySelectorAll('input[type="radio"]')).toHaveLength(0);
+    expect(form.querySelector<HTMLInputElement>('input[type="hidden"][name="repository"]')?.value).toBe("plugins");
+    const submits = Array.from(form.querySelectorAll<HTMLButtonElement>('button[type="submit"]'));
+    expect(submits.map(button => button.textContent)).toEqual(["Plan it"]);
+    expect(root.querySelectorAll(".button.primary")).toHaveLength(1);
+    expect(root.querySelector<HTMLDetailsElement>("#plan-more")?.open).toBe(false);
+    // Every other control is in the repo menu or the closed More options.
+    const outside = Array.from(form.querySelectorAll("input:not([type=hidden]),select,textarea")).filter(element => !element.closest("#repo-popover, #plan-more") && element.id !== "objective");
+    expect(outside).toHaveLength(0);
+    expect(root.querySelector("#plan-repo-error")?.hasAttribute("hidden")).toBe(true);
+  });
+  it("hides the header Plan work button and keeps Close on the composer grid", () => {
+    const { root, controller } = renderPlan(fixturePlanCapabilities);
+    expect(root.querySelector("#action-start")).toBeNull();
+    expect(root.querySelector("#action-close-editor")?.closest(".plan-composer")).not.toBeNull();
+    expect(root.querySelector(".plan-composer .plan-card")).not.toBeNull();
+    renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector("#action-start")).not.toBeNull();
+  });
+  it("links one-time setup to read-only setup guidance and never enables running", () => {
+    const { root, controller } = renderPlan(fixturePlanCapabilities);
+    const link = root.querySelector<HTMLButtonElement>('.plan-note .text-link[data-action="setup"]');
+    expect(link?.textContent).toBe("one-time setup");
+    expect(link?.type).toBe("button");
+    renderWorkbench(root, controller.state, "settings", false);
+    const setup = root.querySelector("#setup-running")?.closest("section");
+    expect(setup?.textContent).toContain("Not set up yet");
+    expect(setup?.querySelectorAll("button,input,select,form")).toHaveLength(0);
+    expect(root.querySelector('button[value="start"]')).toBeNull();
+  });
+  it("uses plain words in the default view", () => {
+    const { root } = renderPlan(fixturePlanCapabilities);
+    const text = visibleText(root).toLowerCase();
+    expect(root.querySelector(".footer")).toBeNull();
+    for (const jargon of ["finish authority", "admission", "profile alias", "qualification", "qualified", "mandatory", "acceptance", "non-goal", "capacity"]) expect(text).not.toContain(jargon);
+  });
+  it("fills More options with the defaults Plan it would use", () => {
+    const { root } = renderPlan(fixturePlanCapabilities);
+    const value = (name: string) => root.querySelector<HTMLInputElement | HTMLSelectElement>(`[name="${name}"]`)?.value;
+    expect([value("finish"), value("profile"), value("capacity"), value("wall_minutes"), value("repair_attempts"), value("done_when"), value("non_goals")]).toEqual(["local_candidate", "luna", "1", "30", "2", "", ""]);
+    expect(root.querySelector('[name="done_when"]')?.closest("#plan-more")).not.toBeNull();
+  });
+  it("shows Start run only when the server says execution is eligible, and Plan it stays the primary", () => {
+    const off = renderPlan({ ...fixturePlanCapabilities, execution: { eligible: false, reason: "qualification_unverified" } }).root;
+    expect(off.querySelector('button[value="start"]')).toBeNull();
+    expect(off.textContent).toContain("Running it needs a one-time setup.");
+    const { root } = renderPlan({ ...fixturePlanCapabilities, execution: { eligible: true, reason: "qualified" } });
+    const start = root.querySelector<HTMLButtonElement>('button[value="start"]');
+    expect(start?.textContent).toBe("Start run");
+    expect(start?.classList.contains("primary")).toBe(false);
+    expect(root.querySelector('button[value="plan"]')?.classList.contains("primary")).toBe(true);
+    expect(root.textContent).toContain("Nothing runs until you press Start run.");
+    expect(root.textContent).not.toContain("one-time setup");
+  });
+  it("menu lists your repos, then GitHub repos with Connect, then + New repo…", () => {
+    const { root } = renderPlan(fixturePlanCapabilities);
+    const menu = root.querySelector("#repo-menu")!;
+    expect(menu.getAttribute("role")).toBe("menu");
+    expect(Array.from(menu.querySelectorAll('[role="group"]')).map(group => group.getAttribute("aria-label"))).toEqual(["Your repos", "On GitHub"]);
+    expect(Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]')).map(item => [item.dataset.alias, item.getAttribute("aria-checked")])).toEqual([["plugins", "true"], ["luna-sandbox", "false"]]);
+    expect(menu.querySelector('[data-alias="plugins"]')?.textContent).toContain("joshyorko/plugins");
+    // The connected GitHub repo is the approved alias above, never a second row.
+    expect(menu.querySelector('[data-github-repo="joshyorko/plugins"]')).toBeNull();
+    expect(Array.from(menu.querySelectorAll<HTMLElement>('[data-repo-action="connect"]')).map(item => item.dataset.repository)).toEqual(["joshyorko/rcc", "joshyorko/ror"]);
+    const blocked = menu.querySelector<HTMLElement>('[data-github-repo="joshyorko/archive-notes"]')!;
+    expect(blocked.textContent).toContain("Not available");
+    expect(blocked.getAttribute("aria-disabled")).toBe("true");
+    expect(blocked.dataset.repoAction).toBeUndefined();
+    expect(items(root).at(-1)?.textContent).toBe("New repo…");
+    expect(root.querySelector("#new_repository")).toBeNull();
+    expect(root.querySelector('[data-action="create-repository"]')).toBeNull();
+    // Only the popover may scroll; the form itself has no inner scrolling list.
+    expect(root.querySelector(".repo-options")).toBeNull();
+  });
+  it("degrades to approved repos only when the server offers no workspace tools", () => {
+    const { root } = renderPlan({ ...fixtureWorkbench.capabilities, repositories: fixturePlanCapabilities.repositories });
+    expect(root.querySelectorAll('[role="menuitemradio"]')).toHaveLength(2);
+    expect(root.querySelector("[data-github-repo]")).toBeNull();
+    expect(root.querySelector('[data-repo-action="new"]')).toBeNull();
+    expect(root.querySelector('[data-action="repositories"]')).toBeNull();
+  });
+  it("keeps the operator-folder path inside More options, only when discovery is offered", () => {
+    const { root } = renderPlan({ ...fixturePlanCapabilities, repository_onboarding: { enabled: true, approval: "local_operator" } });
+    expect(root.querySelector('[data-action="repositories"]')?.closest("#plan-more")).not.toBeNull();
+  });
+  it("keeps the picked repo and limits finish options to what it allows", () => {
+    const { root, controller } = renderPlan(fixturePlanCapabilities);
+    expect(Array.from(root.querySelectorAll<HTMLOptionElement>('select[name="finish"] option')).map(option => option.value)).toEqual(["local_candidate", "push", "pr"]);
+    controller.pickRepository("luna-sandbox");
+    renderWorkbench(root, controller.state, "start", false);
+    expect(root.querySelector("#repo-chip")?.textContent).toContain("luna-sandbox");
+    expect(root.querySelector<HTMLInputElement>('input[name="repository"]')?.value).toBe("luna-sandbox");
+    expect(Array.from(root.querySelectorAll<HTMLOptionElement>('select[name="finish"] option')).map(option => option.value)).toEqual(["local_candidate"]);
+    // A refresh re-render keeps the pick: the hidden field renders from state, not the old draft.
+    renderWorkbench(root, controller.state, "start", false);
+    expect(root.querySelector<HTMLInputElement>('input[name="repository"]')?.value).toBe("luna-sandbox");
+  });
+  it("+ New repo… shows one inline name field, no Create button, and only local finishes", () => {
+    const { root, controller } = renderPlan(fixturePlanCapabilities);
+    controller.pickRepository(null);
+    renderWorkbench(root, controller.state, "start", false);
+    expect(root.querySelector("#repo-chip")?.textContent).toContain("New repo");
+    const name = root.querySelector<HTMLInputElement>("#new_repository")!;
+    expect(name.closest(".plan-controls")).not.toBeNull();
+    expect(name.getAttribute("aria-describedby")).toBe("plan-repo-error");
+    expect(root.querySelector<HTMLInputElement>('input[name="repository"]')?.value).toBe("");
+    expect(Array.from(root.querySelectorAll<HTMLButtonElement>("form button")).map(button => button.textContent?.trim()).filter(text => /create/i.test(text ?? ""))).toEqual([]);
+    expect(Array.from(root.querySelectorAll<HTMLOptionElement>('select[name="finish"] option')).map(option => option.value)).toEqual(["local_candidate"]);
+    // No static helper text: the rules show up only as an error when the name is invalid.
+    expect(root.querySelector("#plan-repo-error")?.hasAttribute("hidden")).toBe(true);
+    expect(visibleText(root)).not.toContain("Lowercase letters");
+  });
+  it("adds a find box only for long lists and filters rows without reading anything", () => {
+    const many = { ...fixturePlanCapabilities, repositories: Array.from({ length: 8 }, (_, index) => ({ alias: `repo-${index}`, max_finish: "local_candidate" as const })) };
+    const { root } = renderPlan(many, false);
+    const filter = root.querySelector<HTMLInputElement>("#repo_filter");
+    expect(filter?.closest("#repo-popover")).not.toBeNull();
+    filterRepositories(root, "repo-3");
+    expect(items(root).filter(row => !row.hidden).map(row => row.textContent)).toEqual(["repo-3", "New repo…"]);
+    expect(renderPlan(fixturePlanCapabilities, false).root.querySelector("#repo_filter")).toBeNull();
+  });
+  it("shows a quiet line when GitHub can't be read, and still plans with approved repos", () => {
+    const { root, controller } = renderPlan(fixturePlanCapabilities, false);
+    controller.state.githubRepos = githubRepositoryListSchema.parse(fixtureGithubRepositories({ available: false, reason: "rate_limited", repositories: [] }));
+    renderWorkbench(root, controller.state, "start", false);
+    expect(root.textContent).toContain("GitHub repos couldn't be read right now.");
+    expect(root.querySelector<HTMLButtonElement>('button[value="plan"]')?.disabled).toBe(false);
+  });
+  it("keeps the request text and the new repo name when a creation error re-renders the form", () => {
+    const { root, controller } = renderPlan(fixturePlanCapabilities);
+    controller.pickRepository(null);
+    renderWorkbench(root, controller.state, "start", false);
+    root.querySelector<HTMLTextAreaElement>("#objective")!.value = "Keep this request after a creation error";
+    root.querySelector<HTMLInputElement>("#new_repository")!.value = "moon-garden";
+    controller.reportError("workspace creation failed");
+    renderWorkbench(root, controller.state, "start", false);
+    expect(root.querySelector<HTMLTextAreaElement>("#objective")?.value).toBe("Keep this request after a creation error");
+    expect(root.querySelector<HTMLInputElement>("#new_repository")?.value).toBe("moon-garden");
+    expect(root.textContent).toContain("workspace creation failed");
+  });
+});
+
+describe("repo menu keyboard and focus", () => {
+  function mounted() {
+    const { root, controller } = renderPlan(fixturePlanCapabilities);
+    const handlers = { pick: vi.fn((alias: string) => { controller.pickRepository(alias); renderWorkbench(root, controller.state, "start", false); }), newRepository: vi.fn(() => { controller.pickRepository(null); renderWorkbench(root, controller.state, "start", false); }), connect: vi.fn(), more: vi.fn() };
+    const unbind = bindRepoMenu(root, handlers);
+    return { root, controller, handlers, unbind, chip: () => root.querySelector<HTMLButtonElement>("#repo-chip")! };
+  }
+  it("opens from the chip (a native button, so Enter and Space click it) onto the checked repo", () => {
+    const { root, chip, unbind } = mounted();
+    expect(chip().tagName).toBe("BUTTON");
+    expect(chip().type).toBe("button");
+    chip().focus();
+    chip().click();
+    expect(isRepoMenuOpen(root)).toBe(true);
+    expect(chip().getAttribute("aria-expanded")).toBe("true");
+    expect(root.querySelector<HTMLElement>("#repo-popover")?.hidden).toBe(false);
+    expect(document.activeElement).toBe(root.querySelector('[data-alias="plugins"]'));
+    chip().click();
+    expect(isRepoMenuOpen(root)).toBe(false);
+    unbind();
+  });
+  it("moves with arrows, Home and End, wraps, and skips nothing that's visible", () => {
+    const { root, chip, unbind } = mounted();
+    chip().focus();
+    key(chip(), "ArrowDown");
+    const list = items(root);
+    expect(document.activeElement).toBe(list[0]);
+    key(list[0]!, "ArrowDown");
+    expect(document.activeElement).toBe(list[1]);
+    key(list[1]!, "End");
+    expect(document.activeElement).toBe(list.at(-1));
+    key(list.at(-1)!, "ArrowDown");
+    expect(document.activeElement).toBe(list[0]);
+    key(list[0]!, "ArrowUp");
+    expect(document.activeElement).toBe(list.at(-1));
+    key(list.at(-1)!, "Home");
+    expect(document.activeElement).toBe(list[0]);
+    unbind();
+  });
+  it("ArrowUp on the chip opens onto the last item", () => {
+    const { chip, unbind } = mounted();
+    chip().focus();
+    key(chip(), "ArrowUp");
+    expect(document.activeElement?.textContent).toBe("New repo…");
+    unbind();
+  });
+  it("Escape closes and returns focus to the chip", () => {
+    const { root, chip, unbind } = mounted();
+    chip().click();
+    key(document.activeElement!, "Escape");
+    expect(isRepoMenuOpen(root)).toBe(false);
+    expect(root.querySelector<HTMLElement>("#repo-popover")?.hidden).toBe(true);
+    expect(document.activeElement).toBe(chip());
+    unbind();
+  });
+  it("picking closes the menu, updates the chip and returns focus to it", () => {
+    const { root, chip, handlers, unbind } = mounted();
+    chip().click();
+    root.querySelector<HTMLElement>('[data-alias="luna-sandbox"]')!.click();
+    expect(handlers.pick).toHaveBeenCalledWith("luna-sandbox");
+    expect(isRepoMenuOpen(root)).toBe(false);
+    expect(chip().textContent).toContain("luna-sandbox");
+    expect(document.activeElement).toBe(chip());
+    unbind();
+  });
+  it("Connect hands off one repo; disabled rows do nothing", () => {
+    const { root, chip, handlers, unbind } = mounted();
+    chip().click();
+    root.querySelector<HTMLElement>('[data-github-repo="joshyorko/archive-notes"]')!.click();
+    expect(handlers.connect).not.toHaveBeenCalled();
+    expect(isRepoMenuOpen(root)).toBe(true);
+    root.querySelector<HTMLElement>('[data-repository="joshyorko/rcc"]')!.click();
+    expect(handlers.connect).toHaveBeenCalledExactlyOnceWith("joshyorko/rcc");
+    expect(isRepoMenuOpen(root)).toBe(false);
+    unbind();
+  });
+  it("+ New repo… closes the menu and focuses the inline name field", () => {
+    const { root, chip, handlers, unbind } = mounted();
+    chip().click();
+    root.querySelector<HTMLElement>('[data-repo-action="new"]')!.click();
+    expect(handlers.newRepository).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(root.querySelector("#new_repository"));
+    unbind();
+  });
+  it("stays open across a re-render, such as the GitHub list arriving", () => {
+    const { root, controller, chip, unbind } = mounted();
+    chip().click();
+    renderWorkbench(root, controller.state, "start", false);
+    expect(isRepoMenuOpen(root)).toBe(true);
+    expect(root.querySelector<HTMLElement>("#repo-popover")?.hidden).toBe(false);
+    unbind();
+  });
+  it("a click outside closes the menu without moving focus into it", () => {
+    const { root, chip, unbind } = mounted();
+    chip().click();
+    root.querySelector<HTMLElement>("#objective")!.click();
+    expect(isRepoMenuOpen(root)).toBe(false);
+    unbind();
   });
 });

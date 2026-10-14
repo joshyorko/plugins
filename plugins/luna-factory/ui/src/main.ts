@@ -1,11 +1,12 @@
 import { App, applyDocumentTheme, applyHostStyleVariables } from "@modelcontextprotocol/ext-apps";
 import { applyDeepLink, HostBridge, surfaceFromHostContext } from "./bridge";
 import { WorkbenchController, type Bridge } from "./controller";
-import { allowedFinishes, finishLabels, settingsSchema, startRequest, UI_VERSION, type FollowUpKind } from "./domain";
-import { renderWorkbench, toggleDisclosure, type Editor, type WorkbenchOptions } from "./view";
+import { allowedFinishes, finishLabels, localRepositoryName, settingsSchema, startRequest, UI_VERSION, type FollowUpKind } from "./domain";
+import { filterRepositories, renderWorkbench, toggleDisclosure, type Editor, type WorkbenchOptions } from "./view";
 import { SinceTracker, type Baseline } from "./narrative";
 import { registerViewTools } from "./view-tools";
 import { submitNewRun } from "./submission";
+import { bindRepoMenu, openRepoMenu } from "./repo-menu";
 import "./style.css";
 
 const root = document.getElementById("app");
@@ -42,7 +43,7 @@ renderWorkbench(mount, controller.state, editor, fixturePreview, workbenchOption
 function showEditor(next: Editor): void {
   editor = next;
   renderWorkbench(mount, controller.state, editor, fixturePreview, workbenchOptions);
-  mount.querySelector<HTMLElement>("form textarea, form select, form button")?.focus();
+  (mount.querySelector<HTMLElement>('form[data-form="start"] #objective') ?? mount.querySelector<HTMLElement>("form textarea, form select, form button"))?.focus();
 }
 mount.addEventListener("click", event => {
   if (!(event.target instanceof Element)) return;
@@ -65,8 +66,16 @@ mount.addEventListener("click", event => {
     }
     case "apply-change": void controller.applyChange(mount.querySelector<HTMLInputElement>("#confirm-graph-change")?.checked === true); break;
     case "share-context": void controller.select(controller.state.selectedId); break;
-    case "start": showEditor("start"); break;
+    case "start": controller.state.newRepository = false; showEditor("start"); void controller.loadGithubRepositories(); break;
     case "settings": showEditor("settings"); break;
+    case "setup": {
+      // The plan form's "one-time setup" link: read-only guidance in Settings. Nothing is enabled.
+      showEditor("settings");
+      const heading = mount.querySelector<HTMLElement>("#setup-running");
+      heading?.focus({ preventScroll: true });
+      heading?.scrollIntoView({ block: "nearest" });
+      break;
+    }
     case "repositories": showEditor("repositories"); void controller.discoverRepositories(); break;
     case "discover-repositories": void controller.discoverRepositories(); break;
     case "chat-repository-form": void controller.requestRepositoryWithHostForm(); break;
@@ -110,18 +119,54 @@ mount.addEventListener("change", event => {
     if (candidate && field) field.replaceChildren(...allowedFinishes(candidate.max_finish).map(finish => new Option(finishLabels[finish], finish)));
     return;
   }
-  if (!(event.target instanceof HTMLSelectElement) || event.target.name !== "repository") return;
-  const repo = controller.state.capabilities?.repositories.find(item => item.alias === (event.target instanceof HTMLSelectElement ? event.target.value : ""));
-  const field = mount.querySelector<HTMLSelectElement>('select[name="finish"]');
-  if (!repo || !field) return;
-  const current = field.value;
-  field.replaceChildren(...allowedFinishes(repo.max_finish).map(finish => new Option(finishLabels[finish], finish, false, current === finish)));
 });
+mount.addEventListener("input", event => {
+  if (event.target instanceof HTMLInputElement && event.target.id === "repo_filter") filterRepositories(mount, event.target.value);
+  // The name error shows only while the name is invalid; typing clears it.
+  if (event.target instanceof HTMLInputElement && event.target.id === "new_repository") showRepoError(null);
+});
+bindRepoMenu(mount, {
+  pick: alias => controller.pickRepository(alias),
+  newRepository: () => { showRepoError(null); controller.pickRepository(null); },
+  connect: fullName => { void controller.connectGithubRepository(fullName); },
+  more: () => { if (controller.state.githubRepos?.next_cursor) void controller.loadGithubRepositories(controller.state.githubRepos.next_cursor); },
+});
+// Enter in a plan field always means Plan it, never the browser's default (first) submit button.
+mount.addEventListener("keydown", event => {
+  const field = event.target;
+  if (event.key !== "Enter" || event.defaultPrevented || !(field instanceof HTMLInputElement) || field.type === "hidden") return;
+  const form = field.closest<HTMLFormElement>('form[data-form="start"]');
+  if (!form || field.closest("#repo-popover")) return;
+  event.preventDefault();
+  form.requestSubmit(form.querySelector<HTMLButtonElement>('button[type="submit"][value="plan"]'));
+});
+/** Inline repo error under the composer, or clear it. Never a toast or a page error. */
+function showRepoError(message: string | null): void {
+  const error = mount.querySelector<HTMLElement>("#plan-repo-error");
+  const input = mount.querySelector<HTMLInputElement>("#new_repository");
+  if (error) { error.textContent = message ?? ""; error.hidden = !message; }
+  if (message && input) input.setAttribute("aria-invalid", "true"); else input?.removeAttribute("aria-invalid");
+}
 mount.addEventListener("submit", event => {
   if (!(event.target instanceof HTMLFormElement)) return;
   event.preventDefault();
-  if (!event.target.reportValidity()) return;
   const form = event.target;
+  const newRepoInput = form.dataset.form === "start" ? form.querySelector<HTMLInputElement>("#new_repository") : null;
+  if (form.dataset.form === "start") {
+    // Repo checks come first and stay inline: a bad name never reaches the server.
+    if (newRepoInput && !localRepositoryName.test(newRepoInput.value.trim())) {
+      showRepoError(newRepoInput.value.trim() ? "Use lowercase letters, digits, dots, dashes or underscores, starting with a letter or digit (64 at most)." : "Name the new repo.");
+      newRepoInput.focus();
+      return;
+    }
+    if (!newRepoInput && !form.querySelector<HTMLInputElement>('input[name="repository"]')?.value) {
+      showRepoError("Pick a repo first.");
+      openRepoMenu(mount);
+      return;
+    }
+    showRepoError(null);
+  }
+  if (!form.reportValidity()) return;
   const intent = event.submitter instanceof HTMLButtonElement ? event.submitter.value : "";
   const fields: Record<string, string> = {};
   for (const [key, value] of new FormData(form)) if (typeof value === "string") fields[key] = value;
@@ -130,10 +175,16 @@ mount.addEventListener("submit", event => {
       let success = false;
       if (form.dataset.form === "start") {
         if (!controller.state.capabilities) throw new Error("Approved capabilities have not loaded");
+        // The new repo's alias is only known after it is created, so it is not part of the retry key.
+        if (newRepoInput) delete fields.repository;
         const fingerprint = JSON.stringify({ fields, intent });
         if (pendingStart?.fingerprint !== fingerprint) pendingStart = { fingerprint, key: crypto.randomUUID() };
-        const request = startRequest(fields, controller.state.capabilities, pendingStart.key);
-        success = await submitNewRun(controller, intent, request);
+        const key = pendingStart.key;
+        const capabilities = controller.state.capabilities;
+        const { new_repository: name, ...request } = fields;
+        success = newRepoInput
+          ? await controller.createRepositoryAndSubmit(name ?? "", alias => submitNewRun(controller, intent, startRequest({ ...request, repository: alias }, controller.state.capabilities ?? capabilities, key)))
+          : await submitNewRun(controller, intent, startRequest(request, capabilities, key));
         if (success) pendingStart = null;
         if (success && intent !== "start") { await controller.refresh(); await controller.loadGraph(); }
       } else if (form.dataset.form === "graph-node") {

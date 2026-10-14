@@ -76,7 +76,8 @@ describe("authenticated dogfood regressions reproduced in disposable fixtures", 
     expect(root.querySelector('option[value="codex-cloud"]')).toBeNull();
     controller.state.capabilities = fixtureWorkbench.capabilities;
     renderWorkbench(root, controller.state, "start", false);
-    expect(root.querySelector<HTMLButtonElement>('button[value="start"]')?.disabled).toBe(true);
+    expect(root.querySelector('button[value="start"]')).toBeNull();
+    expect(root.querySelector<HTMLButtonElement>('button[value="plan"]')?.textContent).toBe("Plan it");
   });
   it("suppresses duplicate clicks and keeps late disconnected results stale", async () => {
     const { controller, call } = await setup();

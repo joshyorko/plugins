@@ -64,7 +64,7 @@ export function workerToken(ordinal: number, liveness: Liveness, size = 24): str
   return svg(`<circle cx="12" cy="12" r="10.5" class="tok-rim live-${liveness}"/><text x="12" y="15.6" text-anchor="middle" class="tok-label">${Math.max(1, Math.min(99, ordinal))}</text>`, size, 24, "token worker");
 }
 
-export function icon(name: "back" | "close" | "refresh" | "map" | "lanes" | "chat" | "open" | "plus" | "settings" | "arrow" | "clock" | "alert", size = 16): string {
+export function icon(name: "back" | "close" | "refresh" | "map" | "lanes" | "chat" | "open" | "plus" | "settings" | "arrow" | "clock" | "alert" | "check" | "chevron", size = 16): string {
   const paths: Record<typeof name, string> = {
     back: '<path d="m10 4-4 4 4 4"/>', close: '<path d="m4.5 4.5 7 7m0-7-7 7"/>', refresh: '<path d="M12.6 6A5 5 0 1 0 13 9.5M12.8 2.8V6H9.6"/>',
     map: '<circle cx="3.5" cy="4.5" r="1.6"/><circle cx="3.5" cy="11.5" r="1.6"/><circle cx="12.5" cy="8" r="1.6"/><path d="M5 4.8c3 .4 4 2 6 2.8M5 11.2c3-.4 4-2 6-2.8"/>',
@@ -72,6 +72,7 @@ export function icon(name: "back" | "close" | "refresh" | "map" | "lanes" | "cha
     chat: '<path d="M3 3.5h10v7H7.5L4.5 13v-2.5H3Z"/>', open: '<path d="M9.5 3H13v3.5M13 3 8 8M11 9.5V13H3V5h3.5"/>',
     plus: '<path d="M8 3v10M3 8h10"/>', settings: '<path d="M3 5h10M3 11h10M6 3v4M10 9v4"/>', arrow: '<path d="m6 4 4 4-4 4"/>',
     clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/>', alert: '<path d="M8 2.5 14 13H2Z"/><path d="M8 6.5v3M8 11.3v.1"/>',
+    check: '<path d="m3.5 8.5 3 3 6-7"/>', chevron: '<path d="m4.5 6.5 3.5 3.5 3.5-3.5"/>',
   };
   return `<svg class="icon" width="${size}" height="${size}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths[name]}</svg>`;
 }

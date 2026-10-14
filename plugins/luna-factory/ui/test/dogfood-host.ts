@@ -1,6 +1,6 @@
 import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { McpUiHostStylesSchema } from "@modelcontextprotocol/ext-apps";
-import { fixtureBackends, fixtureCampaign, fixtureCampaignPlan, fixtureDelivery, fixtureDeliveryUnavailable, fixtureGraph, fixturePlanningRun, fixtureRun, fixtureSwarmRun, fixtureTimelineCapability, fixtureTimelines, fixtureWorkbench } from "./fixtures";
+import { fixtureBackends, fixtureCampaign, fixtureCampaignPlan, fixtureDelivery, fixtureDeliveryUnavailable, fixtureGithubRepositories, fixtureGraph, fixturePlanCapabilities, fixturePlanningRun, fixtureRun, fixtureSwarmRun, fixtureTimelineCapability, fixtureTimelines, fixtureWorkbench } from "./fixtures";
 
 const params = new URLSearchParams(location.search);
 const element = document.getElementById("factory");
@@ -45,7 +45,10 @@ const homeRuns = scenario === "home" ? [decisionRun(), fixtureSwarmRun(), campai
 const timelines = scenario === "swarm" ? fixtureTimelines(run.id) : {};
 // Only the campaign plan has GitHub sources; other scenarios show the default-off integration.
 const github = scenario === "campaign" || scenario === "home" ? { configured: true, reason: "configured_reachability_unverified" } : { configured: false, reason: "github_app_not_configured" };
-const workbench = { ...fixtureWorkbench, runs: homeRuns, selected_run: scenario === "home" ? null : run, capabilities: { ...fixtureWorkbench.capabilities, execution: { eligible: false, reason: "qualification_unverified" }, github, ...(scenario === "swarm" ? { agent_timeline: fixtureTimelineCapability } : {}) } };
+// The plan form opens from home: "plan" offers GitHub connect and new repos, "plan-basic" only approved repos.
+const planning = scenario === "plan" || scenario === "plan-basic";
+const baseCapabilities = scenario === "plan" ? fixturePlanCapabilities : scenario === "plan-basic" ? { ...fixturePlanCapabilities, github, workspaces: undefined } : fixtureWorkbench.capabilities;
+const workbench = { ...fixtureWorkbench, runs: planning ? [] : homeRuns, selected_run: scenario === "home" || planning ? null : run, capabilities: { ...baseCapabilities, execution: { eligible: false, reason: "qualification_unverified" }, ...(scenario === "plan" ? {} : { github }), ...(scenario === "swarm" ? { agent_timeline: fixtureTimelineCapability } : {}) } };
 interface SimulatorInstrumentation { calls: string[]; contexts: unknown[]; messages: unknown[]; sizes: unknown[]; initialized: boolean; disconnect(): Promise<void>; }
 const instrumentation: SimulatorInstrumentation = { calls: [], contexts: [], messages: [], sizes: [], initialized: false, disconnect: async () => { await host.teardownResource({}); await host.close(); } };
 declare global { interface Window { lunaDogfoodHost: SimulatorInstrumentation; } }
@@ -64,6 +67,8 @@ host.oncalltool = async request => {
     const timeline = timelines[String(request.arguments?.thread_id)];
     if (timeline && request.arguments?.run_id === run.id) return { content: [], structuredContent: timeline };
   }
+  // Synthetic GitHub repository list: read-only. Connect and create fall through to the read-only refusal.
+  if (request.name === "list_factory_github_repositories" && scenario === "plan") return { content: [], structuredContent: fixtureGithubRepositories() };
   if (request.name === "get_factory_run") return { content: [], structuredContent: homeRuns.find(item => item.id === request.arguments?.run_id) ?? run };
   if (["refresh_factory", "open_factory"].includes(request.name)) return { content: [], structuredContent: workbench };
   // Synthetic GitHub-reported telemetry: display only, never proof.
@@ -75,7 +80,7 @@ host.onmessage = async request => { instrumentation.messages.push(request); retu
 host.onsizechange = size => { instrumentation.sizes.push(size); };
 host.onrequestdisplaymode = async ({ mode }) => { host.setHostContext({ displayMode: mode }); return { mode }; };
 host.oninitialized = async () => {
-  await host.sendToolInput({ arguments: { run_id: run.id } });
+  await host.sendToolInput({ arguments: planning ? {} : { run_id: run.id } });
   await host.sendToolResult(scenario === "error" ? { isError: true, content: [{ type: "text", text: "Fixture read failed. Reconnect to read current state." }] } : { content: [], structuredContent: workbench });
   if (params.get("graph") === "1" && scenario !== "error") host.setHostContext({ "openai/deepLink": { url: `/runs/${run.id}?task=${focusNode}&revision=${graph.graph.revision}` } });
   instrumentation.initialized = true;

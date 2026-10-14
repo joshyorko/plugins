@@ -1,10 +1,11 @@
-import { allowedFinishes, campaignStatusLabel, finishLabels, needsOperatorDecision, parentLabel, runPath, type CampaignView, type FollowUpKind, type FollowUpTask, type RunView } from "./domain";
+import { allowedFinishes, campaignStatusLabel, finishLabels, needsOperatorDecision, parentLabel, planDefaults, planFinishLabels, repositoryReasonCopy, runPath, type CampaignView, type FollowUpKind, type FollowUpTask, type RunView } from "./domain";
 import type { ViewState } from "./controller";
 import { renderMission, renderProposalReview, renderTargets, missionTasks } from "./graph-view";
 import { layoutWaves } from "./campaign-map";
 import { icon, lunaMark, phaseGlyph, taskTone } from "./lunar";
 import { activityAt, blockerCopy, freshness, nowSentence, runTier, statusLabel, clock, type SinceTracker, type Tier } from "./narrative";
 import { roster } from "./agents";
+import { isRepoMenuOpen, openRepoMenu } from "./repo-menu";
 import { receiptAgent } from "./lanes";
 
 export type Editor = "start" | "settings" | "steer" | "stop" | "repositories" | null;
@@ -67,6 +68,7 @@ export function renderWorkbench(root: HTMLElement, state: ViewState, editor: Edi
   const selection = active instanceof HTMLTextAreaElement ? [active.selectionStart, active.selectionEnd] : null;
   const expanded = Array.from(root.querySelectorAll<HTMLDetailsElement>("details[open]")).map(element => element.id);
   const disclosed = Array.from(root.querySelectorAll<HTMLElement>("[data-disclosure]:not([hidden])")).map(element => element.id);
+  const repoMenuOpen = isRepoMenuOpen(root);
   const run = state.runs.find(item => item.id === state.selectedId);
   const surface = options.surface ?? "global";
   if (surface === "inline") {
@@ -74,7 +76,7 @@ export function renderWorkbench(root: HTMLElement, state: ViewState, editor: Edi
     if (focusId) findElementById(root, focusId)?.focus({ preventScroll: true });
     return;
   }
-  const canStart = Boolean(state.connected && state.capabilities?.repositories.length && state.capabilities.profiles.length && !state.pending);
+  const canStart = Boolean(state.connected && state.capabilities?.profiles.length && canAddOrPick(state) && !state.pending);
   if (options.canvasWidth === undefined && root.clientWidth > 0) {
     // Mirrors the CSS: main max 1360px with 24px padding; the inspector column leaves at 861px+.
     const main = Math.min(root.clientWidth, 1360) - (root.clientWidth <= 520 ? 24 : 48);
@@ -83,14 +85,16 @@ export function renderWorkbench(root: HTMLElement, state: ViewState, editor: Edi
   root.innerHTML = `<div class="workbench" data-surface="${surface}" data-display-mode="${escape(options.displayMode ?? "inline")}" data-connection="${state.connectionStatus}">
     ${preview ? '<div class="preview-banner">Fixture visual preview · Synthetic run data · No live integration</div>' : ""}
     <header class="appbar"><a class="brand" href="/" data-action="overview" aria-label="Luna Factory campaigns">${lunaMark(22)}<span>Luna Factory</span></a>${run && !editor ? `<nav class="breadcrumbs" aria-label="Breadcrumb">${icon("arrow", 12)}<a href="/" data-action="overview">Campaigns</a>${icon("arrow", 12)}<span>${escape(run.repository)}</span></nav>` : ""}
-      <div class="top-actions"><span class="connection" role="status"><i class="${state.connected ? "online" : ""}" aria-hidden="true"></i>${state.connectionStatus === "connected" ? "Connected" : state.connectionStatus === "disconnected" ? "Disconnected" : "Connecting"}</span>${button("refresh", "Refresh", { icon: "refresh", quiet: true, iconOnly: true, disabled: !state.connected || state.refreshing || Boolean(state.pending) })}${button("settings", "Settings", { icon: "settings", quiet: true, iconOnly: true, disabled: !state.capabilities || Boolean(state.pending) })}${button("start", "Plan work", { icon: "plus", quiet: true, disabled: !canStart })}</div></header>
+      <div class="top-actions"><span class="connection" role="status"><i class="${state.connected ? "online" : ""}" aria-hidden="true"></i>${state.connectionStatus === "connected" ? "Connected" : state.connectionStatus === "disconnected" ? "Disconnected" : "Connecting"}</span>${button("refresh", "Refresh", { icon: "refresh", quiet: true, iconOnly: true, disabled: !state.connected || state.refreshing || Boolean(state.pending) })}${button("settings", "Settings", { icon: "settings", quiet: true, iconOnly: true, disabled: !state.capabilities || Boolean(state.pending) })}${editor === "start" ? "" : button("start", "Plan work", { icon: "plus", quiet: true, disabled: !canStart })}</div></header>
     <main id="main" class="main">
-      <div class="status-area" aria-live="polite" aria-atomic="true">${state.pending ? `<div class="notice pending"><span class="spinner" aria-hidden="true"></span>${state.pending.tool === "cancel_factory_run" ? "Stopping owned execution. Waiting for verified status…" : "Waiting for the server…"}</div>` : state.refreshing ? '<div class="quiet-status">Reading persisted state…</div>' : ""}${state.notice ? `<div class="notice success">${escape(state.notice)}</div>` : ""}${state.error ? `<div class="notice error" role="alert"><span>${escape(state.error)}</span>${button("refresh", "Refresh", { disabled: !state.connected || Boolean(state.pending) }).replace('id="action-refresh"', 'id="action-refresh-error"')}</div>` : ""}${state.contextError ? `<div class="notice">${escape(state.contextError)}</div>` : ""}</div>
+      <div class="status-area" aria-live="polite" aria-atomic="true">${state.pending ? `<div class="notice pending"><span class="spinner" aria-hidden="true"></span>${state.pending.tool === "cancel_factory_run" ? "Stopping owned execution. Waiting for verified status…" : state.pending.tool === "connect_factory_github_repository" ? "Connecting the repo…" : state.pending.tool === "create_factory_local_repository" ? "Creating the repo…" : "Waiting for the server…"}</div>` : state.refreshing ? '<div class="quiet-status">Reading persisted state…</div>' : ""}${state.notice ? `<div class="notice success">${escape(state.notice)}</div>` : ""}${state.error ? `<div class="notice error" role="alert"><span>${escape(state.error)}</span>${button("refresh", "Refresh", { disabled: !state.connected || Boolean(state.pending) }).replace('id="action-refresh"', 'id="action-refresh-error"')}</div>` : ""}${state.contextError ? `<div class="notice">${escape(state.contextError)}</div>` : ""}</div>
       ${surface === "thread" ? '<div class="thread-inspector-label">This conversation</div>' : ""}${editor ? renderEditor(editor, state, run) : !state.initialized ? `<section class="empty welcome">${lunaMark(40)}<h1>Opening Luna Factory</h1><p>Waiting for the host's first snapshot.</p><p class="muted">Open Luna Factory from your MCP Apps host to connect.</p></section>` : state.selectedId ? run ? renderCampaign(run, state, options) : '<section class="empty"><h1>Opening this run</h1><p>The exact run is being read from the server.</p></section>' : renderHome(state, canStart, options)}
     </main></div>`;
   const newForm = root.querySelector<HTMLFormElement>("form");
   if (draft && newForm && oldKind === newForm.dataset.form && oldForm?.dataset.inputIdentity === newForm.dataset.inputIdentity) {
     for (const field of newForm.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input[name],textarea[name],select[name]")) {
+      // Hidden fields, such as the plan form's picked repo, render from view state.
+      if (field instanceof HTMLInputElement && field.type === "hidden") continue;
       const value = draft.get(field.name);
       if (field instanceof HTMLInputElement && field.type === "checkbox") field.checked = draft.getAll(field.name).includes(field.value);
       else if (field instanceof HTMLSelectElement && field.multiple) {
@@ -99,6 +103,8 @@ export function renderWorkbench(root: HTMLElement, state: ViewState, editor: Edi
       } else if (typeof value === "string") field.value = value;
     }
   }
+  const repoFilter = root.querySelector<HTMLInputElement>("#repo_filter");
+  if (repoFilter?.value) filterRepositories(root, repoFilter.value);
   const nextConfirmation = root.querySelector<HTMLInputElement>("#confirm-graph-change");
   if (confirmationIdentity && nextConfirmation?.dataset.confirmIdentity === confirmationIdentity) {
     nextConfirmation.checked = true;
@@ -107,6 +113,7 @@ export function renderWorkbench(root: HTMLElement, state: ViewState, editor: Edi
   }
   for (const id of expanded) { const element = document.getElementById(id); if (element instanceof HTMLDetailsElement && root.contains(element)) element.open = true; }
   for (const id of disclosed) { const toggle = Array.from(root.querySelectorAll<HTMLElement>('[data-action="toggle-disclosure"]')).find(element => element.getAttribute("aria-controls") === id); if (toggle) toggleDisclosure(root, toggle, true); }
+  if (repoMenuOpen) openRepoMenu(root, "none");
   if (focusId) {
     const element = findElementById(root, focusId);
     element?.focus({ preventScroll: true });
@@ -172,8 +179,8 @@ function renderHome(state: ViewState, canStart: boolean, options: WorkbenchOptio
     return group.key === "needs" ? section + renderCampaignGroup(state, campaigns, options) : section;
   }).join("");
   return `<section class="home-head"><h1>Campaigns</h1><p>${escape(summary || "No runs yet")}</p><p class="home-hint">${icon("chat")}Ask ChatGPT to plan work with Luna Factory. Plans appear here before anything runs.</p></section>
-    ${!state.capabilities?.repositories.length ? `<div class="notice repository-empty"><div><strong>No repositories configured</strong><p>Choose a local repository offered by your operator, then request access.</p></div>${button("repositories", "Add repository", { icon: "plus", disabled: !state.connected || Boolean(state.pending) })}</div>` : ""}
-    ${state.runs.length || campaigns.length ? sections : `<section class="empty empty-sky">${lunaMark(40)}<h2>No runs yet</h2><p>Ask ChatGPT to plan an objective with Luna Factory, or plan one manually.<br>Every run keeps its progress and evidence here.</p>${button("start", "Plan work manually", { primary: true, icon: "plus", disabled: !canStart }).replace('id="action-start"', 'id="action-start-empty"')}</section>`}`;
+    ${!state.capabilities?.repositories.length ? `<div class="notice repository-empty"><div><strong>No repositories yet</strong><p>${canAddOrPick(state) ? "Pick one from GitHub or start a new one when you plan work." : "Ask your operator to add a repository for Luna."}</p></div>${canAddOrPick(state) ? button("start", "Pick a repo", { icon: "plus", disabled: !canStart }).replace('id="action-start"', 'id="action-start-repository"') : ""}</div>` : ""}
+    ${state.runs.length || campaigns.length ? sections : `<section class="empty empty-sky">${lunaMark(40)}<h2>No runs yet</h2><p>Ask ChatGPT to plan an objective with Luna Factory, or plan one manually.<br>Every run keeps its progress and evidence here.</p>${button("start", "Plan work", { primary: true, icon: "plus", disabled: !canStart }).replace('id="action-start"', 'id="action-start-empty"')}</section>`}`;
 }
 
 const campaignTier = (status: CampaignView["status"]): Tier => ({ planned: "planned", promoted: "unverified", finished: "finished", stopped: "stopped" } satisfies Record<CampaignView["status"], Tier>)[status];
@@ -269,29 +276,122 @@ function renderFollowUpActions(run: RunView, options: WorkbenchOptions, task?: F
 
 const field = (name: string, label: string, control: string, hint = ""): string => `<div class="field"><label for="${name}">${label}</label>${control}${hint ? `<p class="field-hint" id="${name}-hint">${hint}</p>` : ""}</div>`;
 function renderEditor(editor: Exclude<Editor, null>, state: ViewState, run: RunView | undefined): string {
-  const title = { start: "Plan a bounded run", settings: "Factory settings", repositories: "Add a local repository", steer: run?.pending_decision ? "Answer the owner" : "Steer this run", stop: "Stop this run?" }[editor];
+  const title = { start: "Plan work", settings: "Factory settings", repositories: "Add from an operator folder", steer: run?.pending_decision ? "Answer the owner" : "Steer this run", stop: "Stop this run?" }[editor];
   const locked = !state.connected || Boolean(state.pending);
-  const header = `<div class="editor-heading"><div><span class="eyebrow">${editor === "start" ? "A clear finish line" : "Luna Factory"}</span><h1>${title}</h1></div>${button("close-editor", "Close", { icon: "close", disabled: Boolean(state.pending) })}</div>`;
+  const header = `<div class="editor-heading"><div>${editor === "start" ? "" : '<span class="eyebrow">Luna Factory</span>'}<h1>${title}</h1></div>${button("close-editor", "Close", { icon: "close", disabled: Boolean(state.pending) })}</div>`;
   if (editor === "repositories") return header + renderRepositories(state);
   if (editor === "steer" || editor === "stop") {
     if (!run) return `${header}<p>Select a run first.</p>`;
     if (editor === "stop") return `${header}<section class="editor-card"><p class="lead">${escape(run.objective)}</p><p>The server interrupts the owned execution and checks its descendants before releasing the repository claim. Unknown survivors leave the run blocked.</p><p>The objective, evidence, and history stay with this run. A later resume keeps its original authority and remaining limits.</p><form data-form="stop"><div class="form-actions"><button class="button danger" type="submit"${disabled(locked)}>Stop owned execution</button>${button("close-editor", "Keep running", { disabled: Boolean(state.pending) }).replace('id="action-close-editor"', 'id="action-keep-running"')}</div></form></section>`;
     return `${header}<section class="editor-card">${run.pending_decision || run.blocker ? `<div class="decision-quote">${escape(run.pending_decision?.question || run.blocker || "")}</div>` : `<p>Send a correction to the current owner of <strong>${escape(run.repository)}</strong>.</p>`}<form data-form="steer" data-input-identity="${escape(run.pending_decision?.id || run.turn_id || run.id)}">${field("message", "Your answer or correction", '<textarea id="message" name="message" rows="6" required maxlength="4000" placeholder="What should the owner do differently?" aria-describedby="message-hint"></textarea>', run.pending_decision ? "Continues the same run and owner thread with your answer. Existing limits stay in place. Security approvals must be handled in native Codex." : "Sent to the current turn only. This cannot expand permissions or approve a security prompt.")}<div class="form-actions"><button class="button primary" type="submit"${disabled(locked || !run.pending_decision && !run.turn_id)}>Send to owner</button><span>Existing scope and finish authority stay in place</span></div></form></section>`;
   }
+  if (editor === "start") return `<section class="plan-composer">${header}${renderPlan(state)}</section>`;
   const cap = state.capabilities;
-  const repositories = editor === "settings" ? `<section class="editor-card"><div class="section-heading"><h2>Repositories</h2>${button("repositories", "Add repository", { icon: "plus", disabled: locked })}</div>${cap?.repositories.length ? `<ul class="repository-list">${cap.repositories.map(repo => `<li><strong>${escape(repo.alias)}</strong><span>${finishLabels[repo.max_finish]}</span></li>`).join("")}</ul>` : '<p class="muted">No approved aliases yet.</p>'}</section>` : "";
-  if (!cap || !cap.repositories.length || !cap.profiles.length) return `${header}${repositories}<div class="notice">No approved repository and profile combination is available. Check the trusted server configuration.</div>`;
-  const repository = cap.repositories[0];
-  if (!repository) return header;
+  const repositories = `<section class="editor-card"><div class="section-heading"><h2>Repositories</h2></div>${cap?.repositories.length ? `<ul class="repository-list">${cap.repositories.map(repo => `<li><strong>${escape(repo.alias)}</strong><span>${finishLabels[repo.max_finish]}</span></li>`).join("")}</ul>` : '<p class="muted">No repositories yet. Add one when you plan work.</p>'}</section>`;
+  if (!cap || !cap.profiles.length) return `${header}${renderRunningSetup(state)}${repositories}<div class="notice">No approved runtime profile is available. Check the trusted server configuration.</div>`;
   const profileOptions = cap.profiles.map(profile => `<option value="${escape(profile.alias)}"${profile.alias === state.settings.profile ? " selected" : ""}>${escape(profile.alias)} · ${escape(profile.effort)}</option>`).join("");
-  const finishes = editor === "settings" ? allowedFinishes("pr") : allowedFinishes(repository.max_finish);
-  const finishOptions = finishes.map(finish => `<option value="${finish}"${finish === state.settings.finish ? " selected" : ""}>${finishLabels[finish]}</option>`).join("");
-  return `${header}${repositories}<section class="editor-card"><p class="editor-intro">${editor === "start" ? "Usually ChatGPT drafts this for you. Use the form when you want to set the bounds yourself." : "Safe defaults for new runs. These do not change repository access, provider settings, or trusted limits."}</p><form data-form="${editor}">
-    ${editor === "start" ? field("repository", "Approved repository", `<select id="repository" name="repository" required>${cap.repositories.map(repo => `<option value="${escape(repo.alias)}">${escape(repo.alias)}</option>`).join("")}</select>`) + field("objective", "Objective", '<textarea id="objective" name="objective" rows="3" required maxlength="8000" placeholder="What should be true when this run finishes?"></textarea>') + field("acceptance", "Mandatory acceptance", '<textarea id="acceptance" name="acceptance" rows="3" required maxlength="32032" placeholder="One verifiable criterion per line" aria-describedby="acceptance-hint"></textarea>', "One criterion per line, up to 32. Headings and bullet markers are omitted; every remaining line is mandatory.") + field("non_goals", "Non-goals", '<textarea id="non_goals" name="non_goals" rows="2" maxlength="32032" placeholder="What should this run leave alone?" aria-describedby="non_goals-hint"></textarea>', "Optional, one per line. Headings and bullet markers are omitted.") : ""}
+  const finishOptions = allowedFinishes("pr").map(finish => `<option value="${finish}"${finish === state.settings.finish ? " selected" : ""}>${finishLabels[finish]}</option>`).join("");
+  return `${header}${renderRunningSetup(state)}${repositories}<section class="editor-card"><p class="editor-intro">Safe defaults for new runs. These do not change repository access, provider settings, or trusted limits.</p><form data-form="settings">
     <div class="form-grid">${field("finish", "Finish authority", `<select id="finish" name="finish">${finishOptions}</select>`)}${field("profile", "Approved runtime profile", `<select id="profile" name="profile">${profileOptions}</select>`)}</div>
     ${field("capacity", "Worker capacity", `<input id="capacity" name="capacity" type="number" min="1" max="${cap.limits.capacity}" step="1" value="${Math.min(state.settings.capacity || 1, cap.limits.capacity)}" required aria-describedby="capacity-hint">`, `At most ${cap.limits.capacity} concurrent workers`)}
-    ${editor === "start" ? `<details id="run-budgets" class="budget-details"><summary>Time &amp; repair budget</summary><div class="form-grid">${field("wall_seconds", "Time limit, seconds", `<input id="wall_seconds" name="wall_seconds" type="number" min="30" max="${cap.limits.wall_seconds}" step="1" value="${Math.min(1800, cap.limits.wall_seconds)}" required>`)}${field("repair_attempts", "Repair attempts", `<input id="repair_attempts" name="repair_attempts" type="number" min="0" max="${cap.limits.repair_attempts}" step="1" value="${Math.min(2, cap.limits.repair_attempts)}" required>`)}</div></details><div class="authority-note">${lunaMark(16)}<p>The server validates every action. No merge, release, or deployment is granted by this form.</p></div>` : ""}
-    <div class="form-actions">${editor === "start" ? `<button class="button primary" type="submit" value="plan"${disabled(locked)}>Create planning graph</button><button class="button" type="submit" value="start"${disabled(locked || cap.execution?.eligible !== true)}>Start run</button><span>Planning is available. Execution requires independently qualified authentication, entitlement and adapter support.</span>` : `<button class="button primary" type="submit"${disabled(locked)}>Save defaults</button><span>Applies to future runs</span>`}</div></form></section>`;
+    <div class="form-actions"><button class="button primary" type="submit"${disabled(locked)}>Save defaults</button><span>Applies to future runs</span></div></form></section>`;
+}
+
+/** Whether the plan form has a repository to pick, or the server offers a way to add one. */
+function canAddOrPick(state: ViewState): boolean {
+  const cap = state.capabilities;
+  return Boolean(cap?.repositories.length || cap?.workspaces?.connect_github || cap?.workspaces?.create_local || cap?.repository_onboarding?.enabled);
+}
+
+/** Hide picker rows that don't match the filter text. View-only; nothing is read or sent. */
+export function filterRepositories(root: ParentNode, query: string): void {
+  const needle = query.trim().toLowerCase();
+  for (const row of root.querySelectorAll<HTMLElement>(".repo-item[data-repo-name]")) row.hidden = Boolean(needle) && !(row.dataset.repoName ?? "").includes(needle);
+}
+
+const provenanceCopy = { github_app_installation: "Connected from GitHub", local_create: "Created in Luna" } as const;
+const itemId = (prefix: string, name: string): string => `${prefix}-${name.toLowerCase().replace(/[^a-z0-9_-]/g, "-")}`;
+/**
+ * One composer: the request box, then one row with the repo chip and Plan it. The chip opens a
+ * menu of your repos, GitHub repos to connect, and "+ New repo…" (created when Plan it is pressed).
+ * Every other setting sits in a closed "More options" with the defaults filled in. The server
+ * rechecks all of it on submit.
+ */
+function renderPlan(state: ViewState): string {
+  const cap = state.capabilities;
+  if (!cap || !cap.profiles.length) return '<section class="plan-card"><p class="plan-note">Luna isn\'t ready to plan yet. Ask your operator to finish setting it up.</p></section>';
+  const locked = !state.connected || Boolean(state.pending);
+  const defaults = planDefaults(cap);
+  const approved = cap.repositories;
+  const creating = state.newRepository && cap.workspaces?.create_local === true;
+  const picked = creating ? undefined : approved.find(repo => repo.alias === state.pickedRepository) ?? approved[0];
+  const github = cap.workspaces?.connect_github ? state.githubRepos : null;
+  const githubFor = new Map((github?.repositories ?? []).filter(repo => repo.connected_alias).map(repo => [repo.connected_alias, repo]));
+  const text = (name: string, meta: string): string => `<span class="repo-text"><span class="repo-name">${escape(name)}</span>${meta ? `<span class="repo-meta">${escape(meta)}</span>` : ""}</span>`;
+  const approvedItems = approved.map(repo => {
+    const source = githubFor.get(repo.alias);
+    const meta = source ? source.full_name : repo.provenance ? provenanceCopy[repo.provenance] : "";
+    const checked = repo === picked;
+    return `<button type="button" role="menuitemradio" aria-checked="${checked}" tabindex="-1" class="repo-item" id="${itemId("repo-item", repo.alias)}" data-repo-action="pick" data-alias="${escape(repo.alias)}" data-repo-name="${escape(`${repo.alias} ${source?.full_name ?? ""}`.toLowerCase())}"><span class="repo-check" aria-hidden="true">${checked ? icon("check", 14) : ""}</span>${text(repo.alias, meta)}</button>`;
+  }).join("");
+  // Already-connected repos appear above as approved aliases; the rest can be connected here.
+  const approvedAliases = new Set(approved.map(repo => repo.alias));
+  const githubItems = (github?.available ? github.repositories : []).filter(repo => !repo.connected_alias || !approvedAliases.has(repo.connected_alias))
+    .sort((a, b) => Number(b.connectable && !b.connected_alias) - Number(a.connectable && !a.connected_alias))
+    .map(repo => {
+      const meta = [repo.private ? "Private" : "", repo.description ?? ""].filter(Boolean).join(" · ");
+      const attrs = `type="button" tabindex="-1" id="${itemId("github-item", repo.full_name)}" data-github-repo="${escape(repo.full_name)}" data-repo-name="${escape(repo.full_name.toLowerCase())}"`;
+      if (repo.connectable && !repo.connected_alias) return `<button ${attrs} role="menuitem" class="repo-item github" data-repo-action="connect" data-repository="${escape(repo.full_name)}" aria-label="Connect ${escape(repo.full_name)}"><span class="repo-check" aria-hidden="true"></span>${text(repo.full_name, meta)}<span class="repo-connect" aria-hidden="true">Connect</span></button>`;
+      const reason = repo.connected_alias ? "Connected · refresh to use" : "Not available";
+      return `<button ${attrs} role="menuitem" class="repo-item github muted-row" aria-disabled="true"${repo.connected_alias ? "" : ` title="${escape(repositoryReasonCopy(repo.blocked_reason))}"`}><span class="repo-check" aria-hidden="true"></span>${text(repo.full_name, meta)}<span class="repo-state">${reason}</span></button>`;
+    }).join("");
+  const more = github?.next_cursor ? `<button type="button" role="menuitem" tabindex="-1" class="repo-item repo-more" id="action-more-github" data-repo-action="more"${state.githubLoading ? ' aria-disabled="true"' : ""}><span class="repo-check" aria-hidden="true"></span><span class="repo-text"><span class="repo-name">Show more from GitHub</span></span></button>` : "";
+  const githubNote = cap.workspaces?.connect_github && !state.githubLoading && github && !github.available ? `<p class="repo-note">${escape(github.configured ? "GitHub repos couldn't be read right now." : repositoryReasonCopy("github_app_not_configured"))}</p>` : "";
+  const loading = cap.workspaces?.connect_github && state.githubLoading && !github ? '<p class="repo-note" role="status">Reading your GitHub repos…</p>' : "";
+  const canAdd = cap.workspaces?.connect_github === true || cap.workspaces?.create_local === true;
+  const newItem = cap.workspaces?.create_local ? `<div role="separator" class="repo-sep"></div><button type="button" role="menuitem" tabindex="-1" class="repo-item repo-new" id="repo-item-new" data-repo-action="new"><span class="repo-check" aria-hidden="true">${icon("plus", 14)}</span><span class="repo-text"><span class="repo-name">New repo…</span></span></button>` : "";
+  const rows = approved.length + (github?.available ? github.repositories.length : 0);
+  const filter = rows > 6 ? '<input type="search" id="repo_filter" class="repo-filter" placeholder="Find a repo" aria-label="Find a repo" aria-controls="repo-menu" autocomplete="off">' : "";
+  const emptyNote = !approved.length && canAdd ? '<p class="repo-note">Connect a repo or start a new one to plan here.</p>' : "";
+  const chipLabel = creating ? "New repo" : picked?.alias ?? (cap.workspaces?.connect_github ? "Connect GitHub" : canAdd ? "Choose a repo" : "No repos yet");
+  const chip = `<div class="repo-select"><button type="button" id="repo-chip" class="repo-chip" aria-haspopup="menu" aria-expanded="false" aria-controls="repo-menu"${disabled(locked || !approved.length && !canAdd)}><span class="sr-only">Repo: </span><span class="repo-chip-label">${escape(chipLabel)}</span>${icon("chevron", 14)}</button>
+      <div id="repo-popover" class="repo-popover" hidden>${filter}<div id="repo-menu" role="menu" aria-label="Choose a repo">${approvedItems ? `<div role="group" aria-label="Your repos" class="repo-group"><p class="repo-group-label" aria-hidden="true">Your repos</p>${approvedItems}</div>` : ""}${githubItems || more ? `<div role="group" aria-label="On GitHub" class="repo-group"><p class="repo-group-label" aria-hidden="true">On GitHub</p>${githubItems}${more}</div>` : ""}${newItem}</div>${loading}${githubNote}${emptyNote}</div></div>`;
+  const nameField = creating ? `<div class="repo-name-field"><label class="sr-only" for="new_repository">New repo name</label><input id="new_repository" name="new_repository" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" placeholder="new-repo-name" aria-describedby="plan-repo-error"${disabled(locked)}></div>` : "";
+  const eligible = cap.execution?.eligible === true;
+  const finishes = allowedFinishes(creating ? "local_candidate" : picked?.max_finish ?? "local_candidate");
+  const profileOptions = cap.profiles.map((profile, index) => `<option value="${escape(profile.alias)}"${index === 0 ? " selected" : ""}>${escape(profile.alias)} · ${escape(profile.effort)}</option>`).join("");
+  const maxMinutes = Math.max(1, Math.floor(cap.limits.wall_seconds / 60));
+  const options = `<details id="plan-more" class="plan-more"><summary>More options</summary><div class="plan-more-body">
+      ${field("done_when", "Done when", '<input id="done_when" name="done_when" maxlength="1000" autocomplete="off" placeholder="The tests pass and the README explains it" aria-describedby="done_when-hint">', "Optional. Leave it empty and your request is the finish line.")}
+      ${field("non_goals", "Leave alone", '<textarea id="non_goals" name="non_goals" rows="2" maxlength="32032" placeholder="One thing per line" aria-describedby="non_goals-hint"></textarea>', "Optional, one per line.")}
+      <div class="form-grid">${field("finish", "When it's done", `<select id="finish" name="finish">${finishes.map(finish => `<option value="${finish}"${finish === defaults.finish ? " selected" : ""}>${planFinishLabels[finish]}</option>`).join("")}</select>`)}${field("profile", "Model", `<select id="profile" name="profile">${profileOptions}</select>`)}</div>
+      <div class="form-grid three">${field("capacity", "Workers at once", `<input id="capacity" name="capacity" type="number" min="1" max="${cap.limits.capacity}" step="1" value="${defaults.capacity}" required>`)}${field("wall_minutes", "Time limit, minutes", `<input id="wall_minutes" name="wall_minutes" type="number" min="1" max="${maxMinutes}" step="1" value="${Math.max(1, Math.min(maxMinutes, Math.round(defaults.wall_seconds / 60)))}" required>`)}${field("repair_attempts", "Retries", `<input id="repair_attempts" name="repair_attempts" type="number" min="0" max="${cap.limits.repair_attempts}" step="1" value="${defaults.repair_attempts}" required>`)}</div>
+      ${cap.repository_onboarding?.enabled ? `<div class="plan-more-row"><span>Need a repo from your operator's folders?</span>${button("repositories", "Add from an operator folder", { quiet: true, disabled: locked })}</div>` : ""}
+      <p class="plan-fine">Luna checks every step on the server. Planning never merges, releases or deploys anything.</p>
+    </div></details>`;
+  const note = !approved.length && !canAdd
+    ? (cap.repository_onboarding?.enabled ? "No repositories yet. Add one under More options." : "No repositories yet. Ask your operator to add one.")
+    : eligible ? "Luna drafts a plan first. Nothing runs until you press Start run." : "";
+  const noteHtml = note ? escape(note) : 'Luna drafts a plan first. Running it needs a <button type="button" class="text-link" id="action-setup" data-action="setup">one-time setup</button>.';
+  return `<section class="plan-card"><form data-form="start" class="plan-form">
+    <div class="plan-box"><label for="objective">What do you want done?</label>
+      <div class="composer"><textarea id="objective" name="objective" rows="4" required maxlength="8000" placeholder="Fix the flaky login test. Or: start a tiny CLI that prints tonight's moon phase."></textarea>
+        <input type="hidden" name="repository" value="${escape(picked?.alias ?? "")}">
+        <div class="plan-controls">${chip}${nameField}<span class="plan-spacer"></span>${eligible ? `<button class="button plan-run" type="submit" value="start"${disabled(locked || !approved.length && !canAdd)}>Start run</button>` : ""}<button class="button primary plan-go" type="submit" value="plan"${disabled(locked || !approved.length && !canAdd)}>Plan it</button></div>
+      </div>
+      <p class="plan-error" id="plan-repo-error" role="alert" hidden></p>
+      <p class="plan-note">${noteHtml}</p>
+    </div>
+    ${options}
+  </form></section>`;
+}
+
+/** The setup guidance the plan form's "one-time setup" link opens. Read-only: nothing here turns running on. */
+function renderRunningSetup(state: ViewState): string {
+  const eligible = state.capabilities?.execution?.eligible === true;
+  return `<section class="editor-card setup-card" aria-labelledby="setup-running"><div class="section-heading"><h2 id="setup-running" tabindex="-1">Running work</h2><span class="setup-state">${eligible ? "Set up" : "Not set up yet"}</span></div>${eligible
+    ? "<p>Running is set up. Start run appears next to Plan it.</p>"
+    : "<p>Luna can plan now. Running a plan needs a one-time check on the machine Luna runs on: Codex is signed in, your plan includes Codex, and Luna's connection to Codex passes its checks.</p><p class=\"muted\">Your Luna server turns on Start run once that check passes; the steps are in the Luna Factory README. Until then you can plan as much as you like, and nothing runs.</p>"}</section>`;
 }
 
 function renderRepositories(state: ViewState): string {

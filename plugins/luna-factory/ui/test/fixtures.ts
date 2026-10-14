@@ -259,3 +259,35 @@ export function fixtureDeliveryUnavailable(runId = "campaign-actions-v2"): Deliv
       : { ...node, complete: false, status: "unavailable", freshness: null, reason: "rate_limited", observed_at: null, issue: null, pull_requests: [], pull_requests_total: 0 }),
   };
 }
+
+/**
+ * SYNTHETIC "pick a repo" fixtures shaped like the github-repos contract. Repository names are
+ * synthetic. Connect and create are mutations: the visual host never answers them.
+ */
+const githubReadAt = 1791140400;
+export function fixtureGithubRepositories(overrides: Record<string, unknown> = {}) {
+  return {
+    schema_version: 1, reported_by: "github", provenance: "github_app", configured: true, available: true, reason: null,
+    repositories: [
+      { full_name: "joshyorko/plugins", private: false, default_branch: "main", description: "Agent plugins and the Luna Factory workbench.", connected_alias: "plugins", connectable: false, blocked_reason: null },
+      { full_name: "joshyorko/rcc", private: false, default_branch: "main", description: "Repeatable, contained automation environments.", connected_alias: null, connectable: true, blocked_reason: null },
+      { full_name: "joshyorko/ror", private: true, default_branch: "main", description: "Devcontainer image for robots.", connected_alias: null, connectable: true, blocked_reason: null },
+      { full_name: "joshyorko/archive-notes", private: true, default_branch: null, description: null, connected_alias: null, connectable: false, blocked_reason: "not_allowlisted" },
+    ],
+    next_cursor: null, observed_at: githubReadAt,
+    ...overrides,
+  };
+}
+export function fixtureGithubConnect(fullName = "joshyorko/rcc", alias = "rcc") {
+  return { schema_version: 1, status: "connected", alias, repository: { alias, identity: "b".repeat(64) }, full_name: fullName, default_branch: "main", provenance: "github_app" };
+}
+export function fixtureLocalCreate(name = "moon-garden") {
+  return { schema_version: 1, status: "created", alias: name, repository: { alias: name, identity: "c".repeat(64) } };
+}
+/** Capabilities for the plan form: two approved repos, GitHub connect and local create switched on. */
+export const fixturePlanCapabilities = {
+  ...fixtureWorkbench.capabilities,
+  repositories: [{ alias: "plugins", max_finish: "pr" as const }, { alias: "luna-sandbox", max_finish: "local_candidate" as const }],
+  github: { configured: true, reason: "configured_reachability_unverified" },
+  workspaces: { connect_github: true, create_local: true },
+};

@@ -34,9 +34,21 @@ const cases = [
   { file: "campaign-github-unavailable-narrow.png", width: 420, height: 900, params: { surface: "thread", scenario: "campaign", graph: "1", node: "issue-103", github: "unavailable" }, inspect: true },
   { file: "campaign-plan-updated-light.png", width: 1280, height: 900, params: { surface: "global", mode: "fullscreen", scenario: "campaign", graph: "1", node: "issue-109", proposal: "applied" } },
   { file: "campaign-task-edit-narrow.png", width: 420, height: 900, params: { surface: "thread", theme: "dark", scenario: "campaign", graph: "1", node: "issue-109" }, edit: true },
+  // The plan form. Connect and create are mutations, so these captures only read and never click them.
+  // Opening the repo menu and choosing "+ New repo…" are view-only.
+  { file: "plan-light.png", width: 760, height: 900, params: { surface: "global", scenario: "plan" }, editor: "start" },
+  { file: "plan-dark.png", width: 1200, height: 900, params: { surface: "global", mode: "fullscreen", theme: "dark", scenario: "plan" }, editor: "start" },
+  { file: "plan-narrow-mobile.png", width: 360, height: 760, params: { surface: "global", platform: "mobile", scenario: "plan" }, editor: "start" },
+  { file: "plan-repo-popover-open.png", width: 760, height: 900, params: { surface: "global", scenario: "plan" }, editor: "start", menu: true },
+  { file: "plan-repo-popover-narrow-dark.png", width: 360, height: 760, params: { surface: "global", platform: "mobile", theme: "dark", scenario: "plan" }, editor: "start", menu: true },
+  { file: "plan-more-options-light.png", width: 760, height: 1000, params: { surface: "global", scenario: "plan" }, editor: "start", open: "#plan-more" },
+  { file: "plan-new-repo-narrow.png", width: 360, height: 760, params: { surface: "global", platform: "mobile", scenario: "plan" }, editor: "start", newRepo: "moon-garden" },
+  // An invalid name stops at the inline error before any tool call.
+  { file: "plan-new-repo-invalid-light.png", width: 760, height: 900, params: { surface: "global", scenario: "plan" }, editor: "start", newRepo: "Moon Garden", submit: true },
+  { file: "plan-approved-only-dark.png", width: 480, height: 760, params: { surface: "global", theme: "dark", scenario: "plan-basic" }, editor: "start" },
 ];
 /** Read-only tools a capture may call. GitHub reads are display-only and never mutate. */
-const readOnlyTools = ["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory", "list_factory_campaigns", "read_factory_agent_timeline", "read_factory_delivery", "inspect_factory_issue_graph"];
+const readOnlyTools = ["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory", "list_factory_campaigns", "read_factory_agent_timeline", "read_factory_delivery", "inspect_factory_issue_graph", "list_factory_github_repositories"];
 const server = await createServer({ root: ui, configFile: join(ui, "vite.config.ts"), server: { host: "127.0.0.1", port: 0, strictPort: true } });
 let browser;
 try {
@@ -84,6 +96,42 @@ try {
         const reads = await page.evaluate(() => window.lunaDogfoodHost.calls.filter(name => name === "read_factory_agent_timeline").length);
         assert(reads <= 3, `Timeline reads were not bounded to the roster: ${reads}`);
       }
+      if (item.editor) {
+        await frame.locator(`#action-${item.editor}`).click();
+        await frame.locator(`form[data-form="${item.editor}"]`).waitFor();
+        // The GitHub list is a separate read-only call; settle it so the picker is deterministic.
+        if (item.params.scenario === "plan") await frame.locator("#repo-menu [data-github-repo]").first().waitFor({ state: "attached" });
+        if (item.params.scenario === "plan-basic") assert.equal(await frame.locator('#repo-menu [data-github-repo], #repo-menu [data-repo-action="new"]').count(), 0, "Approved-only plan form offered connect or create");
+        await frame.evaluate(() => { document.activeElement?.blur?.(); window.scrollTo(0, 0); });
+        // The header button the click used is gone now; park the pointer so nothing shows a hover.
+        await page.mouse.move(1, item.height - 2);
+        if (item.menu || item.newRepo) {
+          await frame.locator("#repo-chip").click();
+          await frame.locator("#repo-popover:not([hidden])").waitFor();
+          assert.equal(await frame.locator("#repo-chip").getAttribute("aria-expanded"), "true", "Repo chip did not report the open menu");
+        }
+        if (item.newRepo) {
+          await frame.locator('#repo-menu [data-repo-action="new"]').click();
+          await frame.locator("#new_repository").waitFor();
+          assert(await frame.locator("#repo-popover").evaluate(element => element.hidden), "Repo menu stayed open after + New repo…");
+          await frame.locator("#new_repository").fill(item.newRepo);
+          await frame.locator("#objective").fill("Start a tiny CLI that prints tonight's moon phase.");
+          if (item.submit) {
+            await frame.locator('button[type="submit"][value="plan"]').click();
+            await frame.locator("#plan-repo-error:not([hidden])").waitFor();
+            assert.equal(await frame.locator("#new_repository").getAttribute("aria-invalid"), "true", "Invalid repo name was not marked");
+          }
+          await frame.evaluate(() => document.activeElement?.blur?.());
+          await page.mouse.move(1, item.height - 2);
+          // Let the composer's focus transition settle so the capture shows the resting state.
+          await page.waitForTimeout(250);
+        }
+        // Only the repo popover may scroll; the page body never gets an inner scrollbar.
+        const innerScrollers = await frame.evaluate(() => Array.from(document.querySelectorAll("body *")).filter(element => element.tagName !== "TEXTAREA" && !element.closest("#repo-popover") && /(auto|scroll)/.test(getComputedStyle(element).overflowY) && element.scrollHeight > element.clientHeight + 1).map(element => element.className));
+        assert.deepEqual(innerScrollers, [], `Inner scroll area in ${item.file}`);
+        // Open one disclosure and bring it under the sticky app bar.
+        if (item.open) await frame.locator(item.open).evaluate(element => { element.open = true; element.scrollIntoView({ block: "start" }); window.scrollBy(0, -(document.querySelector(".appbar")?.getBoundingClientRect().height ?? 0) - 12); });
+      }
       if (item.width >= 1000) await frame.evaluate(() => window.scrollTo(0, 0));
       // Clear the sticky app bar so the section heading stays visible in the capture.
       if (item.scroll) await frame.locator(item.scroll).evaluate(element => { element.scrollIntoView({ block: "start" }); window.scrollBy(0, -(document.querySelector(".appbar")?.getBoundingClientRect().height ?? 0) - 8); });
@@ -109,6 +157,7 @@ try {
         await frame.locator(".graph-inspector .inspector-actions").evaluate(element => { element.scrollIntoView({ block: "start" }); window.scrollBy(0, -(document.querySelector(".appbar")?.getBoundingClientRect().height ?? 0) - 8); });
       }
       if (item.params.font) assert(await frame.locator(".graph-inspector .route-list dd").first().evaluate(element => parseFloat(getComputedStyle(element).fontSize)) >= 18, "Host font size was ignored");
+      if (item.params.scenario === "plan-basic") assert(!(await page.evaluate(() => window.lunaDogfoodHost.calls)).includes("list_factory_github_repositories"), "GitHub repos were listed without the server capability");
       const host = await page.evaluate(() => ({ calls: window.lunaDogfoodHost.calls, messages: window.lunaDogfoodHost.messages.length }));
       assert(host.calls.every(name => readOnlyTools.includes(name)), "Visual capture attempted mutation or execution");
       if (item.params.scenario === "campaign" && item.params.graph) assert(host.calls.includes("read_factory_delivery"), "GitHub delivery was not read for a GitHub-sourced plan");
