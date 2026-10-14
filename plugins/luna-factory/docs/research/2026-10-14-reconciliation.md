@@ -35,13 +35,13 @@ Closed issues: #72, #73, #74. All the others listed here are still open.
 Each status line is kept separate. A pass on one line never implies a pass on another.
 
 - **Source checks:** the change is in `main` with its own tests.
-- **CI:** hosted checks on the merge commit.
+- **CI:** hosted checks for the corresponding change or commit.
 - **Deployed build:** the exact build runs on the isolated preview host.
 - **Authenticated ChatGPT acceptance:** an operator checked it through the authenticated ChatGPT host.
 - **Provider qualification:** recorded #71 evidence for a real, subscription-entitled native provider.
 - **End-to-end convergence:** a real campaign reached a verified result through this path.
 
-Unless stated otherwise, "not recorded" means there is no evidence in this repository, not that the check failed. CI on `f6e2417` was still running when this note was written. The previous main commits (`ce9ad15`, `c0234ab`) passed.
+Unless stated otherwise, "not recorded" means there is no evidence in this repository, not that the check failed. CI on `f6e2417` passed (rust, ui, validate-linux, validate-windows), as did the previous main commits (`ce9ad15`, `c0234ab`).
 
 ### #61 autonomous continuation
 
@@ -104,7 +104,7 @@ These are closed by #84, #87 and #83. Source checks and CI passed. Deployed buil
 ### #76 GitHub App intake
 
 - Source checks: done in #89 (opt-in, least-privileged reads, off by default).
-- CI: the `main` run on `f6e2417` was still in progress.
+- CI: passed on `f6e2417` (rust, ui, validate-linux, validate-windows).
 - Deployed build: not recorded.
 - Authenticated ChatGPT acceptance: not recorded.
 - Provider qualification: not applicable. **Operator-gated:** installing the App and handling its credentials.
