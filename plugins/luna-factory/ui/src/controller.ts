@@ -3,6 +3,7 @@ import { backendCatalogSchema, graphChangeSchema, graphEnvelopeSchema, type Back
 import { campaignListSchema, type CampaignView } from "./domain";
 import { agentTimelineSchema, type AgentTimelineView } from "./domain";
 import { deliverySchema, type Delivery } from "./domain";
+import { githubConnectSchema, githubRepositoryListSchema, localCreateSchema, localRepositoryName, repositoryReasonCopy, type GithubRepositoryList } from "./domain";
 import { roster } from "./agents";
 
 export interface Bridge {
@@ -30,6 +31,12 @@ export interface ViewState {
   timelines: Record<string, AgentTimelineView>; timelineRunId: string | null;
   /** GitHub-reported telemetry (`read_factory_delivery`). Display only: never proof, attention or an action. */
   delivery: Delivery | null;
+  /** GitHub repos the App installation can see, for the plan form's picker. Display only. */
+  githubRepos: GithubRepositoryList | null; githubLoading: boolean;
+  /** The plan form's chosen approved alias. View-only; the server rechecks it on submit. */
+  pickedRepository: string | null;
+  /** The plan form's "+ New repo…" choice: the repo is created only when Plan it is pressed. View-only. */
+  newRepository: boolean;
 }
 /** Each agent's observed timeline is read at most once per interval, a few agents at a time. */
 export const TIMELINE_INTERVAL_MS = 25_000;
@@ -37,7 +44,7 @@ export const MAX_TIMELINE_AGENTS = 8;
 /** Matches the server's per-node minimum interval; the app never polls GitHub faster. */
 export const DELIVERY_INTERVAL_MS = 60_000;
 export class WorkbenchController {
-  readonly state: ViewState = { runs: [], capabilities: null, settings: {}, connectionStatus: "connecting", selectedId: null, initialized: false, connected: false, refreshing: false, pending: null, error: null, notice: null, contextError: null, discovery: null, discovering: false, graph: null, graphLoading: false, graphStale: false, selectedNodeId: null, proposal: null, backends: null, viewMode: "map", selectedAgent: null, campaigns: null, campaignsStale: false, campaignsSkipped: 0, timelines: {}, timelineRunId: null, delivery: null };
+  readonly state: ViewState = { runs: [], capabilities: null, settings: {}, connectionStatus: "connecting", selectedId: null, initialized: false, connected: false, refreshing: false, pending: null, error: null, notice: null, contextError: null, discovery: null, discovering: false, graph: null, graphLoading: false, graphStale: false, selectedNodeId: null, proposal: null, backends: null, viewMode: "map", selectedAgent: null, campaigns: null, campaignsStale: false, campaignsSkipped: 0, timelines: {}, timelineRunId: null, delivery: null, githubRepos: null, githubLoading: false, pickedRepository: null, newRepository: false };
   private initialSeen = false;
   private readVersion = 0;
   private contextVersion = 0;
@@ -55,6 +62,10 @@ export class WorkbenchController {
   private timelineLoading = false;
   private readonly timelineReadAt = new Map<string, number>();
   private deliveryReadAt: number | null = null;
+  private githubVersion = 0;
+  private readonly repositoryKeys = new Map<string, string>();
+  /** New-repo names created for a plan that has not been saved yet, so a plan retry skips the create. */
+  private readonly createdRepositories = new Map<string, string>();
   constructor(private readonly bridge: Bridge, private readonly changed: () => void) {}
   get selected(): RunView | undefined { return this.state.runs.find(run => run.id === this.state.selectedId); }
   setConnected(connected: boolean): void { this.state.connected = connected; this.state.connectionStatus = connected ? "connected" : "connecting"; this.lastContext = ""; this.syncContext(); this.changed(); }
@@ -537,6 +548,107 @@ export class WorkbenchController {
       this.state.error = `${errorMessage(error)} Use the accessible repository form below if this host cannot display a native form.`;
       return false;
     } finally { this.state.pending = null; this.changed(); }
+  }
+  /**
+   * Read-only list for the plan form. Called only when the server offers GitHub connect; a server
+   * without the tool, or a failed read, leaves just the approved repositories.
+   */
+  async loadGithubRepositories(cursor?: string): Promise<void> {
+    if (!this.state.connected || this.state.capabilities?.workspaces?.connect_github !== true || this.state.githubLoading) return;
+    const version = ++this.githubVersion;
+    this.state.githubLoading = true; this.changed();
+    try {
+      const parsed = githubRepositoryListSchema.parse(structuredResult(await this.bridge.call("list_factory_github_repositories", cursor ? { cursor } : {})));
+      if (version !== this.githubVersion) return;
+      const previous = cursor ? this.state.githubRepos?.repositories ?? [] : [];
+      const seen = new Set(parsed.repositories.map(repo => repo.full_name));
+      this.state.githubRepos = { ...parsed, repositories: [...previous.filter(repo => !seen.has(repo.full_name)), ...parsed.repositories] };
+    } catch { if (version === this.githubVersion && !cursor) this.state.githubRepos = null; }
+    finally { if (version === this.githubVersion) { this.state.githubLoading = false; this.changed(); } }
+  }
+  /** View-only plan form choice: an approved alias, or `null` for "+ New repo…". Nothing is read or sent. */
+  pickRepository(alias: string | null): void {
+    if (alias !== null && !this.state.capabilities?.repositories.some(repo => repo.alias === alias)) return;
+    if (alias === null && this.state.capabilities?.workspaces?.create_local !== true) return;
+    if (alias !== null) this.state.pickedRepository = alias;
+    this.state.newRepository = alias === null;
+    this.changed();
+  }
+  /** Clone a GitHub repo into Luna's workspace as an approved alias. No push, branch, PR or run. */
+  async connectGithubRepository(fullName: string): Promise<boolean> {
+    const repo = this.state.githubRepos?.repositories.find(item => item.full_name === fullName);
+    if (this.state.capabilities?.workspaces?.connect_github !== true || !repo || !repo.connectable || repo.connected_alias) {
+      this.reportError("This repo can't be connected right now. Refresh and try again."); return false;
+    }
+    const added = await this.addRepository("connect_factory_github_repository", `github:${fullName}`, { repository: fullName }, result => {
+      const parsed = githubConnectSchema.parse(result);
+      if (parsed.full_name !== fullName) throw new Error("The server connected a different repo. Refresh before retrying.");
+      return { alias: parsed.alias, notice: parsed.status === "already_connected" ? `${fullName} was already connected.` : `Connected ${fullName}.` };
+    });
+    if (typeof added === "string") this.state.newRepository = false;
+    return added !== false;
+  }
+  /** Start a new empty local repository as an approved alias. No GitHub call and nothing runs. */
+  async createLocalRepository(input: string): Promise<boolean> {
+    return await this.createLocal(input) !== false;
+  }
+  /**
+   * "+ New repo…" then Plan it: create the repo, then submit the plan with its alias. A name that
+   * was already created and approved in this session is not created again, so retrying a failed
+   * plan sends the same plan request (and idempotency key) without a second create call.
+   */
+  async createRepositoryAndSubmit(input: string, submit: (alias: string) => Promise<boolean>): Promise<boolean> {
+    const name = input.trim();
+    let alias = this.createdRepositories.get(name);
+    if (!alias || !this.state.capabilities?.repositories.some(repo => repo.alias === alias)) {
+      const added = await this.createLocal(name);
+      if (added === false) return false;
+      if (added === null) { this.reportError(`Luna created ${name} but hasn't listed it as ready yet. Refresh, then press Plan it again.`); return false; }
+      alias = added;
+      this.createdRepositories.set(name, alias);
+    }
+    const success = await submit(alias);
+    if (success) { this.createdRepositories.delete(name); this.state.newRepository = false; this.state.pickedRepository = alias; }
+    return success;
+  }
+  private createLocal(input: string): Promise<string | null | false> {
+    const name = input.trim();
+    if (this.state.capabilities?.workspaces?.create_local !== true) { this.reportError(repositoryReasonCopy("local_create_not_enabled")); return Promise.resolve(false); }
+    if (!localRepositoryName.test(name)) { this.reportError("Use lowercase letters, digits, dots, dashes or underscores, starting with a letter or digit."); return Promise.resolve(false); }
+    return this.addRepository("create_factory_local_repository", `local:${name}`, { name }, result => {
+      const parsed = localCreateSchema.parse(result);
+      return { alias: parsed.alias, notice: parsed.status === "already_exists" ? `${parsed.alias} already exists.` : `Created ${parsed.alias}.` };
+    });
+  }
+  /** Resolves to the approved alias, `null` when added but not listed as approved yet, or `false` on failure. */
+  private async addRepository(tool: "connect_factory_github_repository" | "create_factory_local_repository", keyFor: string, args: Record<string, unknown>, read: (result: unknown) => { alias: string; notice: string }): Promise<string | null | false> {
+    if (!this.state.connected || this.state.pending) return false;
+    // One key per repo until it succeeds, so a retry after a lost reply is the same request.
+    const key = this.repositoryKeys.get(keyFor) ?? crypto.randomUUID();
+    this.repositoryKeys.set(keyFor, key);
+    this.state.pending = { tool, runId: null }; this.state.error = null; this.state.notice = null; this.changed();
+    let added: { alias: string; notice: string };
+    try {
+      const result = structuredResult(await this.bridge.call(tool, { ...args, idempotency_key: key }));
+      const reason = result !== null && typeof result === "object" && "reason" in result && typeof result.reason === "string" && !("alias" in result) ? result.reason : null;
+      if (reason) throw new Error(repositoryReasonCopy(reason));
+      added = read(result);
+      this.repositoryKeys.delete(keyFor);
+    } catch (error) {
+      const message = errorMessage(error);
+      this.state.error = /^[a-z_]+$/.test(message) ? repositoryReasonCopy(message) : error instanceof Error && error.name === "ZodError" ? "The server's reply didn't look right. Refresh before retrying." : message;
+      this.state.pending = null; this.changed();
+      return false;
+    }
+    this.state.pending = null;
+    // The new alias is usable only once the server lists it as approved.
+    await this.refresh();
+    const ready = this.state.capabilities?.repositories.some(repo => repo.alias === added.alias) === true;
+    if (ready) this.state.pickedRepository = added.alias;
+    this.state.notice = ready ? `${added.notice} It's ready to plan.` : `${added.notice} Refresh if it doesn't show up yet.`;
+    this.changed();
+    if (tool === "connect_factory_github_repository") void this.loadGithubRepositories();
+    return ready ? added.alias : null;
   }
   private syncContext(): void {
     if (this.contextRestoreEpoch !== null) return;

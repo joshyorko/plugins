@@ -88,8 +88,11 @@ The checked-in MCP maps connect to `http://127.0.0.1:8787/mcp`. Keep the listene
 
 ## Add repositories from the workbench
 
-Choose **Add repository** from the empty state or **Settings**. Optional trusted
-`discovery_roots` in the private operator config offer a bounded local catalog.
+Open **Plan work**, type what you want done, and pick a repo from the chip under the
+box. When the server offers it, the same menu lists your GitHub repos with **Connect**
+and has **+ New repo…**, which is created when you press **Plan it**. Optional
+trusted `discovery_roots` in the private operator config offer a bounded local
+catalog under **More options** › **Add from an operator folder**.
 The app requests an opaque candidate, alias and finish cap; only a local operator
 approval can register access. See the [repository onboarding guide](docs/repository-onboarding.md)
 for configuration, approval commands and revocation. Safe settings cannot add

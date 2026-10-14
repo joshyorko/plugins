@@ -68,7 +68,8 @@ export const runSchema = z.object({
 });
 export type RunView = z.infer<typeof runSchema>;
 export const capabilitiesSchema = z.object({
-  repositories: z.array(z.object({ alias: z.string().min(1).max(64), max_finish: finishSchema })).max(1000),
+  /** `provenance` is optional and display-only: how an approved alias was added, never authority. */
+  repositories: z.array(z.object({ alias: z.string().min(1).max(64), max_finish: finishSchema, provenance: z.enum(["github_app_installation", "local_create"]).optional().catch(undefined) })).max(1000),
   profiles: z.array(z.object({ alias: z.string().min(1).max(64), effort: z.string().max(64), supported: z.boolean().optional() })).max(100).transform(profiles => profiles.filter(profile => profile.supported !== false)),
   limits: z.object({ capacity: z.number().int().min(1).max(8), repair_attempts: z.number().int().min(0).max(10), wall_seconds: z.number().int().min(30).max(86400) }),
   repository_onboarding: z.object({ enabled: z.boolean(), approval: z.literal("local_operator") }).optional(),
@@ -77,6 +78,11 @@ export const capabilitiesSchema = z.object({
   agent_timeline: z.object({ source: z.literal("codex-action-server"), enabled: z.boolean(), detail: z.string().max(300) }).optional(),
   /** Optional read-only GitHub App. Configuration only; reachability is reported per read. */
   github: z.object({ configured: z.boolean(), reason: z.string().max(128) }).optional(),
+  /**
+   * Operator switches for adding repositories from the plan form. Present only on servers with
+   * list/connect/create; absent or malformed reads as "not offered", so those tools are never called.
+   */
+  workspaces: z.object({ connect_github: z.boolean(), create_local: z.boolean() }).optional().catch(undefined),
 });
 export type Capabilities = z.infer<typeof capabilitiesSchema>;
 export const observedKinds = ["assigned", "command", "file_change", "commit", "pr_opened", "check_result", "subagent_spawned", "message", "waiting", "error"] as const;
@@ -111,6 +117,46 @@ export const repositoryDiscoverySchema = z.object({
   requests: z.array(repositoryRegistrationSchema).max(100), approval: z.literal("local_operator"),
 }).strict();
 export type RepositoryDiscovery = z.infer<typeof repositoryDiscoverySchema>;
+const repositoryAlias = z.string().regex(/^[A-Za-z0-9._-]{1,64}$/);
+const identity = z.string().regex(/^[a-f0-9]{64}$/);
+const forgeName = z.string().min(3).max(201).regex(/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/);
+/** `list_factory_github_repositories`: what the GitHub App installation can see. Display only, never proof. */
+export const githubRepositoryListSchema = z.object({
+  schema_version: z.literal(1), reported_by: z.literal("github"), provenance: z.literal("github_app"),
+  configured: z.boolean(), available: z.boolean(), reason: z.string().max(128).nullable(),
+  repositories: z.array(z.object({
+    full_name: forgeName, private: z.boolean(), default_branch: z.string().max(256).nullable(), description: z.string().max(280).nullable(),
+    connected_alias: repositoryAlias.nullable(), connectable: z.boolean(), blocked_reason: z.string().max(128).nullable(),
+  })).max(100),
+  next_cursor: z.string().min(1).max(512).nullable(), observed_at: timestamp,
+});
+export type GithubRepositoryList = z.infer<typeof githubRepositoryListSchema>;
+export type GithubRepository = GithubRepositoryList["repositories"][number];
+/** `connect_factory_github_repository`: a read-only clone registered as an approved alias. Nothing runs. */
+export const githubConnectSchema = z.object({
+  schema_version: z.literal(1), status: z.enum(["connected", "already_connected"]), alias: repositoryAlias,
+  repository: z.object({ alias: repositoryAlias, identity }), full_name: forgeName, default_branch: z.string().max(256).nullable(), provenance: z.literal("github_app"),
+}).refine(value => value.repository.alias === value.alias, "Inconsistent connect result");
+/** `create_factory_local_repository`: an empty local repository registered as an approved alias. */
+export const localCreateSchema = z.object({
+  schema_version: z.literal(1), status: z.enum(["created", "already_exists"]), alias: repositoryAlias,
+  repository: z.object({ alias: repositoryAlias, identity }),
+}).refine(value => value.repository.alias === value.alias, "Inconsistent create result");
+export const localRepositoryName = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+/** Plain copy for the typed reasons the repository tools return. Unknown codes are never shown raw. */
+export function repositoryReasonCopy(reason: string | null | undefined): string {
+  const messages: Record<string, string> = {
+    github_connect_not_enabled: "Connecting GitHub repos isn't switched on for this Luna yet.",
+    local_create_not_enabled: "Creating new repos isn't switched on for this Luna yet.",
+    workspace_path_conflict: "A different folder with that name already exists in Luna's workspace.",
+    not_allowlisted: "Not on the list of repos Luna may connect.",
+    github_app_not_configured: "GitHub isn't set up for this Luna.",
+    contents_permission_missing: "The GitHub App can't read this repo's code yet.",
+    rate_limited: "GitHub is busy. Try again in a few minutes.",
+  };
+  if (reason && messages[reason]) return messages[reason];
+  return reason && /\s/.test(reason) ? reason.slice(0, 300) : "Luna couldn't do that. Refresh and try again.";
+}
 /** Importer-supplied display hints: never proof or identity. Invalid hints are dropped, not shown. */
 const sourceDisplaySchema = z.object({
   number: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
@@ -351,6 +397,8 @@ export function boundedContext(run: RunView) {
   };
 }
 export const finishLabels = { local_candidate: "Local candidate", push: "Push branch", pr: "Create PR" } satisfies Record<RunView["finish"], string>;
+/** Plan form wording for the same finish options. */
+export const planFinishLabels = { local_candidate: "Keep the changes on this machine", push: "Push a branch", pr: "Open a pull request" } satisfies Record<RunView["finish"], string>;
 const finishRank = { local_candidate: 0, push: 1, pr: 2 } satisfies Record<RunView["finish"], number>;
 export function allowedFinishes(max: RunView["finish"]): RunView["finish"][] {
   return finishSchema.options.filter(finish => finishRank[finish] <= finishRank[max]);
@@ -362,20 +410,46 @@ const lines = (value: string, field: "acceptance" | "non_goals"): string[] => {
     .map(line => line.replace(/^(?:[-*+•]|\d+[.)])\s+/, "").trim()).filter(Boolean);
 };
 const startSchema = z.object({
-  repository: z.string().min(1).max(64), objective: z.string().trim().min(1, "Enter an objective").max(8000),
+  repository: z.string().min(1, "Pick a repository").max(64), objective: z.string().trim().min(1, "Say what you want done").max(8000),
   acceptance: z.array(z.string().min(1).max(1000)).min(1, "Add at least one acceptance criterion").max(32),
   non_goals: z.array(z.string().min(1).max(1000)).max(32), finish: finishSchema, profile: z.string().min(1).max(64),
   capacity: z.coerce.number().int().min(1).max(8), repair_attempts: z.coerce.number().int().min(0).max(10),
   wall_seconds: z.coerce.number().int().min(30).max(86400), idempotency_key: z.string().min(1).max(128),
 });
+/** What "Plan it" sends when More options is left alone. Always inside the server's limits. */
+export function planDefaults(capabilities: Capabilities) {
+  return {
+    finish: "local_candidate" as const, profile: capabilities.profiles[0]?.alias ?? "", capacity: 1,
+    wall_seconds: Math.min(1800, capabilities.limits.wall_seconds), repair_attempts: Math.min(2, capabilities.limits.repair_attempts),
+  };
+}
+const filled = (value: string | undefined): string | undefined => value?.trim() ? value.trim() : undefined;
+/**
+ * The plan form's request. "Done when" is one optional line; when empty the request itself is the
+ * single criterion. Anything left out of More options takes `planDefaults`.
+ */
 export function startRequest(fields: Record<string, string>, capabilities: Capabilities, key: string) {
-  const result = startSchema.safeParse({ ...fields, acceptance: lines(fields.acceptance ?? "", "acceptance"), non_goals: lines(fields.non_goals ?? "", "non_goals"), idempotency_key: key });
-  if (!result.success) throw new Error(result.error.issues[0]?.message || "Check the run fields");
+  const defaults = planDefaults(capabilities);
+  const objective = fields.objective?.trim() ?? "";
+  const doneWhen = filled(fields.done_when);
+  if (!doneWhen && objective.length > 1000) throw new Error("That's a long request. Add a short \"Done when\" line under More options.");
+  const minutes = filled(fields.wall_minutes);
+  const result = startSchema.safeParse({
+    repository: fields.repository ?? "", objective,
+    acceptance: doneWhen ? [doneWhen] : objective ? [objective] : [],
+    non_goals: lines(fields.non_goals ?? "", "non_goals"),
+    finish: filled(fields.finish) ?? defaults.finish, profile: filled(fields.profile) ?? defaults.profile,
+    capacity: filled(fields.capacity) ?? defaults.capacity, repair_attempts: filled(fields.repair_attempts) ?? defaults.repair_attempts,
+    wall_seconds: minutes === undefined ? defaults.wall_seconds : Math.min(Number(minutes) * 60, capabilities.limits.wall_seconds),
+    idempotency_key: key,
+  });
+  if (!result.success) throw new Error(result.error.issues[0]?.message || "Check the plan fields");
   const request = result.data;
   const repository = capabilities.repositories.find(repo => repo.alias === request.repository);
-  if (!repository || !allowedFinishes(repository.max_finish).includes(request.finish)) throw new Error("Choose an approved repository and finish authority");
-  if (!capabilities.profiles.some(profile => profile.alias === request.profile)) throw new Error("Choose an approved runtime profile");
+  if (!repository) throw new Error("Pick one of the ready repositories");
+  if (!allowedFinishes(repository.max_finish).includes(request.finish)) throw new Error("This repository can't finish that way. Pick another option under More options.");
+  if (!capabilities.profiles.some(profile => profile.alias === request.profile)) throw new Error("Pick one of the offered models");
   const limits = capabilities.limits;
-  if (request.capacity > limits.capacity || request.repair_attempts > limits.repair_attempts || request.wall_seconds > limits.wall_seconds) throw new Error("The requested budget exceeds the configured limits");
+  if (request.capacity > limits.capacity || request.repair_attempts > limits.repair_attempts || request.wall_seconds > limits.wall_seconds) throw new Error("That's more than this Luna allows. Lower the numbers under More options.");
   return request;
 }

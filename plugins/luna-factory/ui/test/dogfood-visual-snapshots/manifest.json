@@ -1,7 +1,7 @@
 {
   "expected_ui_version": "0.2.1",
   "evidence_kind": "Real browser + MCP Apps AppBridge with synthetic fixtures; not authenticated ChatGPT Desktop acceptance",
-  "ui_source_sha256": "0e3716677aa49eb41b1604613271c9c83fda71069054c02971b011b9c5709b48",
+  "ui_source_sha256": "661b8b4d35b318156cdb25c68aefe7da8ec0888cffcce43d34eb17cd4e794338",
   "captures": [
     {
       "file": "inline-planning-mobile-light.png",
@@ -562,6 +562,192 @@
         "get_factory_backends",
         "list_factory_campaigns",
         "read_factory_delivery"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "plan-light.png",
+      "width": 760,
+      "height": 900,
+      "params": {
+        "surface": "global",
+        "scenario": "plan"
+      },
+      "layout": {
+        "width": 760,
+        "scrollWidth": 760,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "list_factory_campaigns",
+        "list_factory_github_repositories"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "plan-dark.png",
+      "width": 1200,
+      "height": 900,
+      "params": {
+        "surface": "global",
+        "mode": "fullscreen",
+        "theme": "dark",
+        "scenario": "plan"
+      },
+      "layout": {
+        "width": 1200,
+        "scrollWidth": 1200,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "list_factory_campaigns",
+        "list_factory_github_repositories"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "plan-narrow-mobile.png",
+      "width": 360,
+      "height": 760,
+      "params": {
+        "surface": "global",
+        "platform": "mobile",
+        "scenario": "plan"
+      },
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "list_factory_campaigns",
+        "list_factory_github_repositories"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "plan-repo-popover-open.png",
+      "width": 760,
+      "height": 900,
+      "params": {
+        "surface": "global",
+        "scenario": "plan"
+      },
+      "layout": {
+        "width": 760,
+        "scrollWidth": 760,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "list_factory_campaigns",
+        "list_factory_github_repositories"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "plan-repo-popover-narrow-dark.png",
+      "width": 360,
+      "height": 760,
+      "params": {
+        "surface": "global",
+        "platform": "mobile",
+        "theme": "dark",
+        "scenario": "plan"
+      },
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "list_factory_campaigns",
+        "list_factory_github_repositories"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "plan-more-options-light.png",
+      "width": 760,
+      "height": 1000,
+      "params": {
+        "surface": "global",
+        "scenario": "plan"
+      },
+      "layout": {
+        "width": 760,
+        "scrollWidth": 760,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "list_factory_campaigns",
+        "list_factory_github_repositories"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "plan-new-repo-narrow.png",
+      "width": 360,
+      "height": 760,
+      "params": {
+        "surface": "global",
+        "platform": "mobile",
+        "scenario": "plan"
+      },
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "list_factory_campaigns",
+        "list_factory_github_repositories"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "plan-new-repo-invalid-light.png",
+      "width": 760,
+      "height": 900,
+      "params": {
+        "surface": "global",
+        "scenario": "plan"
+      },
+      "layout": {
+        "width": 760,
+        "scrollWidth": 760,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "list_factory_campaigns",
+        "list_factory_github_repositories"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "plan-approved-only-dark.png",
+      "width": 480,
+      "height": 760,
+      "params": {
+        "surface": "global",
+        "theme": "dark",
+        "scenario": "plan-basic"
+      },
+      "layout": {
+        "width": 480,
+        "scrollWidth": 480,
+        "overflowingControls": 0
+      },
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "list_factory_campaigns"
       ],
       "automatic_messages": 0
     }

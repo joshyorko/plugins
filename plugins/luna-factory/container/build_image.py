@@ -59,6 +59,8 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/docs/github-app.md",
     "plugins/luna-factory/docs/dogfood-findings.md",
     "plugins/luna-factory/docs/mission-control.md",
+    # One-box plan flow: the operator-folder path moved under More options.
+    "plugins/luna-factory/docs/repository-onboarding.md",
     "plugins/luna-factory/server/src/campaign.rs",
     "plugins/luna-factory/server/src/cas.rs",
     "plugins/luna-factory/server/src/config.rs",

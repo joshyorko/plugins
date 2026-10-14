@@ -445,6 +445,96 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .repository-request { border-top: 1px solid var(--line); padding: 12px 0; }
 .repository-request code { overflow-wrap: anywhere; }
 
+.form-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+/* Plan work: one centered composer. The request comes first; the repo chip and Plan it share its
+   bottom row. Uses the 2026-10-14 review tokens (4px spacing, 22/16/14/13/12 type, radii 6/8/12,
+   weights 400/500/600) for this form only. Only the repo popover may scroll, never the page body. */
+.plan-composer { --pc-title: 1.375rem; --pc-body: .875rem; --pc-label: .8125rem; --pc-meta: .75rem; width: min(100%, 640px); margin: 0 auto; }
+.plan-composer .editor-heading { align-items: center; gap: 12px; margin: 8px 0 24px; }
+.plan-composer .editor-heading h1 { margin: 0; font-size: var(--pc-title); line-height: 1.75rem; font-weight: 600; letter-spacing: -.01em; }
+.plan-composer .button { border-radius: 8px; font-size: var(--pc-label); line-height: 1.125rem; font-weight: 500; }
+.plan-composer .editor-heading .button { min-height: 32px; padding: 0 10px 0 8px; gap: 6px; }
+.plan-card { max-width: none; }
+.plan-form { display: grid; gap: 24px; }
+.plan-box { margin: 0; min-width: 0; }
+.plan-box > label { display: block; margin: 0 0 8px; font-size: var(--pc-label); line-height: 1.125rem; font-weight: 500; }
+.composer { border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); transition: border-color var(--t-quick) var(--ease), box-shadow var(--t-quick) var(--ease); }
+.composer:has(textarea:focus, .repo-name-field input:focus) { border-color: var(--luna); box-shadow: 0 0 0 3px var(--luna-glow); }
+.composer textarea { display: block; width: 100%; min-height: 104px; margin: 0; padding: 12px 16px 4px; border: 0; border-radius: 12px 12px 0 0; background: transparent; resize: none; outline: none; font-size: max(16px, var(--font-text-md-size, 15px)); line-height: 1.5rem; }
+.composer textarea::placeholder { color: var(--muted); opacity: .85; }
+.plan-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; padding: 8px; }
+.plan-spacer { flex: 1 1 0; }
+.plan-go, .plan-run { flex: 0 0 auto; min-height: 36px; padding: 0 14px; }
+.plan-go:active:not(:disabled) { filter: brightness(.96); }
+.plan-note { margin: 8px 0 0; color: var(--muted); font-size: var(--pc-meta, 12px); line-height: 1rem; overflow-wrap: anywhere; }
+.plan-card > .plan-note { font-size: 14px; line-height: 1.25rem; }
+.plan-error { margin: 8px 0 0; color: var(--needs); font-size: var(--pc-meta); line-height: 1rem; font-weight: 500; }
+.plan-error[hidden] { display: none; }
+.text-link { display: inline; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--luna); font: inherit; font-weight: 500; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.text-link:hover { text-decoration-thickness: 2px; }
+
+/* Repo chip and popover menu */
+.repo-select { position: relative; min-width: 0; max-width: 100%; }
+.repo-chip { display: inline-flex; align-items: center; gap: 4px; max-width: min(240px, 100%); min-height: 32px; padding: 0 6px 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); color: var(--ink); font-size: var(--pc-label); line-height: 1.125rem; font-weight: 500; cursor: pointer; transition: background var(--t-quick) var(--ease), border-color var(--t-quick) var(--ease); }
+.repo-chip:hover:not(:disabled) { background: var(--sunken); }
+.repo-chip[aria-expanded="true"] { border-color: var(--luna); background: var(--luna-glow); }
+.repo-chip:disabled { opacity: .5; cursor: default; }
+.repo-chip .icon { flex: 0 0 auto; color: var(--muted); }
+.repo-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo-popover { position: absolute; top: calc(100% + 6px); left: 0; z-index: 20; width: min(320px, calc(100vw - 32px)); max-height: 360px; overflow-y: auto; overscroll-behavior: contain; padding: 4px; border-radius: 12px; background: var(--surface); box-shadow: 0 4px 16px rgba(0, 0, 0, .10), 0 0 0 1px var(--line); }
+:root[data-theme="dark"] .repo-popover { box-shadow: 0 8px 24px rgba(0, 0, 0, .45), 0 0 0 1px var(--line-strong); }
+.repo-popover[hidden] { display: none; }
+.repo-popover[data-placement="top"] { top: auto; bottom: calc(100% + 6px); }
+.repo-filter { display: block; width: calc(100% - 8px); margin: 4px; padding: 0 10px; min-height: 32px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); font-size: var(--pc-body); }
+.repo-group + .repo-group { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
+.repo-group-label { margin: 0; padding: 8px 8px 4px; color: var(--muted); font-size: var(--pc-meta); line-height: 1rem; font-weight: 500; }
+.repo-sep { height: 1px; margin: 4px 0; background: var(--line); }
+.repo-item { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.repo-item[hidden] { display: none; }
+.repo-item:hover, .repo-item:focus-visible { background: var(--panel); }
+.repo-item:focus-visible { outline: 2px solid var(--luna); outline-offset: -2px; }
+.repo-item[aria-checked="true"] { background: var(--luna-glow); }
+.repo-item[aria-disabled="true"] { cursor: default; }
+.repo-check { display: inline-flex; align-items: center; justify-content: center; width: 16px; color: var(--luna); }
+.repo-text { display: grid; min-width: 0; }
+.repo-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--pc-body); line-height: 1.25rem; font-weight: 500; }
+.repo-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--pc-meta); line-height: 1rem; }
+.repo-connect { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--ink); font-size: var(--pc-meta); line-height: 1rem; font-weight: 500; }
+.repo-item:hover .repo-connect, .repo-item:focus-visible .repo-connect { border-color: var(--luna); color: var(--luna); }
+.repo-state { color: var(--muted); font-size: var(--pc-meta); line-height: 1rem; white-space: nowrap; }
+.muted-row .repo-name { color: var(--muted); font-weight: 400; }
+.repo-new .repo-name { color: var(--luna); }
+.repo-note { margin: 0; padding: 8px; color: var(--muted); font-size: var(--pc-meta); line-height: 1rem; }
+.repo-name-field { flex: 1 1 160px; min-width: 0; max-width: 260px; }
+.repo-name-field input { display: block; width: 100%; min-height: 32px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); font-size: var(--pc-body); line-height: 1.25rem; }
+@media (pointer: coarse) { .repo-name-field input, .repo-filter { font-size: 16px; } }
+.repo-name-field input[aria-invalid="true"] { border-color: var(--needs); }
+
+/* More options stays collapsed with its current controls */
+.plan-more { border-top: 1px solid var(--line); padding-top: 4px; }
+.plan-more > summary { padding: 8px 0; color: var(--muted); font-size: var(--pc-label); line-height: 1.125rem; font-weight: 500; cursor: pointer; }
+.plan-more[open] > summary { color: var(--ink); }
+.plan-more-body { padding-top: 8px; }
+.plan-more .field label { font-weight: 500; }
+.plan-more .field input, .plan-more .field select, .plan-more .field textarea { min-height: 36px; padding: 6px 10px; font-size: var(--pc-body); line-height: 1.25rem; }
+@media (pointer: coarse) { .plan-more .field input, .plan-more .field select, .plan-more .field textarea { font-size: 16px; } }
+.plan-more-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--pc-label); }
+.plan-fine { margin: 8px 0 0; color: var(--muted); font-size: var(--pc-meta); line-height: 1rem; }
+@container (max-width: 480px) {
+  .plan-composer .editor-heading { margin: 4px 0 16px; }
+  .plan-composer .editor-heading h1 { font-size: 1.125rem; line-height: 1.5rem; }
+  .plan-form { gap: 16px; }
+  .repo-name-field { flex-basis: 100%; max-width: none; order: 3; }
+  .plan-spacer { order: 2; }
+  .plan-run, .plan-go { order: 2; }
+}
+
+/* Settings: read-only setup guidance for running work. Nothing here enables it. */
+.setup-card h2:focus { outline: none; }
+.setup-state { padding: 2px 8px; border-radius: 999px; background: var(--sunken); color: var(--muted); font-size: 12px; line-height: 1rem; font-weight: 500; }
+.setup-card p:last-child { margin-bottom: 0; }
+
 /* Inline card: glanceable, no internal scroll, two actions at most */
 .inline-surface { padding: 10px; padding-top: max(10px, env(safe-area-inset-top)); padding-bottom: max(10px, env(safe-area-inset-bottom)); }
 .inline-card { max-width: 720px; margin: 0 auto; padding: 14px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); display: grid; gap: 10px; }
@@ -498,7 +588,7 @@ h1, h2, h3, h4, p { margin-top: 0; }
   .lane { grid-template-columns: minmax(0, 1fr); }
   .lane-events li { grid-template-columns: 48px minmax(0, 1fr); }
   .lane-events li span { grid-column: 2; }
-  .form-grid { grid-template-columns: 1fr; }
+  .form-grid, .form-grid.three { grid-template-columns: 1fr; }
   .identity-list { grid-template-columns: minmax(0, 1fr); }
   .acceptance-list li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }
