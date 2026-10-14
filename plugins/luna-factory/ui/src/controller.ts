@@ -2,6 +2,7 @@ import { allowedFinishes, boundedContext, buildFollowUpPrompt, finishSchema, par
 import { backendCatalogSchema, graphChangeSchema, graphEnvelopeSchema, type BackendCatalog, type FactoryGraph, type GraphChange, type GraphEnvelope } from "./domain";
 import { campaignListSchema, type CampaignView } from "./domain";
 import { agentTimelineSchema, type AgentTimelineView } from "./domain";
+import { deliverySchema, type Delivery } from "./domain";
 import { roster } from "./agents";
 
 export interface Bridge {
@@ -27,12 +28,16 @@ export interface ViewState {
   campaignsSkipped: number;
   /** "Observed in Codex" per agent thread of `timelineRunId`. Display only: never proof, attention or plan state. */
   timelines: Record<string, AgentTimelineView>; timelineRunId: string | null;
+  /** GitHub-reported telemetry (`read_factory_delivery`). Display only: never proof, attention or an action. */
+  delivery: Delivery | null;
 }
 /** Each agent's observed timeline is read at most once per interval, a few agents at a time. */
 export const TIMELINE_INTERVAL_MS = 25_000;
 export const MAX_TIMELINE_AGENTS = 8;
+/** Matches the server's per-node minimum interval; the app never polls GitHub faster. */
+export const DELIVERY_INTERVAL_MS = 60_000;
 export class WorkbenchController {
-  readonly state: ViewState = { runs: [], capabilities: null, settings: {}, connectionStatus: "connecting", selectedId: null, initialized: false, connected: false, refreshing: false, pending: null, error: null, notice: null, contextError: null, discovery: null, discovering: false, graph: null, graphLoading: false, graphStale: false, selectedNodeId: null, proposal: null, backends: null, viewMode: "map", selectedAgent: null, campaigns: null, campaignsStale: false, campaignsSkipped: 0, timelines: {}, timelineRunId: null };
+  readonly state: ViewState = { runs: [], capabilities: null, settings: {}, connectionStatus: "connecting", selectedId: null, initialized: false, connected: false, refreshing: false, pending: null, error: null, notice: null, contextError: null, discovery: null, discovering: false, graph: null, graphLoading: false, graphStale: false, selectedNodeId: null, proposal: null, backends: null, viewMode: "map", selectedAgent: null, campaigns: null, campaignsStale: false, campaignsSkipped: 0, timelines: {}, timelineRunId: null, delivery: null };
   private initialSeen = false;
   private readVersion = 0;
   private contextVersion = 0;
@@ -47,6 +52,7 @@ export class WorkbenchController {
   private timelineVersion = 0;
   private timelineLoading = false;
   private readonly timelineReadAt = new Map<string, number>();
+  private deliveryReadAt: number | null = null;
   constructor(private readonly bridge: Bridge, private readonly changed: () => void) {}
   get selected(): RunView | undefined { return this.state.runs.find(run => run.id === this.state.selectedId); }
   setConnected(connected: boolean): void { this.state.connected = connected; this.state.connectionStatus = connected ? "connected" : "connecting"; this.lastContext = ""; this.syncContext(); this.changed(); }
@@ -107,6 +113,7 @@ export class WorkbenchController {
       this.state.graph = null; this.state.proposal = null; this.state.selectedNodeId = null; this.state.graphLoading = false;
       this.state.graphStale = false; this.state.backends = null; this.changeRetry = null; this.state.selectedAgent = null;
       ++this.timelineVersion; this.timelineLoading = false; this.state.timelines = {}; this.state.timelineRunId = null;
+      this.resetDelivery();
     }
     this.state.selectedId = id;
     this.state.error = null;
@@ -210,6 +217,7 @@ export class WorkbenchController {
         this.state.selectedId = data.value.id;
         ++this.graphVersion;
         this.state.graph = null; this.state.proposal = null; this.state.selectedNodeId = null; this.state.graphLoading = false;
+        this.resetDelivery();
       }
       if (tool === "resume_factory_run" && ["BLOCKED", "NEEDS_INPUT", "INTERRUPTED", "FAILED", "QUIESCENT"].includes(data.value.state)) {
         this.state.error = `Run did not resume. ${data.value.blocker || data.value.remaining_gap || "Check the current state before trying again."}`;
@@ -273,6 +281,7 @@ export class WorkbenchController {
       if (selectionEpoch !== this.selectionEpoch) { this.state.notice = "Plan saved. Refresh the run list to inspect it."; return true; }
       this.state.selectedId = envelope.graph.run_id;
       this.state.graph = null;
+      this.resetDelivery();
       this.acceptGraph(envelope);
       this.state.initialized = true;
       this.state.notice = "Plan saved. Inspect its tasks and review changes before applying them. No execution was started.";
@@ -299,6 +308,30 @@ export class WorkbenchController {
       else { this.state.backends = null; this.state.error = "Execution targets could not be read. Target preferences are unavailable."; }
     } catch (error) { if (version === this.graphVersion && id === this.state.selectedId) { this.state.graphStale = true; this.state.error = `${errorMessage(error)} Refresh the graph before changing it.`; } }
     finally { if (version === this.graphVersion && id === this.state.selectedId) { this.state.graphLoading = false; this.changed(); this.syncContext(); } }
+    if (version === this.graphVersion && id === this.state.selectedId) await this.loadDelivery(true);
+  }
+  private resetDelivery(): void { this.state.delivery = null; this.deliveryReadAt = null; }
+  /**
+   * Read GitHub-reported delivery telemetry for the loaded plan. Only when the operator configured
+   * the GitHub App and the plan has GitHub sources; at most once per minute. A failure clears the
+   * display quietly: it is never an error banner, attention, proof or a reason to retry anything.
+   */
+  async loadDelivery(force = false): Promise<void> {
+    const id = this.state.selectedId;
+    const graph = this.state.graph;
+    if (!this.state.connected || !id || !graph || graph.run_id !== id || this.state.graphStale || this.state.capabilities?.github?.configured !== true) return;
+    if (!graph.nodes.some(node => node.source?.provider === "github")) return;
+    if (!force && this.deliveryReadAt !== null && Date.now() - this.deliveryReadAt < DELIVERY_INTERVAL_MS) return;
+    const version = this.graphVersion;
+    this.deliveryReadAt = Date.now();
+    let delivery: Delivery | null = null;
+    try {
+      const parsed = deliverySchema.parse(structuredResult(await this.bridge.call("read_factory_delivery", { run_id: id })));
+      delivery = parsed.run_id === id ? parsed : null;
+    } catch { delivery = null; }
+    if (version !== this.graphVersion || id !== this.state.selectedId) return;
+    this.state.delivery = delivery;
+    this.changed();
   }
   async restoreContext(id: string, nodeId?: string, expectedRevision?: number): Promise<void> {
     const epoch = this.selectionEpoch + 1;

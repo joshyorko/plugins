@@ -129,7 +129,7 @@ class ContainerBuildTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             plugin = root / "plugins/luna-factory"
-            shutil.copytree(CONTAINER_DIR.parent / "server", plugin / "server")
+            shutil.copytree(CONTAINER_DIR.parent / "server", plugin / "server", ignore=shutil.ignore_patterns("target"))
             shutil.copytree(CONTAINER_DIR, plugin / "container")
             shutil.copytree(CONTAINER_DIR.parent / "ui", plugin / "ui", ignore=shutil.ignore_patterns("node_modules", ".vite", "coverage"))
             (plugin / "assets").mkdir()
@@ -143,7 +143,7 @@ class ContainerBuildTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             plugin = root / "plugins/luna-factory"
-            shutil.copytree(CONTAINER_DIR.parent / "server", plugin / "server")
+            shutil.copytree(CONTAINER_DIR.parent / "server", plugin / "server", ignore=shutil.ignore_patterns("target"))
             shutil.copytree(CONTAINER_DIR, plugin / "container")
             shutil.copytree(CONTAINER_DIR.parent / "ui", plugin / "ui", ignore=shutil.ignore_patterns("node_modules", ".vite", "coverage"))
             (plugin / "assets").mkdir()
@@ -174,6 +174,9 @@ class ContainerBuildTests(unittest.TestCase):
                 "plugins/luna-factory/server/src/campaign.rs",
                 "plugins/luna-factory/server/src/store.rs",
                 "plugins/luna-factory/server/tests/campaign.rs",
+                "plugins/luna-factory/server/src/github.rs",
+                "plugins/luna-factory/server/tests/github_app.rs",
+                "plugins/luna-factory/docs/github-app.md",
                 "plugins/luna-factory/container/Containerfile",
                 "plugins/luna-factory/server/src/extensions.rs",
                 "plugins/luna-factory/server/src/mentions.rs",
@@ -240,13 +243,13 @@ class ContainerBuildTests(unittest.TestCase):
     def test_canary_blocks_execution_and_cas_tool_calls_before_network(self):
         self.assertIn("search_factory_mentions", CANARY.ALLOWED_TOOL_CALLS)
         client = CANARY.McpClient("http://127.0.0.1:1/mcp")
-        for name in ("start_factory", "resume_factory_run", "cancel_factory_run", "inspect_factory_cas"):
+        for name in ("start_factory", "resume_factory_run", "cancel_factory_run", "inspect_factory_cas", "inspect_factory_issue_graph", "read_factory_delivery"):
             with self.assertRaisesRegex(RuntimeError, "policy rejected"):
                 client.call(name)
 
     def test_canaries_expect_the_timeline_tool_app_only_and_never_call_it(self):
         self.assertIn("read_factory_agent_timeline", CANARY.FORBIDDEN_TOOL_CALLS)
-        self.assertEqual(CANARY.TOOL_COUNT, 27)
+        self.assertEqual(CANARY.TOOL_COUNT, 29)
         self.assertNotIn("read_factory_agent_timeline", CANARY.ALLOWED_TOOL_CALLS)
         with self.assertRaisesRegex(RuntimeError, "policy rejected"):
             CANARY.McpClient("http://127.0.0.1:1/mcp").call("read_factory_agent_timeline")

@@ -501,14 +501,15 @@ They still pin the released UI hash. This slice changes no deployed service.
 
 ## Tool catalog
 
-The current catalog has 27 tools: 18 are model-visible and 9 are app-only.
+The current catalog has 29 tools: 20 are model-visible and 9 are app-only.
 
 - **Model-visible:** `start_factory`, `list_factory_runs`, `get_factory_run`,
   `get_factory_capabilities`, `steer_factory_run`, `cancel_factory_run`,
   `resume_factory_run`, `reconcile_factory_run`, `create_factory_graph`,
   `get_factory_graph`, `get_factory_backends`, `inspect_factory_cas`,
-  `propose_factory_change`, `apply_factory_change`, `create_factory_campaign`,
-  `list_factory_campaigns`, `get_factory_campaign` and `promote_factory_campaign`.
+  `inspect_factory_issue_graph`, `read_factory_delivery`, `propose_factory_change`,
+  `apply_factory_change`, `create_factory_campaign`, `list_factory_campaigns`,
+  `get_factory_campaign` and `promote_factory_campaign`.
 - **App-only:** `search_factory_mentions`, `open_factory`, `open_factory_panel`,
   `refresh_factory`, `read_factory_settings`, `update_factory_settings`,
   `discover_factory_repositories`, `request_factory_repository` and
@@ -517,8 +518,9 @@ The current catalog has 27 tools: 18 are model-visible and 9 are app-only.
 `server/tests/mcp_contract.rs` and `server/tests/output_schemas.rs` pin the total.
 Any bridge or toolkit pin must be refreshed against these exact bytes. The
 container canaries (`container/acceptance_canary.py`,
-`container/planning_graph_canary.py`) pin 27 tools and assert that every
-campaign tool is model- and app-visible and that
+`container/planning_graph_canary.py`) pin 29 tools and assert that every
+campaign tool is model- and app-visible, that both GitHub reads are read-only and
+model- and app-visible, and that
 `read_factory_agent_timeline` is read-only and app-only; the acceptance canary
 never calls it.
 
@@ -533,3 +535,36 @@ only from the operator's `cas_timelines` binding. The output is a bounded, redac
 `agent_timeline: {source, enabled, detail}` so the UI knows the server supports the
 tool. Observations never enter `control` or `presentation`, never satisfy criteria
 and never produce attention. See [CAS verification](cas-verification.md#observed-agent-timeline-75).
+
+## GitHub App reads (#76, #78)
+
+This slice adds two read-only, model-and-app tools. For the current counts, see [Tool catalog](#tool-catalog).
+The annotations are `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true` and
+`openWorldHint: true`, because both tools read an external system. Both are off by default. The
+operator runbook, permissions and egress decision are in [GitHub App](github-app.md).
+
+| Tool | Input | Result |
+| --- | --- | --- |
+| `inspect_factory_issue_graph` | `repository` (`owner/repo`), `parent` (issue number), optional `repository_alias` | `provenance: "github_app"`, `status` (`complete`, `incomplete`, `unavailable` or `ineligible`), `reason`, `retry_at`, `eligibility`, `graph_repository`, `forge_repository`, candidate `nodes` (forge identity, graph-bound `source`, `derivation` `native` or `parsed`, `dependency_evidence` `native` or `documented_not_native`), `acceptance_candidates` labelled `derived_from_issue`, rejected `cycles`, `external_dependencies` and `cross_repository` (each with `derivation` and `provenance: "github_app"`), `omitted`, `truncated` and `import` guidance. Writes nothing |
+| `read_factory_delivery` | `run_id` | `reported_by: "github"`, `provenance: "github_app"`, `proof: "none"`, `merge_capability: "none"`, `available`, `complete`, `reason`, `retry_at`, `min_interval_seconds: 60` and per-node `{status, complete, freshness, observed_at, issue, pull_requests[]}` with checks, combined rollup, review decision, diff stats and `ready_for_review` |
+
+- **Forge identity and graph source are separate.** Each node carries a forge identity
+  `{provider: "github", repository: "owner/repo" (lowercase), number, node_id}` with canonical key
+  `github:owner/repo#<number>`, and a `source` bound to the physical graph identity:
+  `{provider, repository_id: graph_repository.identity, item_id, revision, display{number,url}}`.
+  `graph_repository.identity` is the value `create_factory_graph` reports as
+  `graph.repository.identity` for the same alias, so sources are proposed unchanged. The existing
+  graph rules are unchanged: `foreign_graph_source`, `duplicate_graph_source` and replay-safe
+  proposals. `item_id` is `"<numeric repository id>:<issue node id>"`, the immutable forge
+  repository ID qualifier described above.
+- **Native versus parsed.** Sub-issues and GitHub `blocked_by` relations are `native`. Task-list
+  references, acceptance candidates and prose dependencies are `parsed`. A dependency documented
+  in prose but not recorded by GitHub is kept as `documented_not_native`, never dropped.
+- **Incomplete is explicit.** Any truncated or page-limited read returns `incomplete` (intake) or
+  `complete: false` (delivery), never complete.
+- **Delivery is in memory and display only.** It's cached per node, with a minimum interval of 60
+  seconds. It never enters control, criteria, presentation `result` or `actions`, `deliverable`,
+  receipts or **Needs you**. Contract tests compare those fields before and after a GitHub
+  "success".
+- **Capabilities.** `capabilities.github` is `{configured, reason}` only. Credentials, key paths
+  and tokens are never projected.

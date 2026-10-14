@@ -51,6 +51,13 @@ def check_surface(client: McpClient, expected_ui_sha256: str = RELEASE_UI_SHA256
     require(len(tools) == TOOL_COUNT and required.issubset(names), "MCP planning tool catalog mismatch")
     require(campaign_tools_visible(tools), "campaign tools are not model- and app-visible")
     require_app_only_timeline(tools)
+    for name in ("inspect_factory_issue_graph", "read_factory_delivery"):
+        github_read = next((tool for tool in tools if tool.get("name") == name), {})
+        require(
+            github_read.get("annotations", {}).get("readOnlyHint") is True
+            and github_read.get("_meta", {}).get("ui", {}).get("visibility") == ["model", "app"],
+            "GitHub read tool contract mismatch",
+        )
     resources = client.request("resources/list").get("resources", [])
     require(any(item.get("uri") == WORKBENCH_URI for item in resources), "bundled workbench resource missing")
     read = client.request("resources/read", {"uri": WORKBENCH_URI}).get("contents", [])

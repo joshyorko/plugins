@@ -1,4 +1,4 @@
-import type { AgentTimeline, BackendCatalog, CampaignView, Capabilities, GraphEnvelope, RunView, Workbench } from "../src/domain";
+import type { AgentTimeline, BackendCatalog, CampaignView, Capabilities, Delivery, DeliveryNode, DeliveryPull, GraphEnvelope, RunView, Workbench } from "../src/domain";
 
 export function fixtureRun(overrides: Partial<RunView> = {}): RunView {
   const run: RunView = {
@@ -197,5 +197,65 @@ export function fixtureTimelines(runId = "swarm-fixture"): Record<string, AgentT
     "owner-a": observed("owner-a", [[5, "assigned", "Received instructions"], [120, "command", "Ran rg (exit 0)"], [530, "subagent_spawned", "Spawned a helper agent"], [770, "subagent_spawned", "Spawned a helper agent"], [1200, "waiting", "Waiting on helper agents"], [1820, "message", "The restart reproduction fails as expected; reviewing the worker's fix."]], [{ parent_thread: "owner-a", receiver_thread: "child-1" }, { parent_thread: "owner-a", receiver_thread: "child-2" }]),
     "child-1": observed("child-1", [[545, "assigned", "Received instructions"], [700, "command", "Ran git status (exit 0)"], [1100, "file_change", "Changed 2 files"], [1490, "check_result", "Check failed: cargo test (exit 101)"], [1900, "file_change", "Changed 1 file"], [2210, "check_result", "Check passed: cargo test"], [2240, "commit", "Committed changes with git commit"]]),
     "child-2": { schema_version: 1, run_id: runId, thread_id: "child-2", observed: false, status: "unavailable", source: "codex-action-server", reason: "cas_action_failed", detail: "The Codex Action Server declined this read, for example because the thread is outside its configured workspace.", events: [], children: [], omitted: 0, next_cursor: null, freshness: null, binding_verified: false, execution_eligible: false },
+  };
+}
+
+/**
+ * SYNTHETIC GITHUB TELEMETRY shaped like a `read_factory_delivery` result for the campaign plan.
+ * Reported by GitHub, display only: none of it is Luna proof. Numbers and names are synthetic.
+ */
+const deliveryReadAt = 1791140400;
+function fixturePull(number: number, overrides: Partial<DeliveryPull> = {}, observedAt = deliveryReadAt): DeliveryPull {
+  return {
+    number, url: `https://github.com/joshyorko/actions/pull/${number}`, state: "open", draft: false,
+    head_sha: `${number}`.padStart(7, "0") + "c0ffee".repeat(5) + "abc", review_decision: null,
+    diff: { files_changed: 4, additions: 120, deletions: 18 },
+    checks: { rollup: "success", total: 3, truncated: false, statuses: [], runs: [
+      { name: "lint", status: "completed", conclusion: "success", started_at: observedAt - 900, completed_at: observedAt - 840, summary: null },
+      { name: "unit (ubuntu-latest)", status: "completed", conclusion: "success", started_at: observedAt - 900, completed_at: observedAt - 600, summary: null },
+      { name: "build (windows-latest)", status: "completed", conclusion: "success", started_at: observedAt - 900, completed_at: observedAt - 540, summary: null },
+    ] },
+    ready_for_review: true, merge_authority: false, observed_at: observedAt, reported_by: "github", provenance: "github_app",
+    ...overrides,
+  };
+}
+function fixtureDeliveryNode(id: string, overrides: Partial<DeliveryNode> = {}): DeliveryNode {
+  const number = Number(id.slice(-3));
+  return {
+    node_id: id, item_id: `1148934299:I_kwDOsynthetic${id.slice(-3)}`, reported_by: "github", provenance: "github_app", complete: true, status: "observed", freshness: "cached", reason: null,
+    observed_at: deliveryReadAt - 30, issue: { number, url: `https://github.com/joshyorko/actions/issues/${number}`, state: "open" },
+    pull_requests: [], pull_requests_total: 0, pull_requests_truncated: false, ...overrides,
+  };
+}
+export function fixtureDelivery(runId = "campaign-actions-v2"): Delivery {
+  const ids = Array.from({ length: 13 }, (_, index) => `issue-${102 + index}`);
+  const special: Record<string, Partial<DeliveryNode>> = {
+    "issue-103": { freshness: "fresh", observed_at: deliveryReadAt, pull_requests: [fixturePull(121, { review_decision: "approved", diff: { files_changed: 9, additions: 412, deletions: 96 } })], pull_requests_total: 1 },
+    "issue-105": { pull_requests: [fixturePull(124, { draft: true, ready_for_review: false, checks: { rollup: "pending", total: 2, truncated: false, statuses: [], runs: [
+      { name: "lint", status: "completed", conclusion: "success", started_at: deliveryReadAt - 400, completed_at: deliveryReadAt - 380, summary: null },
+      { name: "unit (ubuntu-latest)", status: "in_progress", conclusion: null, started_at: deliveryReadAt - 400, completed_at: null, summary: null },
+    ] } }, deliveryReadAt - 30)], pull_requests_total: 1 },
+    "issue-109": { freshness: "fresh", observed_at: deliveryReadAt, pull_requests: [fixturePull(130, { review_decision: "changes_requested", ready_for_review: false, diff: { files_changed: 3, additions: 88, deletions: 12 }, checks: { rollup: "failure", total: 4, truncated: false,
+      statuses: [{ context: "coverage/patch", state: "pending", created_at: deliveryReadAt - 200 }], runs: [
+        { name: "lint", status: "completed", conclusion: "success", started_at: deliveryReadAt - 700, completed_at: deliveryReadAt - 680, summary: null },
+        { name: "holotree cache (windows-latest)", status: "completed", conclusion: "failure", started_at: deliveryReadAt - 700, completed_at: deliveryReadAt - 420, summary: "Cache key mismatch on windows-latest" },
+        { name: "unit (ubuntu-latest)", status: "completed", conclusion: "success", started_at: deliveryReadAt - 700, completed_at: deliveryReadAt - 500, summary: null },
+      ] } })], pull_requests_total: 1 },
+    "issue-111": { complete: false, freshness: "stale", reason: "polling_budget_deferred", observed_at: deliveryReadAt - 1200, pull_requests: [fixturePull(133, {}, deliveryReadAt - 1200)], pull_requests_total: 1 },
+  };
+  return {
+    schema_version: 1, run_id: runId, graph_revision: 6, reported_by: "github", provenance: "github_app", proof: "none", merge_capability: "none",
+    available: true, complete: true, reason: null, retry_at: null, min_interval_seconds: 60, observed_at: deliveryReadAt,
+    nodes: ids.map(id => fixtureDeliveryNode(id, special[id])),
+  };
+}
+/** The same plan while GitHub rate-limits Luna: last observations stay visible, marked stale. */
+export function fixtureDeliveryUnavailable(runId = "campaign-actions-v2"): Delivery {
+  const healthy = fixtureDelivery(runId);
+  return {
+    ...healthy, available: false, complete: false, reason: "rate_limited", retry_at: deliveryReadAt + 900,
+    nodes: healthy.nodes.map(node => node.node_id === "issue-103"
+      ? { ...node, complete: false, freshness: "stale", reason: "rate_limited", observed_at: deliveryReadAt - 600 }
+      : { ...node, complete: false, status: "unavailable", freshness: null, reason: "rate_limited", observed_at: null, issue: null, pull_requests: [], pull_requests_total: 0 }),
   };
 }

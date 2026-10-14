@@ -1,0 +1,72 @@
+{
+ "additions": 2451,
+ "changedFiles": 54,
+ "commits": {
+  "nodes": [
+   {
+    "commit": {
+     "oid": "96c84332c94e21c6ac3af1590cb805993ac2ceda",
+     "statusCheckRollup": {
+      "contexts": {
+       "nodes": [
+        {
+         "__typename": "CheckRun",
+         "completedAt": "2026-10-10T20:22:25Z",
+         "conclusion": "SUCCESS",
+         "name": "validate-linux",
+         "startedAt": "2026-10-10T20:22:10Z",
+         "status": "COMPLETED",
+         "summary": null,
+         "title": null
+        },
+        {
+         "__typename": "CheckRun",
+         "completedAt": "2026-10-10T20:28:40Z",
+         "conclusion": "SUCCESS",
+         "name": "rust",
+         "startedAt": "2026-10-10T20:23:24Z",
+         "status": "COMPLETED",
+         "summary": null,
+         "title": null
+        },
+        {
+         "__typename": "CheckRun",
+         "completedAt": "2026-10-10T20:22:01Z",
+         "conclusion": "SUCCESS",
+         "name": "validate-windows",
+         "startedAt": "2026-10-10T20:21:23Z",
+         "status": "COMPLETED",
+         "summary": null,
+         "title": null
+        },
+        {
+         "__typename": "CheckRun",
+         "completedAt": "2026-10-10T20:22:02Z",
+         "conclusion": "SUCCESS",
+         "name": "ui",
+         "startedAt": "2026-10-10T20:21:36Z",
+         "status": "COMPLETED",
+         "summary": null,
+         "title": null
+        }
+       ],
+       "totalCount": 4
+      },
+      "state": "SUCCESS"
+     }
+    }
+   }
+  ]
+ },
+ "deletions": 385,
+ "headRefOid": "96c84332c94e21c6ac3af1590cb805993ac2ceda",
+ "isDraft": false,
+ "number": 68,
+ "repository": {
+  "databaseId": 1148934299,
+  "nameWithOwner": "joshyorko/plugins"
+ },
+ "reviewDecision": null,
+ "state": "MERGED",
+ "url": "https://github.com/joshyorko/plugins/pull/68"
+}
