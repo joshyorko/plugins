@@ -11,6 +11,7 @@ from typing import Any
 
 from acceptance_canary import (
     McpClient, WORKBENCH_URI, CLIENT, CAPABILITIES, RELEASE_UI_SHA256, TOOL_COUNT, campaign_tools_visible,
+    require_app_only_timeline,
 )
 import hashlib
 
@@ -49,6 +50,7 @@ def check_surface(client: McpClient, expected_ui_sha256: str = RELEASE_UI_SHA256
     }
     require(len(tools) == TOOL_COUNT and required.issubset(names), "MCP planning tool catalog mismatch")
     require(campaign_tools_visible(tools), "campaign tools are not model- and app-visible")
+    require_app_only_timeline(tools)
     resources = client.request("resources/list").get("resources", [])
     require(any(item.get("uri") == WORKBENCH_URI for item in resources), "bundled workbench resource missing")
     read = client.request("resources/read", {"uri": WORKBENCH_URI}).get("contents", [])

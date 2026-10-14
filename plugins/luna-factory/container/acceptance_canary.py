@@ -38,7 +38,7 @@ CAMPAIGN_TOOLS = {
     "promote_factory_campaign",
 }
 CAMPAIGN_READ_TOOLS = {"list_factory_campaigns", "get_factory_campaign"}
-TOOL_COUNT = 26
+TOOL_COUNT = 27
 
 
 def campaign_tools_visible(tools: list[dict[str, Any]]) -> bool:
@@ -58,7 +58,21 @@ FORBIDDEN_TOOL_CALLS = {
     "steer_factory_run",
     "reconcile_factory_run",
     "inspect_factory_cas",
+    # Reads native Codex history through CAS; the canary never contacts CAS.
+    "read_factory_agent_timeline",
 }
+APP_ONLY_TIMELINE_TOOL = "read_factory_agent_timeline"
+
+
+def require_app_only_timeline(tools: list[dict[str, Any]]) -> None:
+    """The observed agent timeline is a read-only Lanes tool the model never sees."""
+    timeline = [tool for tool in tools if tool.get("name") == APP_ONLY_TIMELINE_TOOL]
+    if (
+        len(timeline) != 1
+        or timeline[0].get("annotations", {}).get("readOnlyHint") is not True
+        or timeline[0].get("_meta", {}).get("ui", {}).get("visibility") != ["app"]
+    ):
+        raise RuntimeError("agent timeline tool must be read-only and app-only")
 
 
 class McpClient:
@@ -132,6 +146,7 @@ def run(url: str, mode: str, expected_ui_sha256: str = RELEASE_UI_SHA256) -> dic
         or not campaign_tools_visible(tools)
     ):
         raise RuntimeError("MCP tool catalog mismatch")
+    require_app_only_timeline(tools)
     mention = next(tool for tool in tools if tool.get("name") == "search_factory_mentions")
     metadata = mention.get("_meta", {})
     if (
