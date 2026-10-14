@@ -112,6 +112,7 @@ ALLOWED_RELEASE_DELTA = {
 ALLOWED_RELEASE_PREFIXES = (
     "plugins/luna-factory/container/",
     "plugins/luna-factory/ui/",
+    "plugins/luna-factory/docs/research/",
 )
 
 
