@@ -19,7 +19,7 @@ fn every_structured_tool_declares_an_object_output_contract() {
 #[test]
 fn graph_catalog_requires_revision_and_is_callable_by_both_audiences() {
     let tools = tool_definitions();
-    assert_eq!(tools.len(), 26);
+    assert_eq!(tools.len(), 27);
     for name in [
         "create_factory_graph",
         "get_factory_graph",
@@ -388,6 +388,21 @@ fn reconciliation_is_callable_in_the_model_filtered_catalog() {
                 .is_none_or(|visibility| visibility.iter().any(|context| context == "model"))
         })
         .collect();
+    // docs/control-wire.md "Tool catalog": 27 tools, 18 model-visible, 9 app-only.
+    assert_eq!(models.len(), 18);
+    assert!(
+        !models
+            .iter()
+            .any(|tool| tool.name == "read_factory_agent_timeline"),
+        "the observed agent timeline is app-only"
+    );
+    let timeline = tool_definitions()
+        .into_iter()
+        .find(|tool| tool.name == "read_factory_agent_timeline")
+        .expect("the Lanes timeline tool is listed for the app");
+    let timeline = serde_json::to_value(timeline).unwrap();
+    assert_eq!(timeline["_meta"]["ui"]["visibility"], json!(["app"]));
+    assert_eq!(timeline["annotations"]["readOnlyHint"], true);
     let reconcile = models
         .iter()
         .find(|tool| tool.name == "reconcile_factory_run")

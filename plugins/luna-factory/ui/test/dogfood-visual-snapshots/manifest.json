@@ -1,7 +1,7 @@
 {
   "expected_ui_version": "0.2.1",
   "evidence_kind": "Real browser + MCP Apps AppBridge with synthetic fixtures; not authenticated ChatGPT Desktop acceptance",
-  "ui_source_sha256": "15b462ba574e18f95fef8d46a3de2c2782c1d58bf07bcc8b22cfe3781331f5bd",
+  "ui_source_sha256": "94ad4073bd64799b14703d21e5d9034536320aeef101bf5ddabde7a003f22f72",
   "captures": [
     {
       "file": "inline-planning-mobile-light.png",
@@ -390,7 +390,10 @@
         "refresh_factory",
         "get_factory_graph",
         "get_factory_backends",
-        "list_factory_campaigns"
+        "list_factory_campaigns",
+        "read_factory_agent_timeline",
+        "read_factory_agent_timeline",
+        "read_factory_agent_timeline"
       ],
       "automatic_messages": 0
     },
