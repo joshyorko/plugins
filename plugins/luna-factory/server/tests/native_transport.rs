@@ -34,27 +34,27 @@ async fn initializes_correlates_concurrent_requests_and_streams_events() {
     let c = client().await;
     let mut events = c.subscribe();
     let (a, b) = tokio::join!(
-        c.request("echo", json!({"n":1})),
-        c.request("echo", json!({"n":2}))
+        c.test_request("echo", json!({"n":1})),
+        c.test_request("echo", json!({"n":2}))
     );
     assert_eq!(a.unwrap()["n"], 1);
     assert_eq!(b.unwrap()["n"], 2);
-    c.request("notify", json!({})).await.unwrap();
+    c.test_request("notify", json!({})).await.unwrap();
     assert_eq!(events.recv().await.unwrap()["method"], "thread/started");
     c.shutdown().await.unwrap();
-    assert!(c.request("echo", json!({})).await.is_err());
+    assert!(c.test_request("echo", json!({})).await.is_err());
 }
 
 #[tokio::test]
 async fn timeout_does_not_retry_a_mutating_request() {
     let c = client().await;
     let err = c
-        .request("turn/start", json!({}))
+        .test_request("turn/start", json!({}))
         .await
         .unwrap_err()
         .to_string();
     assert!(err.contains("timed out"));
-    let counts = c.request("counts", json!({})).await.unwrap();
+    let counts = c.test_request("counts", json!({})).await.unwrap();
     assert_eq!(counts["turn/start"], 1);
     c.shutdown().await.unwrap();
 }
@@ -62,7 +62,11 @@ async fn timeout_does_not_retry_a_mutating_request() {
 #[tokio::test]
 async fn rpc_errors_do_not_leak_untrusted_error_messages() {
     let c = client().await;
-    let err = c.request("error", json!({})).await.unwrap_err().to_string();
+    let err = c
+        .test_request("error", json!({}))
+        .await
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("-32001"));
     assert!(!err.contains("fake-secret"));
     c.shutdown().await.unwrap();
@@ -72,7 +76,7 @@ async fn rpc_errors_do_not_leak_untrusted_error_messages() {
 async fn oversized_frame_closes_transport_without_unbounded_buffering() {
     let c = client().await;
     let err = c
-        .request("oversized", json!({}))
+        .test_request("oversized", json!({}))
         .await
         .unwrap_err()
         .to_string();
@@ -83,7 +87,7 @@ async fn oversized_frame_closes_transport_without_unbounded_buffering() {
 #[tokio::test]
 async fn eof_resolves_pending_requests_and_shutdown_is_idempotent() {
     let c = client().await;
-    assert!(c.request("exit", Value::Null).await.is_err());
+    assert!(c.test_request("exit", Value::Null).await.is_err());
     c.shutdown().await.unwrap();
     c.shutdown().await.unwrap();
 }
@@ -92,11 +96,11 @@ async fn eof_resolves_pending_requests_and_shutdown_is_idempotent() {
 async fn approval_requests_are_visible_and_never_auto_approved() {
     let c = client().await;
     let mut events = c.subscribe();
-    c.request("approval", json!({})).await.unwrap();
+    c.test_request("approval", json!({})).await.unwrap();
     let event = events.recv().await.unwrap();
     assert_eq!(event["method"], "item/commandExecution/requestApproval");
     assert_eq!(event["id"], "server-approval");
-    let counts = c.request("counts", json!({})).await.unwrap();
+    let counts = c.test_request("counts", json!({})).await.unwrap();
     assert_eq!(counts["responses"], 0);
     c.shutdown().await.unwrap();
 }
@@ -105,8 +109,8 @@ async fn approval_requests_are_visible_and_never_auto_approved() {
 async fn responses_may_arrive_out_of_order() {
     let c = client().await;
     let (a, b) = tokio::join!(
-        c.request("reorder", json!({"n":1})),
-        c.request("reorder", json!({"n":2}))
+        c.test_request("reorder", json!({"n":1})),
+        c.test_request("reorder", json!({"n":2}))
     );
     assert_eq!(a.unwrap()["n"], 1);
     assert_eq!(b.unwrap()["n"], 2);
@@ -125,9 +129,9 @@ async fn native_helpers_preserve_security_fields_and_use_current_protocol() {
         .canonicalize()
         .unwrap();
     let skill = root.join("plugins/luna-factory/skills/luna-factory/SKILL.md");
-    let started = c.start_thread(&root, "high", 2).await.unwrap();
+    let started = c.test_start_thread(&root, "high", 2).await.unwrap();
     assert_eq!(started["thread"]["id"], "owner");
-    c.start_skill_turn(
+    c.test_start_skill_turn(
         "owner",
         &skill,
         "Synthetic bounded task",
@@ -136,12 +140,12 @@ async fn native_helpers_preserve_security_fields_and_use_current_protocol() {
     )
     .await
     .unwrap();
-    c.resume_thread("owner").await.unwrap();
-    c.steer_turn("owner", "turn-one", "Stay in scope")
+    c.test_resume_thread("owner").await.unwrap();
+    c.test_steer_turn("owner", "turn-one", "Stay in scope")
         .await
         .unwrap();
     c.interrupt_turn("owner", "turn-one").await.unwrap();
-    let history = c.request("history", json!({})).await.unwrap();
+    let history = c.test_request("history", json!({})).await.unwrap();
     let calls = history.as_array().unwrap();
     let start = calls
         .iter()
@@ -193,7 +197,12 @@ async fn loaded_ephemeral_descendants_are_included_and_active_turns_are_explicit
 #[tokio::test]
 async fn dropping_last_client_stops_only_owned_process() {
     let c = client().await;
-    let pid = c.request("pid", json!({})).await.unwrap().as_u64().unwrap();
+    let pid = c
+        .test_request("pid", json!({}))
+        .await
+        .unwrap()
+        .as_u64()
+        .unwrap();
     drop(c);
     let dead = tokio::time::timeout(Duration::from_secs(3), async {
         while Path::new(&format!("/proc/{pid}")).exists() {
@@ -223,13 +232,13 @@ async fn cancelling_partial_write_invalidates_transport() {
     )
     .await
     .unwrap();
-    c.request("stop-reading", json!({})).await.unwrap();
+    c.test_request("stop-reading", json!({})).await.unwrap();
     let err = c
-        .request("echo", json!({"text":"x".repeat(100 * 1024)}))
+        .test_request("echo", json!({"text":"x".repeat(100 * 1024)}))
         .await
         .unwrap_err();
     assert!(err.to_string().contains("timed out"));
-    let next = c.request("echo", json!({})).await.unwrap_err();
+    let next = c.test_request("echo", json!({})).await.unwrap_err();
     assert!(
         next.to_string().contains("closed"),
         "a partial JSON frame cannot safely be reused"
@@ -315,7 +324,7 @@ async fn terminal_identity_is_validated_and_refreshed_before_targeted_stop() {
     for thread in ["terminal-malformed", "terminal-duplicate"] {
         assert!(c.background_terminals(thread).await.is_err());
     }
-    let calls = c.request("history", json!({})).await.unwrap();
+    let calls = c.test_request("history", json!({})).await.unwrap();
     let stops: Vec<_> = calls
         .as_array()
         .unwrap()
@@ -332,7 +341,10 @@ async fn terminal_identity_is_validated_and_refreshed_before_targeted_stop() {
 
 #[tokio::test]
 async fn dispatch_guard_rechecks_deadline_after_each_native_preflight() {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    };
     for operation in ["thread/start", "turn/start"] {
         let c = client().await;
         let dir = tempfile::tempdir().unwrap();
@@ -341,7 +353,7 @@ async fn dispatch_guard_rechecks_deadline_after_each_native_preflight() {
         let skill = dir.path().join("luna-factory/SKILL.md");
         std::fs::create_dir(skill.parent().unwrap()).unwrap();
         std::fs::write(&skill, "Synthetic canonical skill").unwrap();
-        c.request(
+        c.test_request(
             "test/preflightBarrier",
             json!({
                 "method":if operation == "thread/start" {"model/list"} else {"thread/read"},
@@ -352,31 +364,35 @@ async fn dispatch_guard_rechecks_deadline_after_each_native_preflight() {
         .unwrap();
         // A controlled wall clock advances only once the native read is in
         // flight. This exercises expiry without a 30-second integration sleep.
-        let clock = AtomicU64::new(99);
+        let clock = Arc::new(AtomicU64::new(99));
         let original_deadline = 100;
-        let guard = || {
+        let guard_clock = clock.clone();
+        let guard = move || {
             anyhow::ensure!(
-                clock.load(Ordering::SeqCst) < original_deadline,
+                guard_clock.load(Ordering::SeqCst) < original_deadline,
                 "time_budget_exhausted"
             );
             Ok(())
         };
+        let dispatch_guard = guard;
         let dispatch = async {
             if operation == "thread/start" {
-                c.start_thread_guarded(dir.path(), "high", 1, &guard).await
+                c.test_start_thread_guarded(dir.path(), "high", 1, dispatch_guard)
+                    .await
             } else {
-                c.start_skill_turn_with_id_guarded(
+                c.test_start_skill_turn_with_id_guarded(
                     "owner",
                     &skill,
                     "Bounded test",
                     "high",
                     None,
                     Some("dispatch-one"),
-                    &guard,
+                    dispatch_guard,
                 )
                 .await
             }
         };
+        let advance_clock_value = clock.clone();
         let advance_clock = async {
             tokio::time::timeout(Duration::from_secs(2), async {
                 while !entered.exists() {
@@ -385,12 +401,12 @@ async fn dispatch_guard_rechecks_deadline_after_each_native_preflight() {
             })
             .await
             .unwrap();
-            clock.store(original_deadline, Ordering::SeqCst);
+            advance_clock_value.store(original_deadline, Ordering::SeqCst);
             std::fs::write(&release, "").unwrap();
         };
         let (result, ()) = tokio::join!(dispatch, advance_clock);
         assert_eq!(result.unwrap_err().to_string(), "time_budget_exhausted");
-        let counts = c.request("counts", json!({})).await.unwrap();
+        let counts = c.test_request("counts", json!({})).await.unwrap();
         assert!(
             counts[operation].is_null(),
             "expired {operation} reached native transport"

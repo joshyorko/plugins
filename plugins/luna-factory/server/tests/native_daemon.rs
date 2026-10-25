@@ -24,7 +24,7 @@ async fn existing_daemon_uses_websocket_frames_and_closes_only_connection() {
                         Some("initialize" | "model/list")
                     ));
                     let result = if message["method"] == "initialize" {
-                        json!({"userAgent":"synthetic-unix-websocket"})
+                        json!({"userAgent":"synthetic-unix-websocket","serverInfo":{"name":"codex-fixture","version":"1.0","buildHash":"fixture-sha256"}})
                     } else {
                         json!({"data":[{"model":"gpt-6-luna","supportedReasoningEfforts":[{"reasoningEffort":"high"}]}]})
                     };
@@ -45,6 +45,15 @@ async fn existing_daemon_uses_websocket_frames_and_closes_only_connection() {
         .await
         .unwrap();
         assert_eq!(
+            client.provider_identity().unwrap(),
+            luna_factoryd::qualification::NativeServerIdentity {
+                name: "codex-fixture".into(),
+                version: "1.0".into(),
+                build_hash: Some("fixture-sha256".into()),
+                binary_hash: None,
+            }
+        );
+        assert_eq!(
             client.list_models().await.unwrap()["data"][0]["model"],
             "gpt-6-luna"
         );
@@ -54,6 +63,44 @@ async fn existing_daemon_uses_websocket_frames_and_closes_only_connection() {
             client.shutdown().await.unwrap();
         }
     }
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn existing_daemon_fails_closed_when_initialize_identity_is_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("daemon.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut ws = accept_async(stream).await.unwrap();
+        let initialize: Value =
+            serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+        ws.send(Message::Text(
+            json!({"id":initialize["id"],"result":{"userAgent":"identity-missing"}})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let next = tokio::time::timeout(std::time::Duration::from_secs(1), ws.next())
+            .await
+            .unwrap();
+        assert!(
+            !matches!(next, Some(Ok(Message::Text(text))) if serde_json::from_str::<Value>(&text).is_ok_and(|message| message["method"] == "initialized")),
+            "initialized was sent without identity"
+        );
+    });
+    let result = NativeClient::connect_existing(Path::new("/not-executed"), Some(&socket)).await;
+    let error = match result {
+        Ok(_) => panic!("existing daemon without identity was accepted"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .chain()
+            .any(|cause| { cause.to_string() == luna_factoryd::qualification::PROVIDER_MISMATCH })
+    );
     server.await.unwrap();
 }
 
@@ -72,7 +119,7 @@ async fn cancelled_backpressured_write_cannot_be_flushed_by_a_later_ping() {
         let initialize: Value =
             serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
         ws.send(Message::Text(
-            json!({"id":initialize["id"],"result":{}})
+            json!({"id":initialize["id"],"result":{"serverInfo":{"name":"codex-fixture","version":"1.0","buildHash":"fixture-sha256"}}})
                 .to_string()
                 .into(),
         ))
@@ -111,7 +158,7 @@ async fn cancelled_backpressured_write_cannot_be_flushed_by_a_later_ping() {
     let sending_client = client.clone();
     let pending = tokio::spawn(async move {
         sending_client
-            .request(
+            .test_request(
                 "turn/start",
                 json!({"threadId":"owner","input":"x".repeat(2 * 1024 * 1024)}),
             )
@@ -152,7 +199,7 @@ async fn initialized(listener: &UnixListener) -> ServerSocket {
     reply(
         &mut ws,
         &request["id"],
-        json!({"userAgent":"synthetic-daemon"}),
+        json!({"userAgent":"synthetic-daemon","serverInfo":{"name":"codex-fixture","version":"1.0","buildHash":"fixture-sha256"}}),
     )
     .await;
     assert_eq!(message(&mut ws).await["method"], "initialized");
@@ -211,12 +258,15 @@ async fn websocket_callbacks_are_events_and_never_automatic_approvals() {
         .await
         .unwrap();
     let mut events = client.subscribe();
-    client.request("trigger", json!({})).await.unwrap();
+    client.test_request("trigger", json!({})).await.unwrap();
     let event = events.recv().await.unwrap();
     assert_eq!(event["id"], "approval-1");
     assert_eq!(event["method"], "item/commandExecution/requestApproval");
     assert_eq!(
-        client.request("read-only-check", json!({})).await.unwrap()["approved"],
+        client
+            .test_request("read-only-check", json!({}))
+            .await
+            .unwrap()["approved"],
         false
     );
     server.await.unwrap();
@@ -246,7 +296,7 @@ async fn malformed_and_oversized_websocket_frames_close_pending_requests() {
         )
         .await
         .unwrap();
-        assert!(client.request("read", json!({})).await.is_err());
+        assert!(client.test_request("read", json!({})).await.is_err());
         assert!(client.is_closed());
         server.await.unwrap();
         client.shutdown().await.unwrap();
@@ -292,39 +342,45 @@ async fn websocket_preflight_and_writer_guard_preserve_the_original_deadline() {
         let skill = dir.path().join("luna-factory/SKILL.md");
         std::fs::create_dir(skill.parent().unwrap()).unwrap();
         std::fs::write(&skill, "Synthetic canonical skill").unwrap();
-        let clock = AtomicU64::new(99);
-        let guard = || {
-            anyhow::ensure!(clock.load(Ordering::SeqCst) < 100, "time_budget_exhausted");
+        let clock = std::sync::Arc::new(AtomicU64::new(99));
+        let guard_clock = clock.clone();
+        let guard = move || {
+            anyhow::ensure!(
+                guard_clock.load(Ordering::SeqCst) < 100,
+                "time_budget_exhausted"
+            );
             Ok(())
         };
+        let dispatch_guard = guard;
         let dispatch = async {
             if operation == "thread/start" {
                 client
-                    .start_thread_guarded(dir.path(), "high", 1, &guard)
+                    .test_start_thread_guarded(dir.path(), "high", 1, dispatch_guard)
                     .await
             } else {
                 client
-                    .start_skill_turn_with_id_guarded(
+                    .test_start_skill_turn_with_id_guarded(
                         "owner",
                         &skill,
                         "Bounded fixture",
                         "high",
                         None,
                         Some("dispatch-one"),
-                        &guard,
+                        dispatch_guard,
                     )
                     .await
             }
         };
+        let advance_clock = clock.clone();
         let advance = async {
             at_preflight.await.unwrap();
-            clock.store(100, Ordering::SeqCst);
+            advance_clock.store(100, Ordering::SeqCst);
             release.send(()).unwrap();
         };
         let (result, ()) = tokio::join!(dispatch, advance);
         assert_eq!(result.unwrap_err().to_string(), "time_budget_exhausted");
         assert!(!client.is_closed());
-        client.request("safe-read", json!({})).await.unwrap();
+        client.test_request("safe-read", json!({})).await.unwrap();
         server.await.unwrap();
         client.shutdown().await.unwrap();
     }

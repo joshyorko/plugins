@@ -53,7 +53,7 @@ for line in sys.stdin:
     if mode == "revoke_on_" + str(method):
         revoke_qualifications()
     if method == "initialize":
-        result = {"userAgent": "synthetic-factory"}
+        result = {"userAgent": "synthetic-factory", "serverInfo":{"name":"codex-fixture","version":"1.0","buildHash":"fixture-sha256"}}
     elif method == "model/list":
         result = {"data": [{"model": "gpt-6-luna", "supportedReasoningEfforts": [{"reasoningEffort": "high"}]}]}
     elif method == "thread/start":
@@ -65,7 +65,7 @@ for line in sys.stdin:
             emit({"id": message["id"], "error": {"code": -32000, "message": "synthetic failure"}})
             continue
         turn_number += 1
-        active = {"owner": True, "child": True}
+        active = {"owner": True, "child": True, "revoked-child": mode == "revoke_mid_turn"}
         packet="\n".join(item.get("text","") for item in params.get("input",[]) if item.get("type")=="text")
         selected=re.search(r"CONTROL: task_id=([^,]+),",packet)
         history.append({"id":f"turn-{turn_number}","status":"inProgress","client_id":params.get("clientUserMessageId"),"task_id":selected.group(1) if selected else "objective"})
@@ -76,7 +76,8 @@ for line in sys.stdin:
             continue
         history_path.write_text(json.dumps(history))
         # Events intentionally precede the start response. A resubscription loses this proof.
-        emit({"method": "item/completed", "params": {"threadId": "owner", "turnId": f"turn-{turn_number}", "item": {"type": "collabAgentToolCall", "tool": "spawnAgent", "receiverThreadIds": ["child"], "senderThreadId": "owner", "agentsStates":{"child":{"status":"running"}}}}})
+        if mode != "revoke_mid_turn":
+            emit({"method": "item/completed", "params": {"threadId": "owner", "turnId": f"turn-{turn_number}", "item": {"type": "collabAgentToolCall", "tool": "spawnAgent", "receiverThreadIds": ["child"], "senderThreadId": "owner", "agentsStates":{"child":{"status":"running"}}}}})
         result = {"turn": {"id": f"turn-{turn_number}", "status": "inProgress"}}
     elif method == "thread/read":
         tid = params["threadId"]
@@ -169,3 +170,6 @@ for line in sys.stdin:
                     shutil.copytree(home / "preserved-git", home / "repo/.git")
                 result["data"]=[entry for entry in result["data"] if entry["turnId"]==params["turnId"]]
     emit({"id": message["id"], "result": result})
+    if method == "turn/start" and mode == "revoke_mid_turn":
+        revoke_qualifications()
+        emit({"method":"item/started","params":{"threadId":"owner","turnId":f"turn-{turn_number}","item":{"type":"collabAgentToolCall","tool":"spawnAgent","receiverThreadIds":["revoked-child"],"senderThreadId":"owner","agentsStates":{"revoked-child":{"status":"running"}}}}})

@@ -122,6 +122,8 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/server/tests/continuation.rs",
     "plugins/luna-factory/server/tests/decision_recovery.rs",
     "plugins/luna-factory/server/tests/qualification.rs",
+    "plugins/luna-factory/server/tests/native_daemon.rs",
+    "plugins/luna-factory/server/tests/native_transport.rs",
     "plugins/luna-factory/server/tests/review_regressions.rs",
     "plugins/luna-factory/server/tests/support/mod.rs",
     "plugins/luna-factory/tests/fixtures/native/fake_continuation.py",

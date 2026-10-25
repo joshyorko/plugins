@@ -14,7 +14,7 @@ An execution profile is derived from the operator config plus a profile alias:
 | `factory_version` | `CARGO_PKG_VERSION` of the running binary |
 | `transport` | `native_transport` (`stdio` or `existing_daemon`) |
 | `codex_binary` | Absolute, symlink-resolved `codex_binary` path |
-| `codex_binary_identity` | `size=<bytes>;mtime=<secs>.<nanos>`, or `unavailable` |
+| `codex_binary_identity` | SHA-256 of the bounded executable read, cached by device, inode, size and mtime |
 | `native_socket` | Optional configured socket path |
 | `model` | `gpt-6-luna` (`native::LUNA_MODEL`) |
 | `profile` | Profile alias |
@@ -29,7 +29,9 @@ Grants live in the existing SQLite database, in an additive
 created with `CREATE TABLE IF NOT EXISTS`. `user_version` is unchanged, so older
 binaries still open the database. They never read the table, and they keep their own
 behavior. The payload is
-`{profile, scope, max_capacity, evidence_sha256, evidence_ref, recorded_at, expires_at?, revoked_at?}`.
+`{profile, provider_identity?, scope, max_capacity, evidence_sha256, evidence_ref, recorded_at, expires_at?, revoked_at?, recorded_by_uid, tty_name}`.
+For `existing_daemon`, `provider_identity` includes the `serverInfo` name and version and
+any build or binary hash reported by `initialize`.
 
 - `scope` is `ordinary` (may authorize Factory runs) or `qualification_only` (may
   authorize only the operator canary; never `start_factory`, continuation, repair,
@@ -37,6 +39,7 @@ behavior. The payload is
 - `max_capacity` (1 to 8, default 1) bounds the requested run capacity.
 - `evidence_sha256` and `evidence_ref` identify the evidence file. Its content is
   never echoed.
+- `recorded_by_uid` and `tty_name` identify the local operator session that confirmed the write.
 
 ## Reason codes
 
@@ -48,15 +51,20 @@ behavior. The payload is
 | `execution_qualification_expired` | The matching grant expired |
 | `execution_qualification_scope` | The matching grant's scope doesn't cover this use |
 | `execution_capacity_not_qualified` | Requested capacity exceeds the grant's `max_capacity` |
+| `qualification_provider_mismatch` | Existing-daemon initialize identity is absent or differs from the grant |
+| `qualification_store_exposed` | Qualification state is inside a configured repository or writable workspace root |
+| `qualification_clock_skew` | Wall time moved behind the persisted high-water time or the grant timestamp |
+| `qualification_write_timeout` | A guarded native write did not finish within five seconds; the transport was invalidated |
 
 MCP errors carry the bare code. Run blockers read
 `execution_not_qualified: <code>; nothing was dispatched`.
 
 ## Enforcement
 
-The gate opens a fresh read-only SQLite connection for every check, so a revocation
-written by another process (the CLI or another service) takes effect before the next
-native byte.
+Each qualification check uses a fresh SQLite transaction and advances a persisted
+wall-clock high-water value. The final qualification check runs while the native writer
+lock is held, at the transport's first write poll, immediately before bytes are handed
+to the writer.
 
 | Path | Check |
 | --- | --- |
@@ -73,8 +81,17 @@ codes keep their precedence. Containment (`turn/interrupt`, terminal stop, cance
 apply) and every read stay available without qualification.
 
 A guard refusal is typed (`qualification::ExecutionDenied`). The guard runs after the
-transport owns its writer and before any byte is written, so a refused intent is
-settled as not sent. It never becomes `effect_outcome_unknown`.
+transport owns its write lock and is rechecked on every poll until the first bytes are
+accepted. A revocation committed before that guarded write begins prevents the write; a
+write already handed to the operating system may complete. A guarded write that has not
+completed within five seconds is aborted and invalidates the transport; its run is
+blocked with `qualification_write_timeout`.
+
+While an execution run has an active native turn, the monitor checks qualification every
+ten seconds and before every observed spawn, worker-start, or new-turn event. When a grant
+is revoked, expires, or no longer matches, the monitor requests interrupts for active
+owner and descendant turns and records `qualification_revoked`. A worker first reported
+after that check is used only as a local interrupt target; it is not recorded as Luna-owned.
 
 ## Capabilities
 
@@ -98,7 +115,14 @@ luna-factoryd qualification-canary --config C --profile A --workspace DIR [--out
 - The evidence JSON is readable and at most 1 MiB.
 - Its `profile_fingerprint` equals the current fingerprint.
 - The profile has no `codex_profile` override.
-- The binary identity is available (for `stdio`).
+- The executable SHA-256 is available.
+- For `existing_daemon`, `initialize` reports `serverInfo.name` and `serverInfo.version`;
+  any reported build or binary hash is included in the grant.
+- The state directory is outside configured repositories, discovery roots, CAS working
+  directories, `CODEX_HOME`, and `CODEX_WORKSPACES_ROOT` when configured.
+- The command has TTY stdin and stdout, can open `/dev/tty`, and has no `CODEX_*`
+  sandbox or thread marker. It prints the grant summary and reads the profile-name
+  confirmation from `/dev/tty`, never stdin.
 
 Scope `ordinary` also requires `qualification_run` to have:
 
@@ -109,6 +133,22 @@ Scope `ordinary` also requires `qualification_run` to have:
 - `cessation.verified: true`
 
 Recording again for the same fingerprint replaces the grant.
+
+The database file and its directory are checked at record time and server startup. A
+grant is not accepted when qualification state is under a configured or approved
+repository or known Codex writable root. Qualification-state errors fail closed.
+
+## Threat model
+
+The CLI confirmation requires a local interactive operator session, a matching typed
+profile name, and records the effective UID and TTY. Sandbox markers disable record and
+revoke. Production effect methods require an opaque authorization created by the
+qualification module; the public native API has no unguarded execution path.
+
+This does not make hand-authored evidence independently trustworthy. Its digest and
+reference preserve what the operator asserted; a manually written evidence file remains
+an unverified operator assertion. The canary harness is not implemented, so no real
+profile is qualified by this change.
 
 ## Canary harness contract
 

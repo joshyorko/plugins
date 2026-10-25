@@ -1229,11 +1229,17 @@ impl Factory {
         crate::qualification::require(&self.config, &run.request.profile, run.request.capacity)
     }
     /// A synchronous pre-wire qualification guard for one native write.
-    fn qualification_guard(&self, run: &Run) -> impl Fn() -> Result<()> + Send + Sync + 'static {
-        let config = self.config.clone();
-        let profile = run.request.profile.clone();
-        let capacity = run.request.capacity;
-        move || crate::qualification::require(&config, &profile, capacity)
+    fn qualification_guard(
+        &self,
+        run: &Run,
+        client: &NativeClient,
+    ) -> crate::qualification::DispatchAuthorization {
+        crate::qualification::dispatch_authorization(
+            &self.config,
+            &run.request.profile,
+            run.request.capacity,
+            client.provider_identity(),
+        )
     }
     async fn connect(&self) -> Result<NativeClient> {
         if self.config.native_transport == "existing_daemon" {
@@ -1286,6 +1292,9 @@ impl Factory {
                 let denied = crate::qualification::denied_code(&error);
                 run.blocker = Some(match denied {
                     Some(code) => crate::qualification::blocker(code),
+                    None if crate::native::is_qualification_write_timeout(&error) => {
+                        "qualification_write_timeout".into()
+                    }
                     None => "Native owner start could not be confirmed. Run doctor locally and inspect native Codex; no mutation is replayed automatically.".into(),
                 });
                 if run.dispatch_phase == "admitted" && run.thread_id.is_none() {
@@ -1323,7 +1332,7 @@ impl Factory {
             <sha2::Sha256 as sha2::Digest>::digest(skill)
         ));
         self.store.lock().await.save(run)?;
-        let dispatch_guard = self.dispatch_guard(run).await?;
+        let dispatch_guard = self.dispatch_guard(run, &client).await?;
         crate::native::validate_luna_route(&client.list_models().await?, effort)?;
         run.dispatch_phase = "thread_start_pending".into();
         let thread_effect = uuid::Uuid::new_v4().to_string();
@@ -1431,10 +1440,11 @@ impl Factory {
                 run.set_state(crate::control::RunControl::Blocked);
                 run.blocker = Some(match crate::qualification::denied_code(&error) {
                     Some(code) => format!("execution_not_qualified: {code}; the pre-wire guard refused turn/start and nothing was dispatched"),
+                    None if crate::native::is_qualification_write_timeout(&error) => "qualification_write_timeout".into(),
                     None => "Native turn acknowledgement was not confirmed. Recover its persisted dispatch before any new inference.".into(),
                 });
                 self.store.lock().await.save(run)?;
-                self.monitor(run.id.clone(), events).await;
+                self.monitor(run.id.clone(), events, client.clone()).await;
                 return Ok(());
             }
         };
@@ -1462,7 +1472,7 @@ impl Factory {
         run.blocker = None;
         run.delta = "Owner is working with the canonical Luna Factory skill.".into();
         self.store.lock().await.save(run)?;
-        self.monitor(run.id.clone(), events).await;
+        self.monitor(run.id.clone(), events, client.clone()).await;
         Ok(())
     }
     fn owner_prompt(&self, run: &Run) -> Result<String> {
@@ -1527,7 +1537,7 @@ impl Factory {
                                 self.store.lock().await.save(&mut run)?;
                             },
                             Ok(true)=>self.block(&run.id,"Native ownership reconciled idle. Resume the same run explicitly within its remaining limits.").await?,
-                            Ok(false)=>{run.set_state(crate::control::RunControl::Running);run.blocker=None;run.delta="Reconnected to existing native execution; no inference was started.".into();self.store.lock().await.save(&mut run)?;self.monitor(run.id.clone(),events).await;},
+                            Ok(false)=>{run.set_state(crate::control::RunControl::Running);run.blocker=None;run.delta="Reconnected to existing native execution; no inference was started.".into();self.store.lock().await.save(&mut run)?;self.monitor(run.id.clone(),events,client.clone()).await;},
                             Err(_)=>self.block(&run.id,"Native ownership could not be reconciled. Repository claim remains held.").await?,
                         }
                     }
@@ -1543,7 +1553,12 @@ impl Factory {
         }
         Ok(())
     }
-    async fn monitor(&self, id: String, mut receiver: broadcast::Receiver<Value>) {
+    async fn monitor(
+        &self,
+        id: String,
+        mut receiver: broadcast::Receiver<Value>,
+        client: NativeClient,
+    ) {
         let factory = self.clone();
         let key = id.clone();
         let mut monitors = self.monitors.lock().await;
@@ -1551,23 +1566,141 @@ impl Factory {
             old.abort();
         }
         let handle = tokio::spawn(async move {
+            let mut qualification_interval =
+                tokio::time::interval(std::time::Duration::from_secs(10));
+            qualification_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                match receiver.recv().await {
-                    Ok(event) => match factory.observe(&id, event).await {
-                        Ok(true) => break,
-                        Ok(false) => {}
-                        Err(_) => {
-                            let _=factory.block(&id,"Native event could not be reconciled. Claim retained; the run deadline remains active.").await;
+                tokio::select! {
+                    _ = qualification_interval.tick() => {
+                        if factory.qualification_revoked(&id, &client).await {
+                            let _ = factory.stop_for_qualification_revoked(&id, &client, &Value::Null).await;
+                            break;
                         }
-                    },
-                    Err(_) => {
-                        let _=factory.block(&id,"Native event stream was lost. Ownership is uncertain; the run deadline remains active.").await;
-                        break;
+                    }
+                    received = receiver.recv() => match received {
+                        Ok(event) => {
+                            if Self::event_indicates_new_work(&event)
+                                && factory.qualification_revoked(&id, &client).await
+                            {
+                                let _ = factory.stop_for_qualification_revoked(&id, &client, &event).await;
+                                break;
+                            }
+                            match factory.observe(&id, event).await {
+                                Ok(true) => break,
+                                Ok(false) => {}
+                                Err(_) => {
+                                    let _=factory.block(&id,"Native event could not be reconciled. Claim retained; the run deadline remains active.").await;
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            let _=factory.block(&id,"Native event stream was lost. Ownership is uncertain; the run deadline remains active.").await;
+                            break;
+                        }
                     }
                 }
             }
         });
         monitors.insert(key, handle);
+    }
+
+    fn event_indicates_new_work(event: &Value) -> bool {
+        let method = event["method"].as_str().unwrap_or("");
+        matches!(method, "turn/started" | "thread/started")
+            || (method == "thread/status/changed" && event["params"]["status"]["type"] == "active")
+            || (method == "item/started"
+                && matches!(
+                    event["params"]["item"]["type"].as_str(),
+                    Some(
+                        "userMessage" | "collabAgentToolCall" | "commandExecution" | "agentMessage"
+                    )
+                ))
+    }
+
+    async fn qualification_revoked(&self, id: &str, client: &NativeClient) -> bool {
+        let run = match self.store.lock().await.get(id) {
+            Ok(run) => run,
+            Err(_) => return true,
+        };
+        if run.state != "RUNNING" || run.dispatch_phase != "active" {
+            return false;
+        }
+        crate::qualification::require_with_identity(
+            &self.config,
+            &run.request.profile,
+            run.request.capacity,
+            client.provider_identity().as_ref(),
+        )
+        .is_err()
+    }
+
+    async fn stop_for_qualification_revoked(
+        &self,
+        id: &str,
+        client: &NativeClient,
+        event: &Value,
+    ) -> Result<()> {
+        let _mutation = self.mutation.lock().await;
+        let mut run = self.store.lock().await.get(id)?;
+        if !run.claim_held || run.state != "RUNNING" || run.dispatch_phase != "active" {
+            return Ok(());
+        }
+        let owner = run.thread_id.clone().context("owner_identity_unknown")?;
+        let mut threads = std::collections::BTreeSet::from([owner.clone()]);
+        threads.extend(run.owned_threads.iter().cloned());
+        threads.extend(run.active_threads.iter().cloned());
+        if let Some(thread) = event["params"]["threadId"].as_str() {
+            threads.insert(thread.to_owned());
+        }
+        if let Some(receivers) = event["params"]["item"]["receiverThreadIds"].as_array() {
+            threads.extend(
+                receivers
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned),
+            );
+        }
+        // Descendant identities are held locally for interruption only. They are never
+        // added to the run's Luna-owned worker list after qualification has been lost.
+        if let Ok(descendants) = client.descendants(&owner).await {
+            threads.extend(
+                descendants
+                    .iter()
+                    .filter_map(|thread| thread["id"].as_str())
+                    .map(str::to_owned),
+            );
+        }
+        let mut turns = std::collections::BTreeSet::new();
+        if let Some(turn) = run.turn_id.as_deref() {
+            turns.insert((owner.clone(), turn.to_owned()));
+        }
+        if let (Some(thread), Some(turn)) = (
+            event["params"]["threadId"].as_str(),
+            event["params"]["turnId"].as_str(),
+        ) {
+            turns.insert((thread.to_owned(), turn.to_owned()));
+        }
+        let mut interruption_failed = false;
+        for thread in threads {
+            match client.active_turn_ids(&thread).await {
+                Ok(active) => turns.extend(active.into_iter().map(|turn| (thread.clone(), turn))),
+                Err(_) => interruption_failed = true,
+            }
+        }
+        for (thread, turn) in turns {
+            if client.interrupt_turn(&thread, &turn).await.is_err() {
+                interruption_failed = true;
+            }
+        }
+        run.set_state(crate::control::RunControl::Blocked);
+        run.blocker = Some("qualification_revoked".into());
+        run.updated_at = now();
+        run.delta = if interruption_failed {
+            "Execution qualification was lost. Interrupt requests were incomplete; ownership remains held. Newly reported workers were not recorded as Luna-owned work.".into()
+        } else {
+            "Execution qualification was lost. Interrupt requests were sent for active turns; stop completion remains unverified. Newly reported workers were not recorded as Luna-owned work.".into()
+        };
+        self.store.lock().await.save(&mut run)
     }
     async fn block(&self, id: &str, reason: &str) -> Result<()> {
         let mut store = self.store.lock().await;
@@ -1598,6 +1731,12 @@ impl Factory {
                 run.delta = "Native connection closed. The completed decision is preserved; ownership will be reconciled before its answer starts work.".into();
                 run.updated_at = now();
                 store.save(&mut run)?;
+                return Ok(true);
+            }
+            if matches!(
+                run.blocker.as_deref(),
+                Some("qualification_write_timeout" | "qualification_revoked")
+            ) {
                 return Ok(true);
             }
             drop(store);
@@ -1970,7 +2109,7 @@ impl Factory {
         );
         // Retain the stopped evidence snapshot: Dispatch invalidates current
         // proof, but its prerequisites must still be rechecked at the wire.
-        let dispatch_guard = self.dispatch_guard(run).await?;
+        let dispatch_guard = self.dispatch_guard(run, client).await?;
         self.require_qualified(run)?;
         let old_attempt = run.dispatch_id.clone().unwrap_or_default();
         let thread = run.thread_id.clone().context("owner_identity_unknown")?;
@@ -2027,6 +2166,7 @@ impl Factory {
                 run.set_state(crate::control::RunControl::Blocked);
                 run.blocker = Some(match crate::qualification::denied_code(&error) {
                     Some(code) => format!("execution_not_qualified: {code}; the pre-wire guard refused turn/start and nothing was dispatched"),
+                    None if crate::native::is_qualification_write_timeout(&error) => "qualification_write_timeout".into(),
                     None => "Continuation outcome is uncertain. Reconcile the same owner; no inference will be replayed automatically.".into(),
                 });
                 self.store.lock().await.save(run)?;
@@ -2662,18 +2802,21 @@ impl Factory {
     async fn dispatch_guard(
         &self,
         run: &Run,
-    ) -> Result<impl Fn() -> Result<()> + Send + Sync + 'static> {
+        client: &NativeClient,
+    ) -> Result<crate::qualification::DispatchAuthorization> {
         let config = self.effective_config().await?;
-        let run = run.clone();
-        Ok(move || {
-            Self::validate_current_authority_config(&run, &config)?;
-            ensure!(now() < run.deadline_at, "time_budget_exhausted");
-            let root = Path::new(&run.canonical_root);
+        let dispatch_run = run.clone();
+        let profile = run.request.profile.clone();
+        let capacity = run.request.capacity;
+        let before_qualification = move || {
+            Self::validate_current_authority_config(&dispatch_run, &config)?;
+            ensure!(now() < dispatch_run.deadline_at, "time_budget_exhausted");
+            let root = Path::new(&dispatch_run.canonical_root);
             ensure!(
-                repository_subject(root)? == run.current_subject,
+                repository_subject(root)? == dispatch_run.current_subject,
                 "dispatch_source_changed"
             );
-            let mut control = run.control.clone().context("control_missing")?;
+            let mut control = dispatch_run.control.clone().context("control_missing")?;
             ensure!(
                 !crate::evidence::revalidate_files(&mut control, root)?,
                 "dispatch_evidence_changed"
@@ -2683,13 +2826,16 @@ impl Factory {
             {
                 crate::evidence::revalidate_failures(&control, &diagnosis.check_refs, root)?;
             }
-            // Filesystem validation can take time too; expiry never authorizes
-            // a new packet even when every identity and predicate still matches.
             ensure!(now() < run.deadline_at, "time_budget_exhausted");
-            // Last: a fresh read-only qualification read, so a revocation recorded by
-            // another process while this dispatch awaited readiness stops the byte.
-            crate::qualification::require(&config, &run.request.profile, run.request.capacity)
-        })
+            Ok(())
+        };
+        Ok(crate::qualification::dispatch_authorization_with(
+            &self.config,
+            &profile,
+            capacity,
+            client.provider_identity(),
+            before_qualification,
+        ))
     }
     pub async fn steer(&self, id: &str, expected_turn: &str, message: &str) -> Result<Value> {
         self.steer_at_revision(id, expected_turn, message, None)
@@ -2730,7 +2876,7 @@ impl Factory {
             },
         )
         .await?;
-        let qualification_guard = self.qualification_guard(&run);
+        let qualification_guard = self.qualification_guard(&run, &client);
         if let Err(error) = client
             .steer_turn_guarded(
                 run.thread_id.as_deref().context("owner_missing")?,
@@ -2750,7 +2896,11 @@ impl Factory {
                 return Err(error);
             }
             run.set_state(crate::control::RunControl::Blocked);
-            run.blocker = Some("effect_outcome_unknown".into());
+            run.blocker = Some(if crate::native::is_qualification_write_timeout(&error) {
+                "qualification_write_timeout".into()
+            } else {
+                "effect_outcome_unknown".into()
+            });
             self.store.lock().await.save(&mut run)?;
             return Err(error);
         }
@@ -2797,7 +2947,8 @@ impl Factory {
             run.blocker = None;
             run.delta = "Recovered the existing native turn. No inference was started.".into();
             self.store.lock().await.save(run)?;
-            self.monitor(run.id.clone(), client.subscribe()).await;
+            self.monitor(run.id.clone(), client.subscribe(), client.clone())
+                .await;
         } else {
             self.store.lock().await.save(run)?;
             self.finish_turn_locked(&run.id, &turn, FinishOrigin::RecoveryReadOnly)
@@ -3025,7 +3176,7 @@ impl Factory {
             },
         )
         .await?;
-        let qualification_guard = self.qualification_guard(&run);
+        let qualification_guard = self.qualification_guard(&run, &client);
         let response = match client
             .resume_thread_guarded(&thread, &qualification_guard)
             .await
@@ -3039,6 +3190,14 @@ impl Factory {
                         crate::control::Event::EffectSettled { id: resume_effect },
                     )
                     .await?;
+                } else {
+                    run.set_state(crate::control::RunControl::Blocked);
+                    run.blocker = Some(if crate::native::is_qualification_write_timeout(&error) {
+                        "qualification_write_timeout".into()
+                    } else {
+                        "effect_outcome_unknown".into()
+                    });
+                    self.store.lock().await.save(&mut run)?;
                 }
                 return Err(error);
             }
@@ -3081,7 +3240,7 @@ impl Factory {
                 false,
             )
             .await;
-        self.monitor(id.into(), events).await;
+        self.monitor(id.into(), events, client.clone()).await;
         result?;
         drop(guard);
         self.get(id).await

@@ -13,7 +13,13 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, pa
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    io::{BufRead, IsTerminal, Read, Write},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 pub const NOT_QUALIFIED: &str = "execution_not_qualified";
 pub const PROFILE_MISMATCH: &str = "execution_profile_mismatch";
@@ -21,14 +27,92 @@ pub const REVOKED: &str = "execution_qualification_revoked";
 pub const EXPIRED: &str = "execution_qualification_expired";
 pub const SCOPE: &str = "execution_qualification_scope";
 pub const CAPACITY: &str = "execution_capacity_not_qualified";
+pub const PROVIDER_MISMATCH: &str = "qualification_provider_mismatch";
+pub const STORE_EXPOSED: &str = "qualification_store_exposed";
+pub const CLOCK_SKEW: &str = "qualification_clock_skew";
 /// The evidence producer an ordinary grant requires. The canary harness that emits it is
 /// not implemented yet; see docs/execution-qualification.md.
 pub const HARNESS: &str = "luna-factory.qualification-canary.v1";
 pub const UNAVAILABLE: &str = "unavailable";
+const MAX_BINARY_HASH_BYTES: u64 = 512 * 1024 * 1024;
+const CLOCK_SKEW_TOLERANCE_SECONDS: u64 = 60;
+
+#[cfg(test)]
+mod tests {
+    use super::{CLOCK_SKEW, TABLE_SQL, advance_high_water, binary_identity, sandbox_indicated};
+    use std::fs::File;
+
+    #[test]
+    fn binary_identity_hashes_contents_when_size_and_mtime_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first");
+        let second = dir.path().join("second");
+        std::fs::write(&first, b"codex-build-a").unwrap();
+        let modified = std::fs::metadata(&first).unwrap().modified().unwrap();
+        std::fs::write(&second, b"codex-build-b").unwrap();
+        File::open(&second)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+
+        let first_metadata = std::fs::metadata(&first).unwrap();
+        let second_metadata = std::fs::metadata(&second).unwrap();
+        assert_eq!(first_metadata.len(), second_metadata.len());
+        assert_eq!(
+            first_metadata.modified().unwrap(),
+            second_metadata.modified().unwrap()
+        );
+        assert_ne!(binary_identity(&first), binary_identity(&second));
+    }
+
+    #[test]
+    fn qualification_clock_rejects_rollbacks_over_sixty_seconds_and_keeps_high_water() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.execute_batch(TABLE_SQL).unwrap();
+        advance_high_water(&connection, 1000).unwrap();
+        advance_high_water(&connection, 940).unwrap();
+        assert_eq!(
+            advance_high_water(&connection, 939)
+                .unwrap_err()
+                .to_string(),
+            CLOCK_SKEW
+        );
+        let high_water: u64 = connection
+            .query_row(
+                "SELECT high_water FROM qualification_clock WHERE id=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(high_water, 1000);
+    }
+
+    #[test]
+    fn sandbox_confirmation_rejects_codex_thread_and_network_markers() {
+        for name in [
+            "CODEX_SANDBOX",
+            "CODEX_SANDBOX_NETWORK_DISABLED",
+            "CODEX_THREAD_ID",
+            "CODEX_SANDBOX_PROFILE",
+        ] {
+            assert!(sandbox_indicated(std::ffi::OsStr::new(name)), "{name}");
+        }
+        assert!(!sandbox_indicated(std::ffi::OsStr::new("CODEX_HOME")));
+    }
+
+    #[test]
+    fn qualification_time_before_epoch_is_not_coerced_to_zero() {
+        let before_epoch = UNIX_EPOCH - std::time::Duration::from_secs(1);
+        assert_eq!(
+            qualification_timestamp(before_epoch).unwrap_err().to_string(),
+            CLOCK_SKEW
+        );
+    }
+}
 
 /// Additive table. `user_version` is unchanged so older binaries still open the DB;
 /// they never read this table and therefore never execute on its behalf.
-pub const TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS execution_qualifications (fingerprint TEXT PRIMARY KEY, profile_alias TEXT NOT NULL, payload TEXT NOT NULL);";
+pub const TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS execution_qualifications (fingerprint TEXT PRIMARY KEY, profile_alias TEXT NOT NULL, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS qualification_clock (id INTEGER PRIMARY KEY CHECK(id=1), high_water INTEGER NOT NULL);";
 
 const MAX_EVIDENCE_BYTES: u64 = 1024 * 1024;
 
@@ -43,6 +127,17 @@ pub struct ExecutionProfile {
     pub model: String,
     pub profile: String,
     pub effort: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeServerIdentity {
+    pub name: String,
+    pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary_hash: Option<String>,
 }
 
 impl ExecutionProfile {
@@ -84,27 +179,73 @@ impl ExecutionProfile {
     }
 }
 
-/// File size plus modification time. A replaced or rebuilt binary changes the profile.
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct BinaryCacheKey {
+    device: u64,
+    inode: u64,
+    size: u64,
+    modified_seconds: u64,
+    modified_nanos: u32,
+}
+
+fn binary_cache_key(metadata: &std::fs::Metadata) -> Option<BinaryCacheKey> {
+    use std::os::unix::fs::MetadataExt;
+    let modified = metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
+    Some(BinaryCacheKey {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        size: metadata.len(),
+        modified_seconds: modified.as_secs(),
+        modified_nanos: modified.subsec_nanos(),
+    })
+}
+
+/// SHA-256 of the executable, cached only for an unchanged filesystem identity.
 fn binary_identity(path: &Path) -> String {
-    let Ok(metadata) = std::fs::metadata(path) else {
+    let Ok(file) = std::fs::File::open(path) else {
         return UNAVAILABLE.into();
     };
-    let Some(modified) = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-    else {
+    let Ok(metadata) = file.metadata() else {
         return UNAVAILABLE.into();
     };
-    if !metadata.is_file() {
+    if !metadata.is_file() || metadata.len() > MAX_BINARY_HASH_BYTES {
         return UNAVAILABLE.into();
     }
-    format!(
-        "size={};mtime={}.{:09}",
-        metadata.len(),
-        modified.as_secs(),
-        modified.subsec_nanos()
-    )
+    let Some(key) = binary_cache_key(&metadata) else {
+        return UNAVAILABLE.into();
+    };
+    static CACHE: OnceLock<Mutex<HashMap<BinaryCacheKey, String>>> = OnceLock::new();
+    if let Some(identity) = CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .expect("binary identity cache lock")
+        .get(&key)
+        .cloned()
+    {
+        return identity;
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    if file
+        .take(MAX_BINARY_HASH_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .is_err()
+        || bytes.len() as u64 != key.size
+    {
+        return UNAVAILABLE.into();
+    }
+    let Ok(after) = std::fs::metadata(path) else {
+        return UNAVAILABLE.into();
+    };
+    if binary_cache_key(&after).as_ref() != Some(&key) {
+        return UNAVAILABLE.into();
+    }
+    let identity = format!("sha256={:x}", Sha256::digest(&bytes));
+    CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .expect("binary identity cache lock")
+        .insert(key, identity.clone());
+    identity
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,6 +279,8 @@ fn one() -> u32 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Qualification {
     pub profile: ExecutionProfile,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_identity: Option<NativeServerIdentity>,
     pub scope: Scope,
     #[serde(default = "one")]
     pub max_capacity: u32,
@@ -148,6 +291,67 @@ pub struct Qualification {
     pub expires_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revoked_at: Option<u64>,
+    pub recorded_by_uid: u32,
+    pub tty_name: String,
+}
+
+/// The only authorization accepted by native effect methods. Its fields and constructor
+/// remain private to this module; the server gets it through `dispatch_authorization`.
+pub(crate) struct DispatchAuthorization {
+    check: Arc<dyn Fn() -> Result<()> + Send + Sync>,
+}
+
+impl DispatchAuthorization {
+    pub(crate) fn check(&self) -> Result<()> {
+        (self.check)()
+    }
+}
+
+pub(crate) fn dispatch_authorization(
+    config: &Config,
+    alias: &str,
+    capacity: u32,
+    provider_identity: Option<NativeServerIdentity>,
+) -> DispatchAuthorization {
+    dispatch_authorization_with(config, alias, capacity, provider_identity, || Ok(()))
+}
+
+pub(crate) fn dispatch_authorization_with(
+    config: &Config,
+    alias: &str,
+    capacity: u32,
+    provider_identity: Option<NativeServerIdentity>,
+    before_qualification: impl Fn() -> Result<()> + Send + Sync + 'static,
+) -> DispatchAuthorization {
+    let config = config.clone();
+    let alias = alias.to_owned();
+    DispatchAuthorization {
+        check: Arc::new({
+            move || {
+                before_qualification()?;
+                require_with_identity(&config, &alias, capacity, provider_identity.as_ref())
+            }
+        }),
+    }
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn test_dispatch_authorization(
+    check: impl Fn() -> Result<()> + Send + Sync + 'static,
+) -> DispatchAuthorization {
+    let executable = std::env::current_exe()
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_default();
+    assert!(executable.rsplit_once('-').is_some_and(|(_, suffix)| {
+        suffix.len() >= 8 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }));
+    DispatchAuthorization {
+        check: Arc::new(check),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,17 +411,22 @@ fn load(connection: &Connection, fingerprint: &str) -> Result<Option<Qualificati
         .transpose()
 }
 
-pub fn evaluate(
+fn evaluate_with_identity(
     connection: &Connection,
     config: &Config,
     alias: &str,
     scope: Scope,
     capacity: u32,
     now: u64,
+    provider_identity: Option<&NativeServerIdentity>,
+    compare_provider_identity: bool,
 ) -> Evaluation {
     let Ok(profile) = ExecutionProfile::from_config(config, alias) else {
         return Evaluation::denied(NOT_QUALIFIED);
     };
+    if profile.codex_binary_identity == UNAVAILABLE {
+        return Evaluation::denied(PROVIDER_MISMATCH);
+    }
     let fingerprint = profile.fingerprint();
     match load(connection, &fingerprint) {
         // Missing table, unreadable or malformed state: fail closed.
@@ -225,6 +434,16 @@ pub fn evaluate(
         Ok(Some(record)) => {
             if record.profile != profile {
                 Evaluation::denied(PROFILE_MISMATCH)
+            } else if now < record.recorded_at {
+                Evaluation::denied(CLOCK_SKEW)
+            } else if config.native_transport == "existing_daemon"
+                && (record.provider_identity.is_none()
+                    || (compare_provider_identity
+                        && record.provider_identity.as_ref() != provider_identity))
+            {
+                Evaluation::denied(PROVIDER_MISMATCH)
+            } else if config.native_transport == "stdio" && record.provider_identity.is_some() {
+                Evaluation::denied(PROVIDER_MISMATCH)
             } else if record.revoked_at.is_some() {
                 Evaluation::denied(REVOKED)
             } else if record.expires_at.is_some_and(|expires| expires <= now) {
@@ -256,37 +475,215 @@ pub fn evaluate(
     }
 }
 
-/// Fresh read-only connection; safe inside synchronous pre-wire guards.
-pub fn open_read_only(database: &Path) -> Result<Connection> {
-    let connection = Connection::open_with_flags(
-        database,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    connection.busy_timeout(std::time::Duration::from_secs(2))?;
-    Ok(connection)
+pub fn evaluate(
+    connection: &Connection,
+    config: &Config,
+    alias: &str,
+    scope: Scope,
+    capacity: u32,
+    now: u64,
+) -> Evaluation {
+    evaluate_with_identity(connection, config, alias, scope, capacity, now, None, true)
 }
 
-pub fn check(config: &Config, alias: &str, scope: Scope, capacity: u32) -> Evaluation {
-    match open_read_only(&config.database) {
-        Ok(connection) => evaluate(
-            &connection,
-            config,
-            alias,
-            scope,
-            capacity,
-            crate::store::now(),
-        ),
-        Err(_) => Evaluation::denied(NOT_QUALIFIED),
+pub fn now_qualification() -> Result<u64> {
+    qualification_timestamp(SystemTime::now())
+}
+
+fn qualification_timestamp(time: SystemTime) -> Result<u64> {
+    time
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|_| anyhow::anyhow!(CLOCK_SKEW))
+}
+
+pub(crate) fn validate_store_boundary(config: &Config, additional_roots: &[PathBuf]) -> Result<()> {
+    let database = crate::config::canonical_destination(&config.database)
+        .map_err(|_| anyhow::anyhow!(STORE_EXPOSED))?;
+    let directory =
+        crate::config::canonical_destination(config.database.parent().context(STORE_EXPOSED)?)
+            .map_err(|_| anyhow::anyhow!(STORE_EXPOSED))?;
+    let mut roots = config
+        .repositories
+        .values()
+        .chain(config.discovery_roots.values())
+        .map(|repository| repository.root.clone())
+        .chain(
+            config
+                .cas_targets
+                .values()
+                .map(|target| PathBuf::from(&target.cwd)),
+        )
+        .chain(additional_roots.iter().cloned())
+        .collect::<Vec<_>>();
+    for variable in ["CODEX_HOME", "CODEX_WORKSPACES_ROOT"] {
+        if let Some(path) = std::env::var_os(variable) {
+            roots.push(PathBuf::from(path));
+        }
     }
+    for root in roots {
+        let root = crate::config::canonical_destination(&root)
+            .map_err(|_| anyhow::anyhow!(STORE_EXPOSED))?;
+        ensure!(
+            !database.starts_with(&root) && !directory.starts_with(&root),
+            STORE_EXPOSED
+        );
+    }
+    Ok(())
 }
 
-/// Ordinary-run gate: `Err(ExecutionDenied)` unless a current ordinary grant covers
-/// this exact profile and capacity.
+pub(crate) fn validate_store_boundary_from_connection(
+    config: &Config,
+    connection: &Connection,
+) -> Result<()> {
+    let has_registrations: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='repository_registrations')",
+        [],
+        |row| row.get(0),
+    )?;
+    let mut roots = Vec::new();
+    if has_registrations {
+        let mut statement =
+            connection.prepare("SELECT payload FROM repository_registrations LIMIT 101")?;
+        for payload in statement.query_map([], |row| row.get::<_, String>(0))? {
+            let registration: crate::repositories::Registration = serde_json::from_str(&payload?)?;
+            let repository = config
+                .repositories
+                .get(&registration.root_alias)
+                .or_else(|| config.discovery_roots.get(&registration.root_alias))
+                .context(STORE_EXPOSED)?;
+            roots.push(repository.root.join(&registration.relative));
+        }
+        ensure!(
+            roots.len() <= crate::repositories::MAX_REGISTRATIONS,
+            STORE_EXPOSED
+        );
+    }
+    validate_store_boundary(config, &roots)
+}
+
+fn advance_high_water(connection: &Connection, now: u64) -> Result<()> {
+    let high_water: Option<u64> = connection
+        .query_row(
+            "SELECT high_water FROM qualification_clock WHERE id=1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(high_water) = high_water {
+        ensure!(
+            now >= high_water.saturating_sub(CLOCK_SKEW_TOLERANCE_SECONDS),
+            CLOCK_SKEW
+        );
+        connection.execute(
+            "UPDATE qualification_clock SET high_water=?1 WHERE id=1",
+            [high_water.max(now)],
+        )?;
+    } else {
+        connection.execute(
+            "INSERT INTO qualification_clock(id,high_water) VALUES (1,?1)",
+            [now],
+        )?;
+    }
+    Ok(())
+}
+
+fn check_with_identity(
+    config: &Config,
+    alias: &str,
+    scope: Scope,
+    capacity: u32,
+    provider_identity: Option<&NativeServerIdentity>,
+    compare_provider_identity: bool,
+) -> Evaluation {
+    if validate_store_boundary(config, &[]).is_err() {
+        return Evaluation::denied(STORE_EXPOSED);
+    }
+    let mut connection = match Connection::open_with_flags(
+        &config.database,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) {
+        Ok(connection) => connection,
+        Err(_) => return Evaluation::denied(NOT_QUALIFIED),
+    };
+    if connection
+        .busy_timeout(std::time::Duration::from_secs(2))
+        .is_err()
+    {
+        return Evaluation::denied(NOT_QUALIFIED);
+    }
+    if validate_store_boundary_from_connection(config, &connection).is_err() {
+        return Evaluation::denied(STORE_EXPOSED);
+    }
+    let now = match now_qualification() {
+        Ok(now) => now,
+        Err(_) => return Evaluation::denied(CLOCK_SKEW),
+    };
+    let Ok(tx) = connection.transaction_with_behavior(TransactionBehavior::Immediate) else {
+        return Evaluation::denied(NOT_QUALIFIED);
+    };
+    if advance_high_water(&tx, now).is_err() {
+        return Evaluation::denied(CLOCK_SKEW);
+    }
+    let result = evaluate_with_identity(
+        &tx,
+        config,
+        alias,
+        scope,
+        capacity,
+        now,
+        provider_identity,
+        compare_provider_identity,
+    );
+    if tx.commit().is_err() {
+        return Evaluation::denied(NOT_QUALIFIED);
+    }
+    result
+}
+
+/// Current exact provider identity is required for status and effect-path checks.
+pub fn check(config: &Config, alias: &str, scope: Scope, capacity: u32) -> Evaluation {
+    check_with_identity(config, alias, scope, capacity, None, true)
+}
+
+pub fn check_with_provider_identity(
+    config: &Config,
+    alias: &str,
+    scope: Scope,
+    capacity: u32,
+    provider_identity: Option<&NativeServerIdentity>,
+) -> Evaluation {
+    check_with_identity(config, alias, scope, capacity, provider_identity, true)
+}
+
+/// Before a client exists, accept only a grant that records an identity. The transport
+/// compares that identity with its live initialize response immediately before writes.
 pub fn require(config: &Config, alias: &str, capacity: u32) -> Result<()> {
     require_scope(config, alias, Scope::Ordinary, capacity)
 }
 pub fn require_scope(config: &Config, alias: &str, scope: Scope, capacity: u32) -> Result<()> {
-    match check(config, alias, scope, capacity).status {
+    match check_with_identity(config, alias, scope, capacity, None, false).status {
+        Status::Qualified => Ok(()),
+        Status::Denied(code) => Err(ExecutionDenied { code }.into()),
+    }
+}
+
+pub fn require_with_identity(
+    config: &Config,
+    alias: &str,
+    capacity: u32,
+    provider_identity: Option<&NativeServerIdentity>,
+) -> Result<()> {
+    match check_with_identity(
+        config,
+        alias,
+        Scope::Ordinary,
+        capacity,
+        provider_identity,
+        true,
+    )
+    .status
+    {
         Status::Qualified => Ok(()),
         Status::Denied(code) => Err(ExecutionDenied { code }.into()),
     }
@@ -294,16 +691,11 @@ pub fn require_scope(config: &Config, alias: &str, scope: Scope, capacity: u32) 
 
 /// Bounded, path-free per-profile status for capabilities.
 pub fn capability(config: &Config) -> Value {
-    let connection = open_read_only(&config.database).ok();
-    let now = crate::store::now();
     let profiles = config
         .profiles
         .keys()
         .map(|alias| {
-            let evaluation = match &connection {
-                Some(connection) => evaluate(connection, config, alias, Scope::Ordinary, 1, now),
-                None => Evaluation::denied(NOT_QUALIFIED),
-            };
+            let evaluation = check(config, alias, Scope::Ordinary, 1);
             let (status, reason) = match evaluation.status {
                 Status::Qualified => ("qualified", "execution_qualified"),
                 Status::Denied(code) => ("denied", code),
@@ -372,10 +764,136 @@ pub struct RecordRequest<'a> {
     pub scope: Scope,
     pub max_capacity: u32,
     pub expires_in_days: Option<u64>,
+    pub provider_identity: Option<NativeServerIdentity>,
 }
 
-/// Operator-only. Never reachable through MCP.
-pub fn record(config: &Config, request: RecordRequest<'_>) -> Result<Value> {
+pub struct OperatorConfirmation {
+    uid: u32,
+    tty_name: String,
+}
+
+fn sandbox_indicated(name: &std::ffi::OsStr) -> bool {
+    let name = name.to_string_lossy();
+    if matches!(
+        name.as_ref(),
+        "CODEX_SANDBOX" | "CODEX_SANDBOX_NETWORK_DISABLED" | "CODEX_THREAD_ID"
+    ) {
+        return true;
+    }
+    name.starts_with("CODEX_")
+        && ["SANDBOX", "THREAD", "NETWORK_DISABLED", "EXECUTION_ENV"]
+            .iter()
+            .any(|marker| name.contains(marker))
+}
+
+fn operator_uid() -> Result<u32> {
+    #[cfg(unix)]
+    {
+        Ok(unsafe { libc::geteuid() })
+    }
+    #[cfg(not(unix))]
+    {
+        anyhow::bail!("qualification_operator_identity_unavailable")
+    }
+}
+
+fn tty_name(file: &std::fs::File) -> Result<String> {
+    #[cfg(unix)]
+    {
+        use std::{ffi::CStr, os::fd::AsRawFd};
+        let mut buffer = [0i8; 4096];
+        let result =
+            unsafe { libc::ttyname_r(file.as_raw_fd(), buffer.as_mut_ptr(), buffer.len()) };
+        ensure!(result == 0, "qualification_operator_tty_unavailable");
+        let name = unsafe { CStr::from_ptr(buffer.as_ptr()) }
+            .to_str()
+            .context("qualification_operator_tty_unavailable")?;
+        ensure!(
+            !name.is_empty() && name.len() <= 4096,
+            "qualification_operator_tty_unavailable"
+        );
+        Ok(name.to_owned())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+        anyhow::bail!("qualification_operator_tty_unavailable")
+    }
+}
+
+/// CLI confirmation reads only from `/dev/tty`; piped or sandboxed invocation is refused.
+pub fn ensure_operator_context() -> Result<()> {
+    ensure!(
+        !std::env::vars_os().any(|(name, _)| sandbox_indicated(&name)),
+        "qualification_operator_sandboxed"
+    );
+    ensure!(
+        std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
+        "qualification_operator_tty_required"
+    );
+    let tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .map_err(|_| anyhow::anyhow!("qualification_operator_tty_unavailable"))?;
+    ensure!(tty.is_terminal(), "qualification_operator_tty_unavailable");
+    Ok(())
+}
+
+pub fn confirm_operator_action(summary: &str, profile_name: &str) -> Result<OperatorConfirmation> {
+    ensure_operator_context()?;
+    let mut tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .map_err(|_| anyhow::anyhow!("qualification_operator_tty_unavailable"))?;
+    ensure!(tty.is_terminal(), "qualification_operator_tty_unavailable");
+    println!("{summary}");
+    let terminal = tty_name(&tty)?;
+    writeln!(tty, "Type profile name '{profile_name}' to confirm:")
+        .map_err(|_| anyhow::anyhow!("qualification_operator_tty_unavailable"))?;
+    tty.flush()
+        .map_err(|_| anyhow::anyhow!("qualification_operator_tty_unavailable"))?;
+    let mut answer = String::new();
+    std::io::BufReader::new(tty)
+        .read_line(&mut answer)
+        .map_err(|_| anyhow::anyhow!("qualification_operator_tty_unavailable"))?;
+    ensure!(
+        answer.trim() == profile_name,
+        "qualification_operator_confirmation_mismatch"
+    );
+    Ok(OperatorConfirmation {
+        uid: operator_uid()?,
+        tty_name: terminal,
+    })
+}
+
+/// Test-binary-only authorization for isolated temporary databases.
+#[cfg(debug_assertions)]
+pub fn test_operator_confirmation() -> OperatorConfirmation {
+    let executable = std::env::current_exe()
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_default();
+    assert!(executable.rsplit_once('-').is_some_and(|(_, suffix)| {
+        suffix.len() >= 8 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }));
+    OperatorConfirmation {
+        uid: operator_uid().expect("test process uid"),
+        tty_name: "test-only".into(),
+    }
+}
+
+/// Operator-only library primitive. The CLI must provide a confirmed operator identity;
+/// no MCP route exposes this function.
+pub fn record(
+    config: &Config,
+    request: RecordRequest<'_>,
+    confirmation: &OperatorConfirmation,
+) -> Result<Value> {
     ensure!(
         (1..=8).contains(&request.max_capacity),
         "invalid_qualification_capacity"
@@ -393,9 +911,12 @@ pub fn record(config: &Config, request: RecordRequest<'_>) -> Result<Value> {
     );
     let profile = ExecutionProfile::from_config(config, request.alias)?;
     ensure!(
-        profile.codex_binary_identity != UNAVAILABLE
-            || config.native_transport == "existing_daemon",
+        profile.codex_binary_identity != UNAVAILABLE,
         "codex_binary_identity_unavailable"
+    );
+    ensure!(
+        (config.native_transport == "existing_daemon") == request.provider_identity.is_some(),
+        PROVIDER_MISMATCH
     );
     let fingerprint = profile.fingerprint();
     let evidence_path = std::path::absolute(request.evidence)
@@ -418,9 +939,16 @@ pub fn record(config: &Config, request: RecordRequest<'_>) -> Result<Value> {
     if request.scope == Scope::Ordinary {
         validate_passed_run(&evidence["qualification_run"])?;
     }
-    let recorded_at = crate::store::now();
+    validate_store_boundary(config, &[])?;
+    let mut connection = open_write(config)?;
+    validate_store_boundary_from_connection(config, &connection)
+        .map_err(|_| anyhow::anyhow!(STORE_EXPOSED))?;
+    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let recorded_at = now_qualification()?;
+    advance_high_water(&tx, recorded_at)?;
     let record = Qualification {
         profile,
+        provider_identity: request.provider_identity,
         scope: request.scope,
         max_capacity: request.max_capacity,
         evidence_sha256: format!("{:x}", Sha256::digest(&bytes)),
@@ -430,17 +958,29 @@ pub fn record(config: &Config, request: RecordRequest<'_>) -> Result<Value> {
             .expires_in_days
             .map(|days| recorded_at + days * 86400),
         revoked_at: None,
+        recorded_by_uid: confirmation.uid,
+        tty_name: confirmation.tty_name.clone(),
     };
-    let connection = open_write(config)?;
-    connection.execute(
+    tx.execute(
         "INSERT INTO execution_qualifications(fingerprint,profile_alias,payload) VALUES (?1,?2,?3)
          ON CONFLICT(fingerprint) DO UPDATE SET profile_alias=excluded.profile_alias,payload=excluded.payload",
         params![fingerprint, request.alias, serde_json::to_string(&record)?],
     )?;
+    tx.commit()?;
     Ok(public(&fingerprint, &record, Some(config)))
 }
 
-pub fn revoke(config: &Config, fingerprint: &str) -> Result<Value> {
+pub fn profile_alias(config: &Config, fingerprint: &str) -> Result<String> {
+    let connection = open_write(config)?;
+    let record = load(&connection, fingerprint)?.context("qualification_not_found")?;
+    Ok(record.profile.profile)
+}
+
+pub fn revoke(
+    config: &Config,
+    fingerprint: &str,
+    _confirmation: &OperatorConfirmation,
+) -> Result<Value> {
     ensure!(
         fingerprint.len() == 64 && fingerprint.bytes().all(|b| b.is_ascii_hexdigit()),
         "invalid_qualification_fingerprint"
@@ -449,7 +989,9 @@ pub fn revoke(config: &Config, fingerprint: &str) -> Result<Value> {
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let mut record = load(&tx, fingerprint)?.context("qualification_not_found")?;
     if record.revoked_at.is_none() {
-        record.revoked_at = Some(crate::store::now());
+        let now = now_qualification()?;
+        advance_high_water(&tx, now)?;
+        record.revoked_at = Some(now);
         tx.execute(
             "UPDATE execution_qualifications SET payload=?2 WHERE fingerprint=?1",
             params![fingerprint, serde_json::to_string(&record)?],
@@ -482,13 +1024,19 @@ pub fn list(config: &Config) -> Result<Vec<Value>> {
 
 /// Bounded operator view. Evidence content is never echoed; only its digest and path.
 fn public(fingerprint: &str, record: &Qualification, config: Option<&Config>) -> Value {
-    let now = crate::store::now();
+    let now = now_qualification().ok();
     let current = config
         .and_then(|config| ExecutionProfile::from_config(config, &record.profile.profile).ok())
         .is_some_and(|profile| profile == record.profile);
-    let status = if record.revoked_at.is_some() {
+    let status = if now.is_none() {
+        "qualification_clock_skew"
+    } else if record.revoked_at.is_some() {
         "revoked"
-    } else if record.expires_at.is_some_and(|expires| expires <= now) {
+    } else if record
+        .expires_at
+        .zip(now)
+        .is_some_and(|(expires, now)| expires <= now)
+    {
         "expired"
     } else if !current {
         "profile_changed"
@@ -499,6 +1047,8 @@ fn public(fingerprint: &str, record: &Qualification, config: Option<&Config>) ->
         "scope":record.scope.as_str(),"max_capacity":record.max_capacity,
         "transport":record.profile.transport,"model":record.profile.model,"effort":record.profile.effort,
         "factory_version":record.profile.factory_version,
+        "provider_identity":record.provider_identity,
+        "recorded_by_uid":record.recorded_by_uid,"tty_name":record.tty_name,
         "evidence_sha256":record.evidence_sha256,"evidence_ref":record.evidence_ref,
         "recorded_at":record.recorded_at,"expires_at":record.expires_at,"revoked_at":record.revoked_at})
 }

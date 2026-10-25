@@ -140,7 +140,9 @@ pub fn qualified_with(
     scope: luna_factoryd::qualification::Scope,
     max_capacity: u32,
 ) -> Config {
-    use luna_factoryd::qualification::{ExecutionProfile, RecordRequest, record};
+    use luna_factoryd::qualification::{
+        ExecutionProfile, RecordRequest, record, test_operator_confirmation,
+    };
     let base = config
         .database
         .parent()
@@ -171,7 +173,9 @@ pub fn qualified_with(
                 scope,
                 max_capacity,
                 expires_in_days: None,
+                provider_identity: None,
             },
+            &test_operator_confirmation(),
         )
         .expect("synthetic test qualification records");
     }

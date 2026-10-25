@@ -97,6 +97,87 @@ fn fixture(script: &str) -> Fixture {
         request,
     }
 }
+
+#[test]
+fn qualification_store_inside_a_configured_repository_fails_closed_with_typed_reason() {
+    let fixture = fixture("fake_factory.py");
+    let mut exposed = fixture.config.clone();
+    exposed.database = exposed.repositories["fixture"]
+        .root
+        .join("state/runs.sqlite");
+    let error = match luna_factoryd::store::Store::open(&exposed) {
+        Ok(_) => panic!("repository-writable qualification store was accepted"),
+        Err(error) => error,
+    };
+    assert_eq!(error.to_string(), qualification::STORE_EXPOSED);
+    assert_eq!(
+        qualification::check(&exposed, "default", Scope::Ordinary, 1).status,
+        qualification::Status::Denied(qualification::STORE_EXPOSED)
+    );
+}
+
+#[test]
+fn existing_daemon_grant_requires_the_initialize_server_identity_and_reported_hash() {
+    let fixture = fixture("fake_factory.py");
+    let mut config = fixture.config.clone();
+    config.native_transport = "existing_daemon".into();
+    let fingerprint = fingerprint(&config);
+    let evidence = fixture.dir.path().join("daemon-evidence.json");
+    std::fs::write(
+        &evidence,
+        support::passed_evidence(&fingerprint).to_string(),
+    )
+    .unwrap();
+    let identity = qualification::NativeServerIdentity {
+        name: "codex-fixture".into(),
+        version: "1.0".into(),
+        build_hash: Some("fixture-sha256".into()),
+        binary_hash: None,
+    };
+    qualification::record(
+        &config,
+        qualification::RecordRequest {
+            alias: "default",
+            evidence: &evidence,
+            scope: Scope::Ordinary,
+            max_capacity: 1,
+            expires_in_days: None,
+            provider_identity: Some(identity.clone()),
+        },
+        &qualification::test_operator_confirmation(),
+    )
+    .unwrap();
+
+    assert!(qualification::require(&config, "default", 1).is_ok());
+    assert_eq!(
+        qualification::check(&config, "default", Scope::Ordinary, 1).status,
+        qualification::Status::Denied(qualification::PROVIDER_MISMATCH)
+    );
+    assert_eq!(
+        qualification::check_with_provider_identity(
+            &config,
+            "default",
+            Scope::Ordinary,
+            1,
+            Some(&identity),
+        )
+        .status,
+        qualification::Status::Qualified
+    );
+    let mut changed = identity;
+    changed.build_hash = Some("different-build".into());
+    assert_eq!(
+        qualification::check_with_provider_identity(
+            &config,
+            "default",
+            Scope::Ordinary,
+            1,
+            Some(&changed),
+        )
+        .status,
+        qualification::Status::Denied(qualification::PROVIDER_MISMATCH)
+    );
+}
 fn calls(dir: &tempfile::TempDir) -> Vec<Value> {
     std::fs::read_to_string(dir.path().join("calls.jsonl"))
         .unwrap_or_default()
@@ -113,7 +194,12 @@ fn fingerprint(config: &Config) -> String {
         .fingerprint()
 }
 fn revoke(config: &Config) {
-    qualification::revoke(config, &fingerprint(config)).unwrap();
+    qualification::revoke(
+        config,
+        &fingerprint(config),
+        &qualification::test_operator_confirmation(),
+    )
+    .unwrap();
 }
 fn expire(config: &Config) {
     let connection = rusqlite::Connection::open(&config.database).unwrap();
@@ -377,6 +463,41 @@ async fn revocation_after_thread_start_dispatches_no_turn_and_cancel_still_works
     assert_eq!(count(&fixture.dir, "turn/start"), 0);
 }
 
+#[tokio::test]
+async fn revocation_mid_turn_interrupts_before_recording_a_new_spawned_worker() {
+    let fixture = fixture("fake_factory.py");
+    let config = support::qualified(fixture.config.clone());
+    let factory = Factory::new(config).unwrap();
+    std::fs::write(fixture.dir.path().join("mode"), "revoke_mid_turn").unwrap();
+    let started = factory.start(fixture.request.clone()).await.unwrap();
+    let id = started["id"].as_str().unwrap();
+    let mut stopped = started;
+    for _ in 0..100 {
+        stopped = factory.get(id).await.unwrap();
+        if stopped["blocker"] == "qualification_revoked" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    assert_eq!(stopped["state"], "BLOCKED");
+    assert_eq!(stopped["blocker"], "qualification_revoked");
+    assert!(
+        !stopped["owned_threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|thread| thread == "revoked-child")
+    );
+    let interrupted = calls(&fixture.dir)
+        .iter()
+        .filter(|call| call["method"] == "turn/interrupt")
+        .map(|call| call["params"]["threadId"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(interrupted.contains(&"owner"), "{interrupted:?}");
+    assert!(interrupted.contains(&"revoked-child"), "{interrupted:?}");
+}
+
 fn candidate(id: &str) -> Value {
     json!({"id":id,"title":"Necessary bounded work","criterion_ids":["A1"],"dependencies":[],"assumptions":{},"necessary":true,"effects":["native_owner_turn"]})
 }
@@ -515,10 +636,13 @@ async fn capabilities_report_eligibility_only_for_a_current_ordinary_grant() {
 }
 
 fn cli(args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_luna-factoryd"))
-        .args(args)
-        .output()
-        .unwrap()
+    let mut command = Command::new(env!("CARGO_BIN_EXE_luna-factoryd"));
+    for (name, _) in
+        std::env::vars_os().filter(|(name, _)| name.to_string_lossy().starts_with("CODEX_"))
+    {
+        command.env_remove(name);
+    }
+    command.args(args).output().unwrap()
 }
 fn write_config(fixture: &Fixture) -> String {
     let path = fixture.dir.path().join("config.json");
@@ -549,7 +673,22 @@ fn operator_cli_refuses_missing_mismatched_and_unproved_evidence() {
     let evidence = fixture.dir.path().join("evidence.json");
     let evidence_arg = evidence.to_string_lossy().into_owned();
     let record = |scope: &str| {
-        cli(&[
+        let confirmation = qualification::test_operator_confirmation();
+        qualification::record(
+            &fixture.config,
+            qualification::RecordRequest {
+                alias: "default",
+                evidence: &evidence,
+                scope: Scope::parse(scope)?,
+                max_capacity: 1,
+                expires_in_days: None,
+                provider_identity: None,
+            },
+            &confirmation,
+        )
+    };
+    refused(
+        &cli(&[
             "record-qualification",
             "--config",
             &config,
@@ -558,37 +697,47 @@ fn operator_cli_refuses_missing_mismatched_and_unproved_evidence() {
             "--evidence",
             &evidence_arg,
             "--scope",
-            scope,
-        ])
-    };
-    refused(&record("ordinary"), "qualification_evidence_missing");
+            "ordinary",
+        ]),
+        "qualification_operator_tty_required",
+    );
+    assert_eq!(
+        record("ordinary").unwrap_err().to_string(),
+        "qualification_evidence_missing"
+    );
     std::fs::write(
         &evidence,
         json!({"profile_fingerprint":"0".repeat(64)}).to_string(),
     )
     .unwrap();
-    refused(
-        &record("ordinary"),
-        "qualification_evidence_fingerprint_mismatch",
+    assert_eq!(
+        record("ordinary").unwrap_err().to_string(),
+        "qualification_evidence_fingerprint_mismatch"
     );
-    refused(
-        &record("qualification_only"),
-        "qualification_evidence_fingerprint_mismatch",
+    assert_eq!(
+        record("qualification_only").unwrap_err().to_string(),
+        "qualification_evidence_fingerprint_mismatch"
     );
     std::fs::write(
         &evidence,
         json!({"profile_fingerprint":fingerprint(&fixture.config)}).to_string(),
     )
     .unwrap();
-    refused(
-        &record("ordinary"),
-        "qualification_evidence_harness_unrecognized",
+    assert_eq!(
+        record("ordinary").unwrap_err().to_string(),
+        "qualification_evidence_harness_unrecognized"
     );
     let mut failed = support::passed_evidence(&fingerprint(&fixture.config));
     failed["qualification_run"]["outcome"] = json!("failed");
     std::fs::write(&evidence, failed.to_string()).unwrap();
-    refused(&record("ordinary"), "qualification_evidence_not_passed");
-    refused(&record("everything"), "invalid_qualification_scope");
+    assert_eq!(
+        record("ordinary").unwrap_err().to_string(),
+        "qualification_evidence_not_passed"
+    );
+    assert_eq!(
+        record("everything").unwrap_err().to_string(),
+        "invalid_qualification_scope"
+    );
     let list = cli(&["qualifications", "--config", &config]);
     assert_eq!(
         serde_json::from_slice::<Value>(&list.stdout).unwrap(),
@@ -600,8 +749,7 @@ fn operator_cli_refuses_missing_mismatched_and_unproved_evidence() {
         json!({"profile_fingerprint":fingerprint(&fixture.config)}).to_string(),
     )
     .unwrap();
-    let granted = record("qualification_only");
-    assert!(granted.status.success(), "{granted:?}");
+    let granted = record("qualification_only").unwrap();
     let listed: Value =
         serde_json::from_slice(&cli(&["qualifications", "--config", &config]).stdout).unwrap();
     assert_eq!(listed[0]["scope"], "qualification_only");
@@ -610,27 +758,24 @@ fn operator_cli_refuses_missing_mismatched_and_unproved_evidence() {
         qualification::check(&fixture.config, "default", Scope::Ordinary, 1).status,
         qualification::Status::Denied(qualification::SCOPE)
     );
-    let revoked = cli(&[
-        "revoke-qualification",
-        "--config",
-        &config,
-        "--fingerprint",
-        &fingerprint(&fixture.config),
-    ]);
-    assert!(revoked.status.success(), "{revoked:?}");
-    assert_eq!(
-        serde_json::from_slice::<Value>(&revoked.stdout).unwrap()["status"],
-        "revoked"
-    );
     refused(
         &cli(&[
             "revoke-qualification",
             "--config",
             &config,
             "--fingerprint",
-            &"a".repeat(64),
+            &fingerprint(&fixture.config),
         ]),
-        "qualification_not_found",
+        "qualification_operator_tty_required",
+    );
+    assert_eq!(
+        qualification::revoke(
+            &fixture.config,
+            &fingerprint(&fixture.config),
+            &qualification::test_operator_confirmation(),
+        )
+        .unwrap()["status"],
+        "revoked"
     );
 }
 

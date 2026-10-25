@@ -156,7 +156,7 @@ impl Config {
             );
             ensure!(
                 !database.starts_with(&root),
-                "database_must_be_outside_repositories"
+                crate::qualification::STORE_EXPOSED
             );
             finish_rank(&repo.max_finish)?;
             ensure!(root.parent().is_some(), "filesystem_root_not_allowed");

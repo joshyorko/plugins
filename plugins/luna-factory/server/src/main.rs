@@ -11,6 +11,22 @@ use serde_json::json;
 use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
 
+async fn current_provider_identity(
+    config: &Config,
+) -> Result<Option<qualification::NativeServerIdentity>> {
+    if config.native_transport != "existing_daemon" {
+        return Ok(None);
+    }
+    let client =
+        NativeClient::connect_existing(&config.codex_binary, config.native_socket.as_deref())
+            .await?;
+    let identity = client
+        .provider_identity()
+        .context(qualification::PROVIDER_MISMATCH)?;
+    client.shutdown().await?;
+    Ok(Some(identity))
+}
+
 #[derive(Parser)]
 #[command(version, about = "Local Luna Factory MCP runtime")]
 struct Cli {
@@ -128,10 +144,11 @@ async fn main() -> Result<()> {
         Command::QualificationProfile { config, profile } => {
             let config = Config::load(&config)?;
             let profile = ExecutionProfile::from_config(&config, &profile)?;
+            let provider_identity = current_provider_identity(&config).await?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(
-                    &json!({"profile":profile,"fingerprint":profile.fingerprint()})
+                    &json!({"profile":profile,"fingerprint":profile.fingerprint(),"provider_identity":provider_identity})
                 )?
             );
         }
@@ -144,6 +161,26 @@ async fn main() -> Result<()> {
             expires_in_days,
         } => {
             let config = Config::load(&config)?;
+            qualification::ensure_operator_context()?;
+            let provider_identity = current_provider_identity(&config).await?;
+            let profile = ExecutionProfile::from_config(&config, &profile)?;
+            let fingerprint = profile.fingerprint();
+            let confirmation = qualification::confirm_operator_action(
+                &format!(
+                    "Record execution qualification\nprofile: {}\nfingerprint: {}\ntransport: {}\nmodel: {}\neffort: {}\nprovider_identity: {}\nevidence: {}\nscope: {}\nmax_capacity: {}\nexpires_in_days: {:?}",
+                    profile.profile,
+                    fingerprint,
+                    profile.transport,
+                    profile.model,
+                    profile.effort,
+                    serde_json::to_string(&provider_identity)?,
+                    evidence.display(),
+                    scope,
+                    max_capacity,
+                    expires_in_days
+                ),
+                &profile.profile,
+            )?;
             let record = qualification::record(
                 &config,
                 qualification::RecordRequest {
@@ -152,7 +189,9 @@ async fn main() -> Result<()> {
                     scope: qualification::Scope::parse(&scope)?,
                     max_capacity,
                     expires_in_days,
+                    provider_identity,
                 },
+                &confirmation,
             )?;
             println!("{}", serde_json::to_string_pretty(&record)?);
         }
@@ -161,9 +200,21 @@ async fn main() -> Result<()> {
             fingerprint,
         } => {
             let config = Config::load(&config)?;
+            qualification::ensure_operator_context()?;
+            let profile = qualification::profile_alias(&config, &fingerprint)?;
+            let confirmation = qualification::confirm_operator_action(
+                &format!(
+                    "Revoke execution qualification\nprofile: {profile}\nfingerprint: {fingerprint}"
+                ),
+                &profile,
+            )?;
             println!(
                 "{}",
-                serde_json::to_string_pretty(&qualification::revoke(&config, &fingerprint)?)?
+                serde_json::to_string_pretty(&qualification::revoke(
+                    &config,
+                    &fingerprint,
+                    &confirmation
+                )?)?
             );
         }
         Command::Qualifications { config } => {
