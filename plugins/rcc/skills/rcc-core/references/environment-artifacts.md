@@ -1,6 +1,6 @@
 # Environment Artifacts v1
 
-Use this reference for RCC v18.19.3 artifact identity, compatibility, publication, acquisition, offline transport, execution, local lifecycle, and warm reuse. Read `providers-and-trust.md` for provider and trust policy details, and `build-coordination.md` for optional cold-build coordination.
+Use this reference for RCC v18.19.7 artifact identity, compatibility, publication, acquisition, offline transport, execution, local lifecycle, and warm reuse. Read `providers-and-trust.md` for provider and trust policy details, and `build-coordination.md` for optional cold-build coordination.
 
 ## Keep The Identities Separate
 
@@ -21,7 +21,7 @@ Manifest, Specification, Descriptor, Object Index, and Platform Index JSON is ca
 
 ## Compatibility
 
-Environment Artifacts are same-platform portable, not cross-platform. v18.19.3 release acceptance covers:
+Environment Artifacts are same-platform portable, not cross-platform. v18.19.7 release acceptance covers:
 
 | RCC platform | OS | Architecture |
 | --- | --- | --- |
@@ -32,13 +32,13 @@ Environment Artifacts are same-platform portable, not cross-platform. v18.19.3 r
 
 `RCCPlatform` must equal `<os>_<arch>`. RCC also checks catalog reader and encoding, relocation version, builder compatibility, Python implementation/version/ABI, native architecture/translation policy, CPU features, filesystem behavior, and system-requirement overrides. Linux additionally checks libc and required ELF libraries.
 
-For Linux v18.19.3, `os.minimumVersion` is the stable family value `1` and `os.kernelMinimum` is `3.15`. A producer's newer `uname` is not copied into the requirement. Compatibility and archive semantic validation occur before provider object fetch or bulk local CAS import.
+For Linux v18.19.7, `os.minimumVersion` is the stable family value `1` and `os.kernelMinimum` is `3.15`. A producer's newer `uname` is not copied into the requirement. Compatibility and archive semantic validation occur before provider object fetch or bulk local CAS import.
 
 Use `RCC_HOLOTREE_MODE=private` when a worker already opted into machine-wide shared Holotree but this lifecycle must stay in its private `ROBOCORP_HOME`. Absence of the variable preserves the existing shared-Holotree default.
 
 ## Command Flow
 
-Confirm exact help on the active binary. These are the v18.19.3 shapes:
+Confirm exact help on the active binary. These are the v18.19.7 shapes:
 
 ```bash
 rcc env publish --environment package.yaml --provider <reference> --json
@@ -91,11 +91,11 @@ A corrupt local Artifact fails closed rather than silently falling back. A local
 
 Canonical `.rcca` ZIPs live below `rcc-environment/` and contain the Manifest, Object Index, optional exact Platform Index, specification, legacy blueprint, catalog, objects, and optional detached attestations. Archive identity is independent of archive filename or container metadata.
 
-RCC rejects absolute/traversal/backslash/duplicate member names, directories, symlinks, excessive member counts, oversized payloads, and compression bombs. v18.19.3 allows an individual immutable member up to the existing cumulative 256 MiB archive budget. Import verifies semantic identity, platform, compatibility, trust attachments, and complete digests before committing any Manifest.
+RCC rejects absolute/traversal/backslash/duplicate member names, directories, symlinks, excessive member counts, oversized payloads, and compression bombs. v18.19.7 allows an individual immutable member up to the existing cumulative 256 MiB archive budget. Import verifies semantic identity, platform, compatibility, trust attachments, and complete digests before committing any Manifest.
 
 Robot bundles can include an artifact archive and exact platform index. Preserve source-only bundles and legacy v12 workflows; do not imply one Artifact works across platforms or that a bundle contains RCC itself. Hardened `robot unpack --force` stages and replaces the complete destination rather than merging through existing paths. Project and archive symlinks are rejected, and `ignoreFiles` applies during bundle creation.
 
-OCI, zstd, FUSE, packfiles, reflinks, and hardlinks are not shipped Environment Artifact v1 contracts in v18.19.3.
+OCI, zstd, FUSE, packfiles, reflinks, and hardlinks are not shipped Environment Artifact v1 contracts in v18.19.7.
 
 ## Warm Reuse
 

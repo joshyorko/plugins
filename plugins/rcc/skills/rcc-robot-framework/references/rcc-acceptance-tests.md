@@ -1,6 +1,6 @@
 # RCC Acceptance Tests
 
-This guidance is pinned to released [`joshyorko/rcc` v18.19.3 at `4148c2b71705c9d2baf0e88b48d08a79cb7bda0f`](https://github.com/joshyorko/rcc/tree/4148c2b71705c9d2baf0e88b48d08a79cb7bda0f/robot_tests). Inside an RCC checkout, its repository-local `AGENTS.md` and `docs/skills/rcc-development/SKILL.md` are authoritative.
+This guidance is pinned to released [`joshyorko/rcc` v18.19.7 at `4148c2b71705c9d2baf0e88b48d08a79cb7bda0f`](https://github.com/joshyorko/rcc/tree/4148c2b71705c9d2baf0e88b48d08a79cb7bda0f/robot_tests). Inside an RCC checkout, its repository-local `AGENTS.md` and `docs/skills/rcc-development/SKILL.md` are authoritative.
 
 Inspect the root suite initializer/resources/support library and the nearest suite before editing. Environment Artifact work additionally requires:
 
@@ -43,4 +43,4 @@ A release-quality runtime case proves, with the exact candidate binary:
 
 Keep Linux amd64, Windows amd64, macOS amd64, and macOS arm64 results separate. Platform-specific skips are expected and must be named. A green compile, Go unit suite, source-level Robot suite, or one platform is not the native four-platform result.
 
-The v18.19.3 tag run `33187409580` passed Build, Release Candidate Verification, all four native runtime jobs, and hosted release creation at exact SHA `4148c2b...`. This is upstream release evidence, not a substitute for local verification of a new change. The artifact suite proves lifecycle behavior; it does not prove the complete `env coordinate` CLI or cross-platform prewarm.
+The v18.19.7 tag run `33187409580` passed Build, Release Candidate Verification, all four native runtime jobs, and hosted release creation at exact SHA `4148c2b...`. This is upstream release evidence, not a substitute for local verification of a new change. The artifact suite proves lifecycle behavior; it does not prove the complete `env coordinate` CLI or cross-platform prewarm.

@@ -1,6 +1,6 @@
 # Environment Artifact CI And Release Evidence
 
-Use this for RCC v18.19.3 Artifact publication/acquisition or prewarm in CI. Read the RCC core artifact, provider/trust, and build-coordination references for command contracts.
+Use this for RCC v18.19.7 Artifact publication/acquisition or prewarm in CI. Read the RCC core artifact, provider/trust, and build-coordination references for command contracts.
 
 ## Pin And Isolate
 
@@ -24,7 +24,7 @@ Report each gate independently:
 8. released-binary coordinate/prewarm behavior, when used;
 9. tag target, hosted release, asset digest, and downstream package handoff.
 
-The v18.19.3 tag workflow at SHA `4148c2b...` passed build, release-candidate verification, Linux amd64, Windows amd64, macOS amd64, macOS arm64, and release publication. Platform jobs contain intentional OS-specific skips; macOS amd64 code-signing evidence is `unsigned-or-unverified`. Do not summarize those as all-platform code signing.
+The v18.19.7 tag workflow at SHA `4148c2b...` passed build, release-candidate verification, Linux amd64, Windows amd64, macOS amd64, macOS arm64, and release publication. Platform jobs contain intentional OS-specific skips; macOS amd64 code-signing evidence is `unsigned-or-unverified`. Do not summarize those as all-platform code signing.
 
 The tag's coordination black-box receipt covers internal scenarios and help output. It does not prove the complete released-binary claim/heartbeat/wait/release/prewarm JSON path, keyed verifier path, race detector, or four-platform prewarm. Keep those gates `unproved` unless the target workflow runs them directly.
 

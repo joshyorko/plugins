@@ -120,7 +120,7 @@ rcc robot bundle --robot robot.yaml --output my-robot.py
 rcc robot run-from-bundle my-robot.py --task Main
 ```
 
-Environment Artifact bundles can add `--artifact-archive` and `--artifact-index`; inspect the exact v18.19.3 help before creating one. Platform selection is exact and must reject incompatible workers. Hardened unpacking rejects traversal, archive/project symlinks, and unsafe destinations; `--force` stages and replaces the complete destination instead of merging into it. Bundle after the robot validates locally. Do not commit `output/`, transient bundle outputs, or generated freeze files unless the project intentionally tracks them.
+Environment Artifact bundles can add `--artifact-archive` and `--artifact-index`; inspect the exact v18.19.7 help before creating one. Platform selection is exact and must reject incompatible workers. Hardened unpacking rejects traversal, archive/project symlinks, and unsafe destinations; `--force` stages and replaces the complete destination instead of merging into it. Bundle after the robot validates locally. Do not commit `output/`, transient bundle outputs, or generated freeze files unless the project intentionally tracks them.
 
 For canonical `.rcca` layout, trust attachments, and archive limits, read `../../rcc-core/references/environment-artifacts.md`.
 

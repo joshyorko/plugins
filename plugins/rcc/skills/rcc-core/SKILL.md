@@ -32,9 +32,9 @@ Use this skill when the task is about RCC itself rather than a specific RCC-back
 ## References
 
 - `references/rcc-source-recipes.md`: RCC command map, source tree orientation, holotree/cache, endpoints, remote cache, and fork development recipes.
-- `references/environment-artifacts.md`: v18.19.3 identity, compatibility, publish/acquire/export/exec, archives, leases, lifecycle inspection/repair, GC, and warm reuse.
+- `references/environment-artifacts.md`: v18.19.7 identity, compatibility, publish/acquire/export/exec, archives, leases, lifecycle inspection/repair, GC, and warm reuse.
 - `references/providers-and-trust.md`: named providers, loopback cache server, transport/security rules, detached trust, receipts, and `rccremote` compatibility.
-- `references/build-coordination.md`: actual v18.19.3 coordinate/prewarm CLI and JSON behavior, Linux execution boundary, failure model, and acceptance limitations.
+- `references/build-coordination.md`: actual v18.19.7 coordinate/prewarm CLI and JSON behavior, Linux execution boundary, failure model, and acceptance limitations.
 - `../rcc-robots/references/rcc-command-recipes.md`: robot-facing commands and environment recipes.
 - `../rcc-robots/references/troubleshooting-validation.md`: failure-splitting playbook.
 - `../rcc-workitems/references/docdb-rpa-patterns.md`: why some helper scripts intentionally stay behind an RCC task boundary in DocDB-backed robots.

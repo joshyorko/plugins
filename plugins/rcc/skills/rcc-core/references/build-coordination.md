@@ -1,6 +1,6 @@
 # Environment Build Coordination And Prewarm
 
-Use this reference for the optional v18.19.3 filesystem coordinator and prewarm CLI. Treat shipped source/help/runtime output as authoritative where `docs/environment-build-coordination.md` describes a broader aspirational machine contract.
+Use this reference for the optional v18.19.7 filesystem coordinator and prewarm CLI. Treat shipped source/help/runtime output as authoritative where `docs/environment-build-coordination.md` describes a broader aspirational machine contract.
 
 ## Boundary
 
@@ -20,7 +20,7 @@ rcc env coordinate prewarm
 
 Every operation requires `--json`, a coordinator `--root`, key inputs, owner/TTL state where applicable, and keyed Ed25519 trust inputs. Inspect exact subcommand help on the active binary; do not copy the aspirational documentation's sample JSON as a schema.
 
-Key operational facts in v18.19.3:
+Key operational facts in v18.19.7:
 
 - Claim output uses `expiresAt`; it does not emit the documented `heartbeat`/`expiry` pair.
 - Observed claim outcomes are `claimed`, `existing-artifact`, and `waiting`; do not invent documented outcomes that the CLI does not emit.
@@ -30,9 +30,9 @@ Key operational facts in v18.19.3:
 - `--capacity 0` becomes the number of requested keys; it does not disable builds.
 - Retry backoff starts at 25 ms, is context-cancellable, and caps at one second.
 - Concrete staged prewarm execution is Linux-only and requires bubblewrap; non-Linux execution fails closed.
-- `--independent-build` is present but fails the released staging-boundary check in the installed v18.19.3 binary. Do not rely on it as a fallback without fresh proof.
+- `--independent-build` is present but fails the released staging-boundary check in the installed v18.19.7 binary. Do not rely on it as a fallback without fresh proof.
 
-Do not put credentials or production Action secrets in build inputs. Although `--provider-authorization` exists, v18.19.3 can persist the completed Artifact record in events/nondeterminism state. Do not pass a real credential through this flag; use a non-secret proof or keep the workflow local until the persistence boundary is fixed and verified.
+Do not put credentials or production Action secrets in build inputs. Although `--provider-authorization` exists, v18.19.7 can persist the completed Artifact record in events/nondeterminism state. Do not pass a real credential through this flag; use a non-secret proof or keep the workflow local until the persistence boundary is fixed and verified.
 
 ## State And Failure Model
 
@@ -60,6 +60,6 @@ Separate these gates:
 4. race-detector evidence; and
 5. platform runtime evidence.
 
-The v18.19.3 tag workflow passed its coordination black-box gate, but that gate uses internal test seams and help output. It does not prove the complete released-binary coordination CLI, keyed verifier path, race detector, or four-platform prewarm. The native four-platform receipts prove Environment Artifact lifecycle behavior, not coordinate/prewarm CLI parity.
+The v18.19.7 tag workflow passed its coordination black-box gate, but that gate uses internal test seams and help output. It does not prove the complete released-binary coordination CLI, keyed verifier path, race detector, or four-platform prewarm. The native four-platform receipts prove Environment Artifact lifecycle behavior, not coordinate/prewarm CLI parity.
 
 For CI, pin the RCC version and asset SHA, isolate coordinator/build roots outside the checkout, provision Linux bubblewrap/prlimit where staged execution is expected, use external timeouts, and bind promotion receipts to the exact source commit and binary SHA. Report platform skips and unproved gates explicitly.

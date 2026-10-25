@@ -46,7 +46,7 @@ class RccDaggerMcpLauncherTests(unittest.TestCase):
     def test_bundled_module_defaults_to_released_rcc(self) -> None:
         source = DAGGER_MAIN.read_text()
 
-        self.assertIn('defaultRccVersion = "v18.19.3"', source)
+        self.assertIn('defaultRccVersion = "v18.19.7"', source)
         self.assertRegex(
             source,
             r'defaultRccSHA256\s*=\s*"7e588c01751ca2ae15ba13ef67f2f4b7567697a5a8389737059a73936f509428"',
@@ -57,7 +57,7 @@ class RccDaggerMcpLauncherTests(unittest.TestCase):
     def test_fallback_install_hint_is_pinned_and_user_scoped(self) -> None:
         source = SESSION_SETUP.read_text()
 
-        self.assertIn("v18.19.3", source)
+        self.assertIn("v18.19.7", source)
         self.assertIn("7e588c01751ca2ae15ba13ef67f2f4b7567697a5a8389737059a73936f509428", source)
         self.assertNotIn("releases/latest", source)
         self.assertNotIn("sudo mv", source)

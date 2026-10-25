@@ -13,7 +13,7 @@ Official docs and source repos checked. Only the RCC source row was refreshed on
 - Robocorp Python library docs: `https://sema4.ai/docs/automation/python/robocorp`
 - Robocorp Python library source: `https://github.com/robocorp/robocorp` at `master` / `64cc9a3`
 - Josh Action Server fork: `https://github.com/joshyorko/actions` at `community` / `3bae23bb49fe`
-- Josh RCC fork: `https://github.com/joshyorko/rcc` at tag `v18.19.3` / `4148c2b71705c9d2baf0e88b48d08a79cb7bda0f`
+- Josh RCC fork: `https://github.com/joshyorko/rcc` at tag `v18.19.7` / `4148c2b71705c9d2baf0e88b48d08a79cb7bda0f`
 - Sema4AI gallery: `https://github.com/Sema4AI/gallery` at `main` / `d6afd61`
 - Public Robocorp runtime/process examples: `k8s-on-demand-runtimes`, `azure-on-demand-runtimes`, `example-worker-logs`, `template-python-workitems`, and `python-producer-consumer-reporting`.
 

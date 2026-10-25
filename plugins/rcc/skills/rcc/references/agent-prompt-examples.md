@@ -13,7 +13,7 @@ Use $rcc-core for RCC holotree, freeze/export, endpoint, prebuilt environment, r
 ```
 
 ```text
-Use $rcc-core for Environment Artifacts. Confirm RCC v18.19.3, then separate the canonical Artifact digest, platform compatibility, provider, trust carrier/policy, local materialization, and execution lease. Inspect lifecycle state before repair and preserve strict remote trust.
+Use $rcc-core for Environment Artifacts. Confirm RCC v18.19.7, then separate the canonical Artifact digest, platform compatibility, provider, trust carrier/policy, local materialization, and execution lease. Inspect lifecycle state before repair and preserve strict remote trust.
 ```
 
 ```text
@@ -21,7 +21,7 @@ Use $rcc-core for provider or cache-server work. Inspect the named profile witho
 ```
 
 ```text
-Use $rcc-core for env coordinate or prewarm. Read the shipped v18.19.3 command help and build-coordination reference, use external timeouts, keep verified Artifact closure authoritative, and report released-binary CLI evidence separately from internal/source tests.
+Use $rcc-core for env coordinate or prewarm. Read the shipped v18.19.7 command help and build-coordination reference, use external timeouts, keep verified Artifact closure authoritative, and report released-binary CLI evidence separately from internal/source tests.
 ```
 
 ```text

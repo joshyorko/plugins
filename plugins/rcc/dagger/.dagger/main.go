@@ -25,7 +25,7 @@ import (
 
 const (
 	defaultGoVersion  = "1.26.5"
-	defaultRccVersion = "v18.19.3"
+	defaultRccVersion = "v18.19.7"
 	defaultRccSHA256  = "7e588c01751ca2ae15ba13ef67f2f4b7567697a5a8389737059a73936f509428"
 )
 
@@ -94,7 +94,7 @@ func (m *RccCi) Rcc(
 	// +defaultPath="."
 	source *dagger.Directory,
 	// RCC release version to install in the container.
-	// +default="v18.19.3"
+	// +default="v18.19.7"
 	rccVersion string,
 ) (string, error) {
 	args, err := splitCommand(c)
@@ -117,7 +117,7 @@ func (m *RccCi) RccWithOutput(
 	// +default="./output"
 	outputPath string,
 	// RCC release version to install in the container.
-	// +default="v18.19.3"
+	// +default="v18.19.7"
 	rccVersion string,
 ) (*dagger.Directory, error) {
 	args, err := splitCommand(c)

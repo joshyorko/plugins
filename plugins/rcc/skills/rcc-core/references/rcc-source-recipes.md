@@ -191,7 +191,7 @@ rcc run -r developer/toolkit.yaml --dev -t tools
 
 When running Go tests outside the toolkit, verify the repo's developer docs first. Some tests assume `GOARCH=amd64`.
 
-At v18.19.3 the release Go toolchain is 1.26.5, while the contained toolkit may remain on the newest available Conda Forge build. Treat those as distinct evidence. The toolkit's micromamba bootstrap uses bounded 64 MiB downloads, immutable SHA-256-pinned fallbacks, three attempts with 10/20-second delays, and strict archive-member/executable validation. Do not bypass checksum, size, traversal, symlink, hard-link, or exact-member failures to make setup pass.
+At v18.19.7 the release Go toolchain is 1.26.5, while the contained toolkit may remain on the newest available Conda Forge build. Treat those as distinct evidence. The toolkit's micromamba bootstrap uses bounded 64 MiB downloads, immutable SHA-256-pinned fallbacks, three attempts with 10/20-second delays, and strict archive-member/executable validation. Do not bypass checksum, size, traversal, symlink, hard-link, or exact-member failures to make setup pass.
 
 General RCC downloads now stage to a temporary file and replace the destination only after success. Preserve an existing binary/cache input after a failed replacement. Linux diagnostics prefer `/etc/os-release` or `/usr/lib/os-release` and include Bluefin, bootc/image, variant, and OSTree metadata before falling back to `lsb_release` and `uname`.
 

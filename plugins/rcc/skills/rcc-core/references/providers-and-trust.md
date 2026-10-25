@@ -1,12 +1,12 @@
 # Environment Artifact Providers And Trust
 
-Use this reference for RCC v18.19.3 named providers, the loopback cache server, enterprise HTTP policy, detached artifact trust, and the boundary with legacy `rccremote`.
+Use this reference for RCC v18.19.7 named providers, the loopback cache server, enterprise HTTP policy, detached artifact trust, and the boundary with legacy `rccremote`.
 
 ## Provider Profiles
 
 The built-in `local` filesystem provider lives below `$ROBOCORP_HOME/artifacts/v1/provider`. It is separate from the consumer content cache and materializations.
 
-Named profiles support only type `http` in v18.19.3:
+Named profiles support only type `http` in v18.19.7:
 
 ```bash
 rcc provider add office --type http \
@@ -49,7 +49,7 @@ rcc cache serve --root ./provider-journal \
 
 The server has no authorization option and rejects non-loopback listeners. Its security boundary is loopback. Do not advertise it as an authenticated remote service or defeat this boundary; external exposure requires a separately designed and authorized reverse-proxy/service boundary.
 
-Zero limits mean unlimited. Quota exhaustion is explicit (HTTP 507) and rate limiting uses HTTP 429. Do not assume advertised protocol v2 means ranged transfer: v18.19.3 reports v2-compatible-v1 while retaining full-restart-only objects.
+Zero limits mean unlimited. Quota exhaustion is explicit (HTTP 507) and rate limiting uses HTTP 429. Do not assume advertised protocol v2 means ranged transfer: v18.19.7 reports v2-compatible-v1 while retaining full-restart-only objects.
 
 ## Trust Model
 
@@ -81,7 +81,7 @@ rcc env trust verify \
 
 Deployment-owned Ed25519 public keys come from `--trust-roots`; provider authentication/signatures are not trust roots. Carrier selection on publish/acquire/exec supports filesystem, archive, and HTTP forms. Publication stages required trust material before committing a visible provider Manifest. New leases re-evaluate the configured carrier and record their decision; existing running leases are not silently killed by a later revocation.
 
-### v18.19.3 standalone verifier caveat
+### v18.19.7 standalone verifier caveat
 
 The standalone `env trust verify` command does not canonical-parse `--artifact` before permissive-local evaluation. The released binary can emit `valid:true` for malformed text such as `sha256:ABC`. Validate lowercase `sha256:<64 hex>` before invoking it and do not treat such a receipt as Artifact proof. `env acquire`, `env export`, `env exec`, and lifecycle commands do canonical-parse their artifact identities. Track this as an upstream correctness gap; do not normalize malformed input silently.
 
