@@ -329,6 +329,15 @@ impl McpServer {
             "inspect_factory_cas" => self.factory.inspect_cas(parse(args)?).await,
             "read_factory_agent_timeline" => self.factory.read_agent_timeline(parse(args)?).await,
             "inspect_factory_issue_graph" => self.factory.inspect_issue_graph(parse(args)?).await,
+            "list_factory_github_repositories" => {
+                self.factory.list_github_repositories(parse(args)?).await
+            }
+            "connect_factory_github_repository" => {
+                self.factory.connect_github_repository(parse(args)?).await
+            }
+            "create_factory_local_repository" => {
+                self.factory.create_local_repository(parse(args)?).await
+            }
             "read_factory_delivery" => {
                 self.factory
                     .delivery(&parse::<DeliveryRead>(args)?.run_id)

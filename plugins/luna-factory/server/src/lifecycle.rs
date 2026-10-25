@@ -343,6 +343,8 @@ pub struct Factory {
     timelines: Arc<crate::timeline::AgentTimelines>,
     /// Opt-in read-only GitHub App reader. Its data is display-only, never proof.
     github: crate::github::SharedReader,
+    /// Serializes workspace connects and creates (clones run outside `mutation`).
+    workspace: Arc<Mutex<()>>,
     _lease: Arc<ServiceLease>,
 }
 struct PendingRepositoryForm {
@@ -479,6 +481,7 @@ impl Factory {
                 crate::timeline::FRESH_FOR,
             )),
             github,
+            workspace: Arc::new(Mutex::new(())),
             _lease: Arc::new(lease),
         })
     }
@@ -563,7 +566,7 @@ impl Factory {
         let _guard = self.mutation.lock().await;
         let mut store = self.store.lock().await;
         let config =
-            crate::repositories::effective_config(&self.config, &store.repository_registrations()?);
+            crate::repositories::effective_config(&self.config, &store.effective_registrations()?);
         let admission = store.admit_planning(&config, &request)?;
         let run = store.get(&admission.run.id)?;
         Ok(crate::graph::envelope(&run, None))
@@ -577,7 +580,7 @@ impl Factory {
         let _guard = self.mutation.lock().await;
         let mut store = self.store.lock().await;
         let config =
-            crate::repositories::effective_config(&self.config, &store.repository_registrations()?);
+            crate::repositories::effective_config(&self.config, &store.effective_registrations()?);
         request.validate(&config)?;
         // Read-only prechecks give precise reasons before any write; admission repeats both
         // inside its transaction, where they are authoritative.
@@ -859,7 +862,7 @@ impl Factory {
         {
             let config = crate::repositories::effective_config(
                 &self.config,
-                &store.repository_registrations()?,
+                &store.effective_registrations()?,
             );
             if let Err(error) = Self::validate_graph_repository_config(run, &config) {
                 // History remains visible after revocation or remapping. These are
@@ -1042,12 +1045,18 @@ impl Factory {
     async fn effective_config(&self) -> Result<Config> {
         Ok(crate::repositories::effective_config(
             &self.config,
-            &self.store.lock().await.repository_registrations()?,
+            &self.store.lock().await.effective_registrations()?,
         ))
     }
     pub async fn discover_repositories(&self) -> Result<Value> {
-        let registrations = self.store.lock().await.repository_registrations()?;
-        let config = crate::repositories::effective_config(&self.config, &registrations);
+        let (registrations, effective) = {
+            let store = self.store.lock().await;
+            (
+                store.repository_registrations()?,
+                store.effective_registrations()?,
+            )
+        };
+        let config = crate::repositories::effective_config(&self.config, &effective);
         let candidates = crate::repositories::discover(&self.config)?
             .into_iter()
             .filter(|candidate| {
@@ -1069,11 +1078,23 @@ impl Factory {
         crate::repositories::request(&self.config, &mut *self.store.lock().await, request)
     }
     pub async fn capabilities(&self) -> Result<Value> {
-        let config = self.effective_config().await?;
+        let (config, records) = self.effective_workspace_state().await?;
+        let repositories = config
+            .repositories
+            .iter()
+            .map(|(alias, repo)| {
+                let mut entry = json!({"alias":alias,"max_finish":repo.max_finish});
+                if let Some(provenance) = self.workspace_provenance(&records, alias, &repo.root) {
+                    entry["provenance"] = json!(provenance);
+                }
+                entry
+            })
+            .collect::<Vec<_>>();
         Ok(
             json!({"plugin_version":env!("CARGO_PKG_VERSION"),"mcp_protocol":"2026-07-28","native_transport":self.config.native_transport,
-            "repositories":config.repositories.iter().map(|(alias,repo)|json!({"alias":alias,"max_finish":repo.max_finish})).collect::<Vec<_>>(),
+            "repositories":repositories,
             "repository_onboarding":{"enabled":!self.config.discovery_roots.is_empty(),"approval":"local_operator"},
+            "workspaces":crate::workspaces::capability(&self.config),
             "profiles":self.config.profiles.iter().map(|(alias,profile)|json!({"alias":alias,"effort":profile.effort,"supported":profile.codex_profile.is_none()})).collect::<Vec<_>>(),
             "limits":self.config.limits,"observed_routing":"unverified","status_inference_calls":0,
             "execution":crate::qualification::capability(&self.config),
@@ -1084,6 +1105,455 @@ impl Factory {
             "github":self.github.capability(),
             "live_proof":"Live owner/worker, native ChatGPT and tunnel acceptance must be recorded on the operator runtime."}),
         )
+    }
+    async fn effective_workspace_state(
+        &self,
+    ) -> Result<(Config, Vec<crate::workspaces::WorkspaceRepository>)> {
+        let store = self.store.lock().await;
+        let records = store.workspace_repositories()?;
+        let config =
+            crate::repositories::effective_config(&self.config, &store.effective_registrations()?);
+        Ok((config, records))
+    }
+    /// Provenance of an effective alias, when a workspace record supplied it.
+    fn workspace_provenance(
+        &self,
+        records: &[crate::workspaces::WorkspaceRepository],
+        alias: &str,
+        root: &Path,
+    ) -> Option<crate::workspaces::Provenance> {
+        let workspaces = self.config.workspaces.as_ref()?;
+        records
+            .iter()
+            .find(|r| r.alias == alias && workspaces.root.join(&r.directory) == root)
+            .map(|r| r.provenance)
+    }
+    fn workspace_record_effective(
+        &self,
+        config: &Config,
+        record: &crate::workspaces::WorkspaceRepository,
+    ) -> bool {
+        self.config.workspaces.as_ref().is_some_and(|workspaces| {
+            config
+                .repositories
+                .get(&record.alias)
+                .is_some_and(|repo| repo.root == workspaces.root.join(&record.directory))
+        })
+    }
+    /// The first free alias among `preferred`, checked against the operator
+    /// configuration, the effective set and every recorded registration.
+    async fn free_alias(&self, config: &Config, preferred: &[String]) -> Result<String> {
+        let store = self.store.lock().await;
+        for alias in preferred {
+            if crate::config::valid_alias(alias)
+                && !config.repositories.contains_key(alias)
+                && !self.config.repositories.contains_key(alias)
+                && !store.repository_alias_recorded(alias)?
+            {
+                return Ok(alias.clone());
+            }
+        }
+        bail!("repository_alias_conflict")
+    }
+    /// Finish a reserved workspace record after verifying the published directory.
+    async fn register_workspace(
+        &self,
+        workspaces: &crate::workspaces::Workspaces,
+        mut record: crate::workspaces::WorkspaceRepository,
+    ) -> Result<crate::workspaces::WorkspaceRepository> {
+        let target = workspaces.root.join(&record.directory);
+        workspaces.check_root()?;
+        let expected_origin = record
+            .full_name
+            .as_deref()
+            .map(crate::github::RepoName::parse)
+            .transpose()?
+            .map(|name| crate::github::canonical_remote(&name, self.github.web_host()));
+        crate::workspaces::verify_recorded_repository(
+            &target,
+            &record,
+            expected_origin.as_deref(),
+        )?;
+        record.candidate_id = crate::workspaces::candidate(workspaces, &record.directory)?
+            .context("workspace_repository_unavailable")?
+            .id;
+        record.identity = Self::graph_repository_identity(&target)
+            .map_err(|_| anyhow::anyhow!("repository_identity_unavailable"))?;
+        record.pending = false;
+        let _guard = self.mutation.lock().await;
+        self.store.lock().await.save_workspace_repository(&record)?;
+        Ok(record)
+    }
+    async fn reserve_workspace(
+        &self,
+        record: &crate::workspaces::WorkspaceRepository,
+        repository_key: &str,
+    ) -> Result<()> {
+        let _guard = self.mutation.lock().await;
+        self.store
+            .lock()
+            .await
+            .insert_workspace_repository(record, repository_key)
+    }
+    async fn save_pending_workspace(
+        &self,
+        record: &crate::workspaces::WorkspaceRepository,
+    ) -> Result<()> {
+        let _guard = self.mutation.lock().await;
+        self.store.lock().await.save_workspace_repository(record)
+    }
+    async fn bind_workspace_idempotency(&self, key: &str, repository_key: &str) -> Result<()> {
+        self.store
+            .lock()
+            .await
+            .bind_workspace_idempotency(key, repository_key)
+    }
+    /// Read-only: the installation's repositories, marked connected or connectable.
+    /// Off unless the operator set `workspaces.connect_github`; no request is made then.
+    pub async fn list_github_repositories(
+        &self,
+        args: crate::workspaces::ListGithubRepositories,
+    ) -> Result<Value> {
+        let enabled = self
+            .config
+            .workspaces
+            .as_ref()
+            .is_some_and(|w| w.connect_github);
+        let page = crate::github::list_cursor_page(args.cursor.as_deref())?;
+        if !enabled {
+            return Ok(crate::github::repository_list(
+                self.config.github_app.is_some(),
+                Some("github_connect_not_enabled"),
+            ));
+        }
+        let unconfigured = self.github.unavailable_reason();
+        let reason = unconfigured;
+        if let Some(reason) = reason {
+            return Ok(crate::github::repository_list(
+                unconfigured.is_none(),
+                Some(reason),
+            ));
+        }
+        let (config, records) = self.effective_workspace_state().await?;
+        let mut connected = crate::github::remote_aliases(&config, self.github.web_host());
+        for record in &records {
+            if let Some(full_name) = &record.full_name
+                && self.workspace_record_effective(&config, record)
+            {
+                connected.insert(full_name.clone(), record.alias.clone());
+            }
+        }
+        Ok(self.github.list_repositories(page, &connected).await)
+    }
+    /// Clone one allowlisted GitHub repository into the workspace root and approve
+    /// it as an alias with `github_app_installation` provenance. No push, branch,
+    /// pull request, run, dispatch or execution qualification.
+    pub async fn connect_github_repository(
+        &self,
+        args: crate::workspaces::ConnectGithubRepository,
+    ) -> Result<Value> {
+        use crate::workspaces::{Provenance, Target};
+        let workspaces = self
+            .config
+            .workspaces
+            .as_ref()
+            .filter(|w| w.connect_github)
+            .context("github_connect_not_enabled")?;
+        ensure!(
+            crate::workspaces::valid_idempotency_key(&args.idempotency_key),
+            "invalid_idempotency_key"
+        );
+        let repository = crate::github::RepoName::parse(&args.repository)?;
+        let key = repository.key();
+        if let Some(reason) = self.github.unavailable_reason() {
+            bail!(reason);
+        }
+        ensure!(
+            self.github.allowed(&repository).is_some(),
+            "repository_not_in_github_app_allowlist"
+        );
+        let _workspace = self.workspace.lock().await;
+        workspaces.check_root()?;
+        let (config, records) = self.effective_workspace_state().await?;
+        let repository_key = format!("github:{key}");
+        let mut pending_record = None;
+        if let Some(existing) = records
+            .iter()
+            .find(|r| r.idempotency_key == args.idempotency_key)
+        {
+            ensure!(
+                existing.provenance == Provenance::GithubAppInstallation
+                    && existing.full_name.as_deref() == Some(key.as_str()),
+                "idempotency_conflict"
+            );
+            self.bind_workspace_idempotency(&args.idempotency_key, &repository_key)
+                .await?;
+            if !existing.pending {
+                ensure!(
+                    self.workspace_record_effective(&config, existing),
+                    "workspace_repository_unavailable"
+                );
+                let origin = crate::github::canonical_remote(&repository, self.github.web_host());
+                crate::workspaces::verify_recorded_repository(
+                    &workspaces.root.join(&existing.directory),
+                    existing,
+                    Some(&origin),
+                )?;
+                return Ok(existing.connect_result("connected"));
+            }
+            match crate::workspaces::target_state(&workspaces.root.join(&existing.directory))? {
+                Target::Directory => {
+                    let origin =
+                        crate::github::canonical_remote(&repository, self.github.web_host());
+                    crate::workspaces::verify_recorded_repository(
+                        &workspaces.root.join(&existing.directory),
+                        existing,
+                        Some(&origin),
+                    )?;
+                    let completed = self
+                        .register_workspace(workspaces, existing.clone())
+                        .await?;
+                    return Ok(completed.connect_result("connected"));
+                }
+                Target::Missing => pending_record = Some(existing.clone()),
+                Target::Other => bail!("workspace_path_conflict"),
+            }
+        }
+        if let Some(existing) = records
+            .iter()
+            .find(|r| !r.pending && r.full_name.as_deref() == Some(key.as_str()))
+        {
+            ensure!(
+                self.workspace_record_effective(&config, existing),
+                "workspace_repository_unavailable"
+            );
+            let origin = crate::github::canonical_remote(&repository, self.github.web_host());
+            crate::workspaces::verify_recorded_repository(
+                &workspaces.root.join(&existing.directory),
+                existing,
+                Some(&origin),
+            )?;
+            self.bind_workspace_idempotency(&args.idempotency_key, &repository_key)
+                .await?;
+            return Ok(existing.connect_result("already_connected"));
+        }
+        let web_host = self.github.web_host().to_owned();
+        if pending_record.is_none()
+            && let Some(alias) = crate::github::remote_aliases(&config, &web_host).get(&key)
+        {
+            let identity = Self::graph_repository_identity(&config.repositories[alias].root)
+                .map_err(|_| anyhow::anyhow!("repository_identity_unavailable"))?;
+            self.bind_workspace_idempotency(&args.idempotency_key, &repository_key)
+                .await?;
+            return Ok(
+                json!({"schema_version":1,"status":"already_connected","alias":alias,
+                "repository":{"alias":alias,"identity":identity},"full_name":key,
+                "default_branch":null,"provenance":"github_app"}),
+            );
+        }
+        let directory = crate::workspaces::github_directory(&repository);
+        let target = workspaces.root.join(&directory);
+        let mut record = if let Some(record) = pending_record {
+            record
+        } else {
+            ensure!(
+                matches!(crate::workspaces::target_state(&target)?, Target::Missing),
+                "workspace_path_conflict"
+            );
+            let alias = self
+                .free_alias(
+                    &config,
+                    &[
+                        crate::workspaces::alias_from(&repository.name),
+                        crate::workspaces::alias_from(&format!(
+                            "{}-{}",
+                            repository.owner, repository.name
+                        )),
+                    ],
+                )
+                .await?;
+            let record = crate::workspaces::WorkspaceRepository {
+                id: uuid::Uuid::new_v4().to_string(),
+                idempotency_key: args.idempotency_key.clone(),
+                created_by_luna: true,
+                pending: true,
+                device: None,
+                inode: None,
+                provenance: Provenance::GithubAppInstallation,
+                alias,
+                directory,
+                candidate_id: String::new(),
+                full_name: Some(key),
+                name: None,
+                default_branch: None,
+                identity: String::new(),
+                created_at: crate::store::now(),
+            };
+            self.reserve_workspace(&record, &repository_key).await?;
+            record
+        };
+        workspaces.check_root()?;
+        ensure!(
+            matches!(crate::workspaces::target_state(&target)?, Target::Missing),
+            "workspace_path_conflict"
+        );
+        // Keep this directory descriptor across token minting and clone startup:
+        // a replaced workspace pathname cannot redirect the child's cwd.
+        let pinned_root = workspaces.open_pinned_root()?;
+        let staging = pinned_root.staging("connect")?;
+        record.default_branch = match self
+            .github
+            .clone_repository(&repository, &staging, workspaces.max_clone_bytes())
+            .await
+        {
+            Ok(branch) => branch,
+            Err(reason) => bail!(reason),
+        };
+        let staging_path = staging.path();
+        let (device, inode) = crate::workspaces::directory_identity(&staging_path)?;
+        record.device = Some(device);
+        record.inode = Some(inode);
+        let origin = crate::github::canonical_remote(&repository, self.github.web_host());
+        crate::workspaces::verify_recorded_repository(&staging_path, &record, Some(&origin))?;
+        self.save_pending_workspace(&record).await?;
+        workspaces.check_root()?;
+        staging.publish(&record.directory)?;
+        let record = self.register_workspace(workspaces, record).await?;
+        Ok(record.connect_result("connected"))
+    }
+    /// Greenfield: `git init` plus one empty commit under the workspace root,
+    /// approved as an alias with `local_create` provenance. No GitHub call.
+    pub async fn create_local_repository(
+        &self,
+        args: crate::workspaces::CreateLocalRepository,
+    ) -> Result<Value> {
+        use crate::workspaces::{Provenance, Target};
+        let workspaces = self
+            .config
+            .workspaces
+            .as_ref()
+            .filter(|w| w.create_local)
+            .context("local_create_not_enabled")?;
+        ensure!(
+            crate::workspaces::valid_idempotency_key(&args.idempotency_key),
+            "invalid_idempotency_key"
+        );
+        ensure!(
+            crate::workspaces::valid_local_name(&args.name),
+            "invalid_local_repository_name"
+        );
+        let _workspace = self.workspace.lock().await;
+        workspaces.check_root()?;
+        let (config, records) = self.effective_workspace_state().await?;
+        let repository_key = format!("local:{}", args.name);
+        let mut pending_record = None;
+        if let Some(existing) = records
+            .iter()
+            .find(|r| r.idempotency_key == args.idempotency_key)
+        {
+            ensure!(
+                existing.provenance == Provenance::LocalCreate
+                    && existing.name.as_deref() == Some(args.name.as_str()),
+                "idempotency_conflict"
+            );
+            self.bind_workspace_idempotency(&args.idempotency_key, &repository_key)
+                .await?;
+            if !existing.pending {
+                ensure!(
+                    self.workspace_record_effective(&config, existing),
+                    "workspace_repository_unavailable"
+                );
+                crate::workspaces::verify_recorded_repository(
+                    &workspaces.root.join(&existing.directory),
+                    existing,
+                    None,
+                )?;
+                return Ok(existing.create_result("created"));
+            }
+            match crate::workspaces::target_state(&workspaces.root.join(&existing.directory))? {
+                Target::Directory => {
+                    crate::workspaces::verify_recorded_repository(
+                        &workspaces.root.join(&existing.directory),
+                        existing,
+                        None,
+                    )?;
+                    let completed = self
+                        .register_workspace(workspaces, existing.clone())
+                        .await?;
+                    return Ok(completed.create_result("created"));
+                }
+                Target::Missing => pending_record = Some(existing.clone()),
+                Target::Other => bail!("workspace_path_conflict"),
+            }
+        }
+        if let Some(existing) = records.iter().find(|r| {
+            !r.pending
+                && r.provenance == Provenance::LocalCreate
+                && r.name.as_deref() == Some(args.name.as_str())
+        }) {
+            ensure!(
+                self.workspace_record_effective(&config, existing),
+                "workspace_repository_unavailable"
+            );
+            crate::workspaces::verify_recorded_repository(
+                &workspaces.root.join(&existing.directory),
+                existing,
+                None,
+            )?;
+            self.bind_workspace_idempotency(&args.idempotency_key, &repository_key)
+                .await?;
+            return Ok(existing.create_result("already_exists"));
+        }
+        let target = workspaces.root.join(&args.name);
+        let mut record = if let Some(record) = pending_record {
+            record
+        } else {
+            ensure!(
+                matches!(crate::workspaces::target_state(&target)?, Target::Missing),
+                "workspace_path_conflict"
+            );
+            let alias = self
+                .free_alias(&config, &[crate::workspaces::alias_from(&args.name)])
+                .await?;
+            let record = crate::workspaces::WorkspaceRepository {
+                id: uuid::Uuid::new_v4().to_string(),
+                idempotency_key: args.idempotency_key.clone(),
+                created_by_luna: true,
+                pending: true,
+                device: None,
+                inode: None,
+                provenance: Provenance::LocalCreate,
+                alias,
+                directory: args.name.clone(),
+                candidate_id: String::new(),
+                full_name: None,
+                name: Some(args.name.clone()),
+                default_branch: Some("main".into()),
+                identity: String::new(),
+                created_at: crate::store::now(),
+            };
+            self.reserve_workspace(&record, &repository_key).await?;
+            record
+        };
+        workspaces.check_root()?;
+        ensure!(
+            matches!(crate::workspaces::target_state(&target)?, Target::Missing),
+            "workspace_path_conflict"
+        );
+        let staging = crate::workspaces::StagingGuard::new(crate::workspaces::staging_path(
+            workspaces, "create",
+        ));
+        workspaces.check_root()?;
+        crate::workspaces::init_local(staging.path()).await?;
+        let (device, inode) = crate::workspaces::directory_identity(staging.path())?;
+        record.device = Some(device);
+        record.inode = Some(inode);
+        crate::workspaces::verify_recorded_repository(staging.path(), &record, None)?;
+        self.save_pending_workspace(&record).await?;
+        workspaces.check_root()?;
+        crate::workspaces::publish(staging.path(), &target)?;
+        let record = self.register_workspace(workspaces, record).await?;
+        Ok(record.create_result("created"))
     }
     /// GitHub reader handle (diagnostics for tests; never exposes credentials).
     pub fn github_reader(&self) -> &crate::github::GithubReader {
@@ -1262,7 +1732,7 @@ impl Factory {
             let mut store = self.store.lock().await;
             let config = crate::repositories::effective_config(
                 &self.config,
-                &store.repository_registrations()?,
+                &store.effective_registrations()?,
             );
             crate::store::validate_request(&config, &request)?;
             // Fail closed before any run row, claim, receipt or native process/connection.

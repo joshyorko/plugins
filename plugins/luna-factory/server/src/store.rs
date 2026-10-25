@@ -447,6 +447,8 @@ impl Store {
           CREATE TABLE IF NOT EXISTS receipts (sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES runs(id), subject TEXT NOT NULL, kind TEXT NOT NULL, summary TEXT NOT NULL, created_at INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS repository_registrations (id TEXT PRIMARY KEY, alias TEXT NOT NULL UNIQUE, payload TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS workspace_repositories (id TEXT PRIMARY KEY, idem TEXT NOT NULL UNIQUE, alias TEXT NOT NULL UNIQUE, directory TEXT NOT NULL UNIQUE, payload TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS workspace_idempotency_keys (idem TEXT PRIMARY KEY, repository_key TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS campaigns (id TEXT PRIMARY KEY, idem TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL, repository_identity TEXT NOT NULL, forge_key TEXT NOT NULL, planning_run_id TEXT NOT NULL UNIQUE REFERENCES runs(id), payload TEXT NOT NULL, UNIQUE(repository_identity, forge_key));")?;
         // Additive, idempotent; user_version unchanged (see crate::qualification).
         connection.execute_batch(crate::qualification::TABLE_SQL)?;
@@ -540,6 +542,122 @@ impl Store {
         );
         Ok(registrations)
     }
+    /// Workspace repositories (connected or created), additive to the
+    /// registration table so older binaries ignore them.
+    pub fn workspace_repositories(&self) -> Result<Vec<crate::workspaces::WorkspaceRepository>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT payload FROM workspace_repositories ORDER BY alias LIMIT 101")?;
+        let mut records = Vec::new();
+        for payload in statement.query_map([], |row| row.get::<_, String>(0))? {
+            records.push(serde_json::from_str(&payload?)?);
+        }
+        ensure!(
+            records.len() <= crate::workspaces::MAX_WORKSPACE_REPOSITORIES,
+            "workspace_repository_limit"
+        );
+        Ok(records)
+    }
+    /// Discovery registrations plus workspace repositories, for `effective_config`.
+    pub fn effective_registrations(&self) -> Result<Vec<crate::repositories::Registration>> {
+        let mut registrations = self.repository_registrations()?;
+        registrations.extend(
+            self.workspace_repositories()?
+                .iter()
+                .filter(|record| !record.pending)
+                .map(crate::workspaces::WorkspaceRepository::registration),
+        );
+        Ok(registrations)
+    }
+    /// Whether any registration or workspace repository already uses `alias`.
+    pub fn repository_alias_recorded(&self, alias: &str) -> Result<bool> {
+        Ok(self
+            .connection
+            .prepare("SELECT 1 FROM repository_registrations WHERE alias=?1 UNION ALL SELECT 1 FROM workspace_repositories WHERE alias=?1")?
+            .exists([alias])?)
+    }
+    pub fn insert_workspace_repository(
+        &mut self,
+        record: &crate::workspaces::WorkspaceRepository,
+        repository_key: &str,
+    ) -> Result<()> {
+        ensure!(valid_alias(&record.alias), "invalid_repository_alias");
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let bound: Option<String> = tx
+            .query_row(
+                "SELECT repository_key FROM workspace_idempotency_keys WHERE idem=?1",
+                [&record.idempotency_key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(bound) = bound {
+            ensure!(bound == repository_key, "idempotency_conflict");
+        } else {
+            tx.execute(
+                "INSERT INTO workspace_idempotency_keys(idem,repository_key) VALUES(?1,?2)",
+                params![record.idempotency_key, repository_key],
+            )?;
+        }
+        let taken = tx
+            .prepare("SELECT 1 FROM repository_registrations WHERE alias=?1 UNION ALL SELECT 1 FROM workspace_repositories WHERE alias=?1 OR idem=?2 OR directory=?3")?
+            .exists(params![record.alias, record.idempotency_key, record.directory])?;
+        ensure!(!taken, "repository_alias_conflict");
+        let count: i64 =
+            tx.query_row("SELECT COUNT(*) FROM workspace_repositories", [], |row| {
+                row.get(0)
+            })?;
+        ensure!(
+            count < i64::try_from(crate::workspaces::MAX_WORKSPACE_REPOSITORIES)?,
+            "workspace_repository_limit"
+        );
+        tx.execute(
+            "INSERT INTO workspace_repositories(id,idem,alias,directory,payload) VALUES(?1,?2,?3,?4,?5)",
+            params![
+                record.id,
+                record.idempotency_key,
+                record.alias,
+                record.directory,
+                serde_json::to_string(record)?
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+    pub fn save_workspace_repository(
+        &mut self,
+        record: &crate::workspaces::WorkspaceRepository,
+    ) -> Result<()> {
+        let changed = self.connection.execute(
+            "UPDATE workspace_repositories SET payload=?2 WHERE id=?1",
+            params![record.id, serde_json::to_string(record)?],
+        )?;
+        ensure!(changed == 1, "workspace_repository_record_missing");
+        Ok(())
+    }
+    pub fn bind_workspace_idempotency(&mut self, key: &str, repository_key: &str) -> Result<()> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let bound: Option<String> = tx
+            .query_row(
+                "SELECT repository_key FROM workspace_idempotency_keys WHERE idem=?1",
+                [key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(bound) = bound {
+            ensure!(bound == repository_key, "idempotency_conflict");
+        } else {
+            tx.execute(
+                "INSERT INTO workspace_idempotency_keys(idem,repository_key) VALUES(?1,?2)",
+                params![key, repository_key],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
     pub fn repository_request(&self, id: &str) -> Result<crate::repositories::Registration> {
         let payload: String = self
             .connection
@@ -574,6 +692,11 @@ impl Store {
             );
             return Ok(existing);
         }
+        ensure!(
+            !tx.prepare("SELECT 1 FROM workspace_repositories WHERE alias=?1")?
+                .exists([&registration.alias])?,
+            "repository_alias_conflict"
+        );
         let count: i64 =
             tx.query_row("SELECT COUNT(*) FROM repository_registrations", [], |row| {
                 row.get(0)

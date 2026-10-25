@@ -12,6 +12,7 @@ from typing import Any
 from acceptance_canary import (
     McpClient, WORKBENCH_URI, CLIENT, CAPABILITIES, RELEASE_UI_SHA256, TOOL_COUNT, campaign_tools_visible,
     require_app_only_timeline,
+    require_workspace_tools,
 )
 import hashlib
 
@@ -51,6 +52,7 @@ def check_surface(client: McpClient, expected_ui_sha256: str = RELEASE_UI_SHA256
     require(len(tools) == TOOL_COUNT and required.issubset(names), "MCP planning tool catalog mismatch")
     require(campaign_tools_visible(tools), "campaign tools are not model- and app-visible")
     require_app_only_timeline(tools)
+    require_workspace_tools(tools)
     for name in ("inspect_factory_issue_graph", "read_factory_delivery"):
         github_read = next((tool for tool in tools if tool.get("name") == name), {})
         require(

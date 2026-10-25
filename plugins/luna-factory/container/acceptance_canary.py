@@ -38,7 +38,7 @@ CAMPAIGN_TOOLS = {
     "promote_factory_campaign",
 }
 CAMPAIGN_READ_TOOLS = {"list_factory_campaigns", "get_factory_campaign"}
-TOOL_COUNT = 29
+TOOL_COUNT = 32
 
 
 def campaign_tools_visible(tools: list[dict[str, Any]]) -> bool:
@@ -63,7 +63,29 @@ FORBIDDEN_TOOL_CALLS = {
     # Opt-in GitHub App reads: present in the catalog, never called by a canary.
     "inspect_factory_issue_graph",
     "read_factory_delivery",
+    # Operator-opt-in workspaces: they clone or create repositories, never called by a canary.
+    "list_factory_github_repositories",
+    "connect_factory_github_repository",
+    "create_factory_local_repository",
 }
+# Workspace tools: model- and app-visible; only the listing is read-only.
+WORKSPACE_TOOLS = {
+    "list_factory_github_repositories": True,
+    "connect_factory_github_repository": False,
+    "create_factory_local_repository": False,
+}
+
+
+def require_workspace_tools(tools: list[dict[str, Any]]) -> None:
+    """Each workspace tool is listed once, visible to model and app, with its read-only hint."""
+    for name, read_only in WORKSPACE_TOOLS.items():
+        found = [tool for tool in tools if tool.get("name") == name]
+        if (
+            len(found) != 1
+            or found[0].get("_meta", {}).get("ui", {}).get("visibility") != ["model", "app"]
+            or found[0].get("annotations", {}).get("readOnlyHint") is not read_only
+        ):
+            raise RuntimeError(f"workspace tool contract mismatch: {name}")
 APP_ONLY_TIMELINE_TOOL = "read_factory_agent_timeline"
 
 
@@ -150,6 +172,7 @@ def run(url: str, mode: str, expected_ui_sha256: str = RELEASE_UI_SHA256) -> dic
     ):
         raise RuntimeError("MCP tool catalog mismatch")
     require_app_only_timeline(tools)
+    require_workspace_tools(tools)
     for name in ("inspect_factory_issue_graph", "read_factory_delivery"):
         github_read = next(tool for tool in tools if tool.get("name") == name)
         if (
