@@ -1,0 +1,212 @@
+[
+  {
+    "path": "original-design/01-ux-audit.md",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/01-ux-audit.md",
+    "sha256": "502bfdc9d7752081cb131512a61e8c058de8238b290cc70ecc2796351269c2de"
+  },
+  {
+    "path": "original-design/02-platform-capabilities.md",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/02-platform-capabilities.md",
+    "sha256": "4f6a468f697a1057c523236f92d2f0e2ed54d6ce176ba65d5671f415304c555a"
+  },
+  {
+    "path": "original-design/03-design-spec.md",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/03-design-spec.md",
+    "sha256": "c2e9c80bf09d5bca1deb39995486b024c2fb6984b97f955382e43edf977d1b9a"
+  },
+  {
+    "path": "original-design/README.md",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/README.md",
+    "sha256": "a4d6c7def0680a98973f6aa87d93350db48230608aa4e69960a8e610bcb42369"
+  },
+  {
+    "path": "original-design/compare.html",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/compare.html",
+    "sha256": "54ab0b17cb73b07826041a8fc435b9daf485a2eced068449c60aaa2bf06a05f0"
+  },
+  {
+    "path": "original-design/design-brief.md",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/design-brief.md",
+    "sha256": "5596e492d14536d52e6a818e71e4c3d3356ef51fe467f61a469b1b2547780723"
+  },
+  {
+    "path": "original-design/mockup-fixture.md",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/mockup-fixture.md",
+    "sha256": "0ac15527fb0a197bb5f9e762c36c978367958ac41f36b730f97205a84beb7d3b"
+  },
+  {
+    "path": "original-design/mockups/a-inline.html",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/mockups/a-inline.html",
+    "sha256": "77841e9cd1feb9ca532d0ca5fda2012e9ffdd006cfbd3b4b02b50326903e19ae"
+  },
+  {
+    "path": "original-design/mockups/a-inspect.html",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/mockups/a-inspect.html",
+    "sha256": "7954b9b63f09dd6f26450d45d61ca48e34f25d094acbdd4b29ed0bdc39b19d5b"
+  },
+  {
+    "path": "original-design/mockups/a-mobile.html",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/mockups/a-mobile.html",
+    "sha256": "4c18ec49c47d6603610d046b71817990f2d6bb1b5b5195f26cb686aa89ee2453"
+  },
+  {
+    "path": "original-design/mockups/a-overview.html",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/mockups/a-overview.html",
+    "sha256": "e86bba691ab68670a85929759ea401b6cc8686d1b9a04a5401b4069524709e70"
+  },
+  {
+    "path": "original-design/mockups/a-swarm.html",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/mockups/a-swarm.html",
+    "sha256": "134ec7093f1760dae39efee10f5b3a870b7b60d0246d1e2dc49ba143cbbdaeac"
+  },
+  {
+    "path": "original-design/mockups/b-inline.html",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/mockups/b-inline.html",
+    "sha256": "062928a2e4e5c3e0b71942aa29958e14cbf5624d39c287b08a71697cd42bbf70"
+  },
+  {
+    "path": "original-design/mockups/b-inspect.html",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/mockups/b-inspect.html",
+    "sha256": "e976cd81740ff699094a68683c4f0fe5fa0290904b94d2c56b342de72885d065"
+  },
+  {
+    "path": "original-design/mockups/b-mobile.html",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/mockups/b-mobile.html",
+    "sha256": "6693d765dde05a08d4cdec88c731369507e0452f4061d057cd90b58e255b829d"
+  },
+  {
+    "path": "original-design/mockups/b-overview.html",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/mockups/b-overview.html",
+    "sha256": "30492fec0ee291e0ebb91d1322620b4113c3d7d820cc8efd83f8b41593d023dd"
+  },
+  {
+    "path": "original-design/mockups/b-swarm.html",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/mockups/b-swarm.html",
+    "sha256": "eb0ae28e1820f3231ad3bca2b7e9042d01ad44edec9cbc38be75c613d2395a10"
+  },
+  {
+    "path": "original-design/mockups/c-inline.html",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/mockups/c-inline.html",
+    "sha256": "1ae4ffee9e3d050bea794a0535d29c19cf445ad4e10742252552799c21e0645a"
+  },
+  {
+    "path": "original-design/mockups/c-inspect.html",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/mockups/c-inspect.html",
+    "sha256": "ceddde33437a739b959b7e57ab9071b49e7b97d0957c00b0f371f72f93452212"
+  },
+  {
+    "path": "original-design/mockups/c-mobile.html",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/mockups/c-mobile.html",
+    "sha256": "fbb35653a5f76e37569831c883122e4c4ce01638189bffdc387189835f553174"
+  },
+  {
+    "path": "original-design/mockups/c-overview.html",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/mockups/c-overview.html",
+    "sha256": "a422599bcdf24c569be222b74baa3515d64687babe4c22458ee20a77f562816a"
+  },
+  {
+    "path": "original-design/mockups/c-swarm.html",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/mockups/c-swarm.html",
+    "sha256": "20585a1d3aa28dda8fff18dfb6bafad522b406eeccfc15059717cbacd9a4a06d"
+  },
+  {
+    "path": "original-design/shots/a-inline.png",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/a-inline.png",
+    "sha256": "ae67fcecc3f1e42cc3da7d3fb65e5b1c70029a7283f24e4cd3f6ed0bd3f29593"
+  },
+  {
+    "path": "original-design/shots/a-inspect.png",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/a-inspect.png",
+    "sha256": "eb2a4d3ccc7050641189f86c94b4d021fd9848639d81eee109c38edc5171ded8"
+  },
+  {
+    "path": "original-design/shots/a-mobile.png",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/a-mobile.png",
+    "sha256": "7d0eb20a51d6e7311a8241be26f2ac2620eba40659e18d27004d2eabbafd5930"
+  },
+  {
+    "path": "original-design/shots/a-overview.png",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/a-overview.png",
+    "sha256": "df9289910b506281a1152c97ef9c06e18b66b82bee4ef39c05686dc97ea3290c"
+  },
+  {
+    "path": "original-design/shots/a-swarm.png",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/a-swarm.png",
+    "sha256": "6b54e6695d3f91c18d8c49eef267843400885a085592e031adba234a4a4188bb"
+  },
+  {
+    "path": "original-design/shots/b-inline.png",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/b-inline.png",
+    "sha256": "678c463288ca42b6c4f711106665d02cf9b3c8d7d81abc0c1f2710004db7ca29"
+  },
+  {
+    "path": "original-design/shots/b-inspect.png",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/b-inspect.png",
+    "sha256": "62153ff696682e2d7327fe4c7752021cafe30ffa4f5be738c29ba7738dd452f1"
+  },
+  {
+    "path": "original-design/shots/b-mobile.png",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/b-mobile.png",
+    "sha256": "0439714db36e3b8a2ae6721215f7cd370af0aed8add272b26bd7cbb26095832c"
+  },
+  {
+    "path": "original-design/shots/b-overview.png",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/b-overview.png",
+    "sha256": "b6d886fe5c1751674f443976a31ac17d4784e507ec707fd831125cb70242d7ff"
+  },
+  {
+    "path": "original-design/shots/b-swarm.png",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/b-swarm.png",
+    "sha256": "5234233b561024e38eee6a2c9eac4d819f8447ef74a5290e9db8d37f10f08261"
+  },
+  {
+    "path": "original-design/shots/c-inline.png",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/c-inline.png",
+    "sha256": "8f8874406e3ed1a41f2359ed57686a7b212eb63cd91fab06ca8d2776c26a39a8"
+  },
+  {
+    "path": "original-design/shots/c-inspect.png",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/c-inspect.png",
+    "sha256": "44bd7b41656c9603b81ec6fdd11cc5a875944cd8c1dda175e34a59be5f18a954"
+  },
+  {
+    "path": "original-design/shots/c-mobile.png",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/c-mobile.png",
+    "sha256": "ee5b6ca851e6d39bbfd8c72191ac18db180baf98be7c7ce19a8aa629137d055d"
+  },
+  {
+    "path": "original-design/shots/c-overview.png",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/c-overview.png",
+    "sha256": "4f3adf648f14df22f553d3740d1627d9db3dc5571fdba511154cdc0ccdda4a02"
+  },
+  {
+    "path": "original-design/shots/c-swarm.png",
+    "source": "/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/c-swarm.png",
+    "sha256": "dbdf12cdcbfc20c12f59abf077e8b8a4dce7c4d27b14fc3b76e7433f3351d047"
+  },
+  {
+    "path": "ux-review-2026-10-14.md",
+    "source": "/home/kdlocpanda/.cache/luna-factory-briefs/ux-review-2026-10-14.md",
+    "sha256": "5532456b2777f4ceecec0730c5e2dea25654e0317b94b677eee4bdf5f1cc064b"
+  },
+  {
+    "path": "ux-slice-brief.md",
+    "source": "/home/kdlocpanda/.cache/luna-factory-briefs/ux-slice-brief.md",
+    "sha256": "f6f6822393ae654272a2ba1707f18cfca22746f14df5bc2ceb3c3cba91694995"
+  },
+  {
+    "path": "gate-task.md",
+    "source": "/home/kdlocpanda/.cache/luna-factory-briefs/gate-task.md",
+    "sha256": "b165b842b98416c02d0bc92a13507ec1cedc5751beacf3eb7825e194d25360c8"
+  },
+  {
+    "path": "github-repos-contract.md",
+    "source": "/home/kdlocpanda/.cache/luna-factory-briefs/github-repos-contract.md",
+    "sha256": "06ba3d317969718bbc18bbbabc960906a959980a13e819094017570968fdea79"
+  },
+  {
+    "path": "lf-brief-v2.md",
+    "source": "/home/kdlocpanda/.cache/luna-factory-briefs/lf-brief-v2.md",
+    "sha256": "767492b0c8ddafc8c1f14078e638b73c796f814448698321c24977920a3ae01b"
+  }
+]

@@ -1,0 +1,189 @@
+Diff in /work/plugins/luna-factory/server/src/native.rs:144:
+         return Err(anyhow!(crate::qualification::PROVIDER_MISMATCH));
+     }
+     let read_hash = |direct: &[&str], nested: Option<(&str, &[&str])>| -> Result<Option<String>> {
+-        let value = direct
+-            .iter()
+-            .find_map(|key| info.get(*key))
+-            .or_else(|| nested.and_then(|(object, keys)| info.get(object).and_then(|v| keys.iter().find_map(|key| v.get(*key)))));
++        let value = direct.iter().find_map(|key| info.get(*key)).or_else(|| {
++            nested.and_then(|(object, keys)| {
++                info.get(object)
++                    .and_then(|v| keys.iter().find_map(|key| v.get(*key)))
++            })
++        });
+         match value {
+             None | Some(Value::Null) => Ok(None),
+             Some(Value::String(value))
+Diff in /work/plugins/luna-factory/server/src/native.rs:154:
+-                if !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control) =>
++                if !value.is_empty()
++                    && value.len() <= 512
++                    && !value.chars().any(char::is_control) =>
+             {
+                 Ok(Some(value.clone()))
+             }
+Diff in /work/plugins/luna-factory/server/src/native.rs:158:
+             Some(_) => Err(anyhow!(crate::qualification::PROVIDER_MISMATCH)),
+         }
+     };
+-    let build_hash = read_hash(&["buildHash", "build_hash"], Some(("buildInfo", &["hash", "sha256"])))?;
+-    let binary_hash = read_hash(&["binaryHash", "binary_hash"], Some(("binary", &["hash", "sha256"])))?;
++    let build_hash = read_hash(
++        &["buildHash", "build_hash"],
++        Some(("buildInfo", &["hash", "sha256"])),
++    )?;
++    let binary_hash = read_hash(
++        &["binaryHash", "binary_hash"],
++        Some(("binary", &["hash", "sha256"])),
++    )?;
+     Ok(Some(crate::qualification::NativeServerIdentity {
+         name: name.to_owned(),
+         version: version.to_owned(),
+Diff in /work/plugins/luna-factory/server/src/qualification.rs:104:
+     fn qualification_time_before_epoch_is_not_coerced_to_zero() {
+         let before_epoch = UNIX_EPOCH - std::time::Duration::from_secs(1);
+         assert_eq!(
+-            qualification_timestamp(before_epoch).unwrap_err().to_string(),
++            qualification_timestamp(before_epoch)
++                .unwrap_err()
++                .to_string(),
+             CLOCK_SKEW
+         );
+     }
+Diff in /work/plugins/luna-factory/server/src/qualification.rs:491:
+ }
+ 
+ fn qualification_timestamp(time: SystemTime) -> Result<u64> {
+-    time
+-        .duration_since(UNIX_EPOCH)
++    time.duration_since(UNIX_EPOCH)
+         .map(|duration| duration.as_secs())
+         .map_err(|_| anyhow::anyhow!(CLOCK_SKEW))
+ }
+Diff in /work/plugins/luna-factory/server/tests/../src/native.rs:144:
+         return Err(anyhow!(crate::qualification::PROVIDER_MISMATCH));
+     }
+     let read_hash = |direct: &[&str], nested: Option<(&str, &[&str])>| -> Result<Option<String>> {
+-        let value = direct
+-            .iter()
+-            .find_map(|key| info.get(*key))
+-            .or_else(|| nested.and_then(|(object, keys)| info.get(object).and_then(|v| keys.iter().find_map(|key| v.get(*key)))));
++        let value = direct.iter().find_map(|key| info.get(*key)).or_else(|| {
++            nested.and_then(|(object, keys)| {
++                info.get(object)
++                    .and_then(|v| keys.iter().find_map(|key| v.get(*key)))
++            })
++        });
+         match value {
+             None | Some(Value::Null) => Ok(None),
+             Some(Value::String(value))
+Diff in /work/plugins/luna-factory/server/tests/../src/native.rs:154:
+-                if !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control) =>
++                if !value.is_empty()
++                    && value.len() <= 512
++                    && !value.chars().any(char::is_control) =>
+             {
+                 Ok(Some(value.clone()))
+             }
+Diff in /work/plugins/luna-factory/server/tests/../src/native.rs:158:
+             Some(_) => Err(anyhow!(crate::qualification::PROVIDER_MISMATCH)),
+         }
+     };
+-    let build_hash = read_hash(&["buildHash", "build_hash"], Some(("buildInfo", &["hash", "sha256"])))?;
+-    let binary_hash = read_hash(&["binaryHash", "binary_hash"], Some(("binary", &["hash", "sha256"])))?;
++    let build_hash = read_hash(
++        &["buildHash", "build_hash"],
++        Some(("buildInfo", &["hash", "sha256"])),
++    )?;
++    let binary_hash = read_hash(
++        &["binaryHash", "binary_hash"],
++        Some(("binary", &["hash", "sha256"])),
++    )?;
+     Ok(Some(crate::qualification::NativeServerIdentity {
+         name: name.to_owned(),
+         version: version.to_owned(),
+Diff in /work/plugins/luna-factory/server/tests/../src/native.rs:144:
+         return Err(anyhow!(crate::qualification::PROVIDER_MISMATCH));
+     }
+     let read_hash = |direct: &[&str], nested: Option<(&str, &[&str])>| -> Result<Option<String>> {
+-        let value = direct
+-            .iter()
+-            .find_map(|key| info.get(*key))
+-            .or_else(|| nested.and_then(|(object, keys)| info.get(object).and_then(|v| keys.iter().find_map(|key| v.get(*key)))));
++        let value = direct.iter().find_map(|key| info.get(*key)).or_else(|| {
++            nested.and_then(|(object, keys)| {
++                info.get(object)
++                    .and_then(|v| keys.iter().find_map(|key| v.get(*key)))
++            })
++        });
+         match value {
+             None | Some(Value::Null) => Ok(None),
+             Some(Value::String(value))
+Diff in /work/plugins/luna-factory/server/tests/../src/native.rs:154:
+-                if !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control) =>
++                if !value.is_empty()
++                    && value.len() <= 512
++                    && !value.chars().any(char::is_control) =>
+             {
+                 Ok(Some(value.clone()))
+             }
+Diff in /work/plugins/luna-factory/server/tests/../src/native.rs:158:
+             Some(_) => Err(anyhow!(crate::qualification::PROVIDER_MISMATCH)),
+         }
+     };
+-    let build_hash = read_hash(&["buildHash", "build_hash"], Some(("buildInfo", &["hash", "sha256"])))?;
+-    let binary_hash = read_hash(&["binaryHash", "binary_hash"], Some(("binary", &["hash", "sha256"])))?;
++    let build_hash = read_hash(
++        &["buildHash", "build_hash"],
++        Some(("buildInfo", &["hash", "sha256"])),
++    )?;
++    let binary_hash = read_hash(
++        &["binaryHash", "binary_hash"],
++        Some(("binary", &["hash", "sha256"])),
++    )?;
+     Ok(Some(crate::qualification::NativeServerIdentity {
+         name: name.to_owned(),
+         version: version.to_owned(),
+Diff in /work/plugins/luna-factory/server/tests/../src/native.rs:144:
+         return Err(anyhow!(crate::qualification::PROVIDER_MISMATCH));
+     }
+     let read_hash = |direct: &[&str], nested: Option<(&str, &[&str])>| -> Result<Option<String>> {
+-        let value = direct
+-            .iter()
+-            .find_map(|key| info.get(*key))
+-            .or_else(|| nested.and_then(|(object, keys)| info.get(object).and_then(|v| keys.iter().find_map(|key| v.get(*key)))));
++        let value = direct.iter().find_map(|key| info.get(*key)).or_else(|| {
++            nested.and_then(|(object, keys)| {
++                info.get(object)
++                    .and_then(|v| keys.iter().find_map(|key| v.get(*key)))
++            })
++        });
+         match value {
+             None | Some(Value::Null) => Ok(None),
+             Some(Value::String(value))
+Diff in /work/plugins/luna-factory/server/tests/../src/native.rs:154:
+-                if !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control) =>
++                if !value.is_empty()
++                    && value.len() <= 512
++                    && !value.chars().any(char::is_control) =>
+             {
+                 Ok(Some(value.clone()))
+             }
+Diff in /work/plugins/luna-factory/server/tests/../src/native.rs:158:
+             Some(_) => Err(anyhow!(crate::qualification::PROVIDER_MISMATCH)),
+         }
+     };
+-    let build_hash = read_hash(&["buildHash", "build_hash"], Some(("buildInfo", &["hash", "sha256"])))?;
+-    let binary_hash = read_hash(&["binaryHash", "binary_hash"], Some(("binary", &["hash", "sha256"])))?;
++    let build_hash = read_hash(
++        &["buildHash", "build_hash"],
++        Some(("buildInfo", &["hash", "sha256"])),
++    )?;
++    let binary_hash = read_hash(
++        &["binaryHash", "binary_hash"],
++        Some(("binary", &["hash", "sha256"])),
++    )?;
+     Ok(Some(crate::qualification::NativeServerIdentity {
+         name: name.to_owned(),
+         version: version.to_owned(),

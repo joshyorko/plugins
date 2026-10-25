@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Luna Factory · A Flight Recorder · Inline card</title>
+<style>
+  :root{
+    --bg:#FFFFFF; --s1:#F9F9F9; --hair:rgba(0,0,0,.08); --hair2:rgba(0,0,0,.14);
+    --tx:#0D0D0D; --tx2:#5D5D5D; --tx3:#6E6E6E;
+    --merged:#2F8257; --work:#2F6FC4; --repair:#8F7400; --you:#C93A62; --wait:#9A9A9A;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+    --span:30; --t0:104;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:760px;height:560px;overflow:hidden;background:var(--bg);color:var(--tx);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+  .mono{font-family:var(--mono)}
+  svg.g{width:11px;height:11px;display:block;overflow:visible}
+  .thread{width:680px;margin:0 auto;padding-top:18px}
+  .user{display:flex;justify-content:flex-end}
+  .user div{background:#F4F4F4;border-radius:18px;padding:9px 16px;max-width:470px;font-size:14px}
+  .asst{margin-top:14px;font-size:14px;display:flex;gap:10px;align-items:flex-start}
+  .card{margin-top:12px;border:1px solid var(--hair2);border-radius:16px;padding:14px 16px 14px;background:#fff}
+  .ch{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--tx2)}
+  .ch .l{display:flex;align-items:center;gap:7px}
+  .appicon{width:18px;height:18px;border-radius:5px;background:#ECECEC;display:grid;place-items:center}
+  .fresh{font-family:var(--mono);font-size:11px;color:var(--tx3);display:flex;align-items:center;gap:6px}
+  .fresh i{width:6px;height:6px;border-radius:50%;background:var(--work);display:block}
+  h3{font-size:15px;font-weight:600;margin-top:8px;line-height:1.3}
+  h3 .mono{color:var(--tx2);font-weight:500;margin-right:5px}
+  .sub{font-size:12px;color:var(--tx2);margin-top:2px}
+  /* lane thumbnail */
+  .thumb{margin-top:12px;border:1px solid var(--hair);border-radius:10px;padding:6px 12px 6px 0;position:relative;background:var(--s1)}
+  .ov{position:absolute;left:112px;right:108px;top:0;bottom:0;pointer-events:none}
+  .grid{position:absolute;top:0;bottom:20px;width:1px;background:var(--hair);left:calc((var(--t) - var(--t0))*100%/var(--span))}
+  .nowl{position:absolute;top:4px;bottom:20px;right:0;width:1px;background:#0D0D0D}
+  .row{display:flex;align-items:center;height:22px}
+  .lab{width:112px;flex:none;padding-left:12px;font-size:12px;font-weight:600;white-space:nowrap}
+  .lab span{font-weight:400;color:var(--tx3);font-size:11px;font-family:var(--mono);margin-left:4px}
+  .trk{flex:1;position:relative;height:22px}
+  .st{width:96px;flex:none;font-size:11px;color:var(--tx2);padding-left:8px;white-space:nowrap}
+  .seg{position:absolute;top:5px;height:12px;border-radius:2px;left:calc((var(--s) - var(--t0))*100%/var(--span));width:calc((var(--e) - var(--s))*100%/var(--span));
+       border:1px solid var(--c);background:color-mix(in srgb,var(--c) 18%,#fff)}
+  .seg::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--c)}
+  .seg.h{background:#fff}
+  .seg.cut::before{display:none}
+  .tk{position:absolute;top:5.5px;left:calc((var(--t) - var(--t0))*100%/var(--span));transform:translateX(-50%);color:#1a1a1a}
+  .dot{position:absolute;top:11px;height:0;border-top:1px dashed rgba(0,0,0,.3);left:calc((var(--s) - var(--t0))*100%/var(--span));width:calc((var(--e) - var(--s))*100%/var(--span))}
+  .axis{display:flex;height:18px;align-items:flex-end}
+  .axis .trk{height:14px}
+  .axis .trk span{position:absolute;top:0;white-space:nowrap;font-family:var(--mono);font-size:10px;color:var(--tx3);transform:translateX(-50%);left:calc((var(--t) - var(--t0))*100%/var(--span))}
+  .status{font-size:13.5px;margin-top:12px;line-height:1.45}
+  .need{margin-top:10px;display:flex;align-items:center;gap:8px;font-size:13px;border-top:1px solid var(--hair);padding-top:10px}
+  .need b{font-weight:600}
+  code{font-family:var(--mono);font-size:12px;background:rgba(0,0,0,.05);padding:0 4px;border-radius:4px}
+  .foot{display:flex;justify-content:space-between;align-items:center;margin-top:12px}
+  .btn{font:inherit;font-size:13.5px;font-weight:500;border-radius:18px;padding:7px 15px;border:0;background:#0D0D0D;color:#fff;display:flex;gap:7px;align-items:center}
+  .foot .note{font-size:11.5px;color:var(--tx3)}
+  .composer{position:absolute;left:40px;right:40px;bottom:12px;height:46px;border-radius:26px;border:1px solid var(--hair2);display:flex;align-items:center;gap:10px;padding:0 8px 0 14px;box-shadow:0 2px 8px rgba(0,0,0,.05);background:#fff}
+  .composer .ph{flex:1;color:#8F8F8F;font-size:14.5px}
+  .send{width:32px;height:32px;border-radius:50%;background:#D7D7D7;display:grid;place-items:center}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="g-commit" viewBox="0 0 12 12"><circle cx="6" cy="6" r="2.8" fill="currentColor"/></symbol>
+    <symbol id="g-pr" viewBox="0 0 12 12"><path d="M3 11V1.2M3 1.6h6.2L7.6 3.9l1.6 2.3H3" fill="#fff" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
+    <symbol id="g-ok" viewBox="0 0 12 12"><path d="M2.2 6.3l2.5 2.5 5.1-5.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="g-fail" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.9" fill="#fff" stroke="currentColor" stroke-width="1.3"/><path d="M4.1 4.1l3.8 3.8M7.9 4.1L4.1 7.9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="g-tests" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.9" fill="#fff" stroke="currentColor" stroke-width="1.3"/><path d="M6 1.1A4.9 4.9 0 0 1 6 10.9z" fill="currentColor"/></symbol>
+    <symbol id="g-decide" viewBox="0 0 12 12"><path d="M6 .4L11.6 6 6 11.6.4 6z" fill="#C93A62"/><path d="M6 3.2v3.3" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><circle cx="6" cy="8.4" r=".85" fill="#fff"/></symbol>
+  </defs>
+</svg>
+
+<div class="thread">
+  <div class="user"><div>Use Luna Factory to finish the issue graph in joshyorko/actions. Parent issue #101. YOLO it.</div></div>
+
+  <div class="asst">
+    <div>Luna is working on campaign #101 with 4 workers. Here’s where it stands:</div>
+  </div>
+
+  <div class="card">
+    <div class="ch">
+      <span class="l"><span class="appicon"><svg width="11" height="11" viewBox="0 0 14 14"><path d="M9.8 1.6A5.6 5.6 0 1 0 12.4 9 4.6 4.6 0 0 1 9.8 1.6z" fill="none" stroke="#0D0D0D" stroke-width="1.6"/></svg></span>Luna Factory · <span class="mono" style="font-size:11.5px">joshyorko/actions</span></span>
+      <span class="fresh"><i></i>updated 14:06</span>
+    </div>
+    <h3><span class="mono">#101</span>Actions v2: uv packaging and cross-platform CI</h3>
+    <div class="sub">Active 2h 14m of 6h · 3 of 13 merged · finish: open PRs</div>
+
+    <div class="thumb">
+      <div class="ov">
+        <div class="grid" style="--t:109"></div><div class="grid" style="--t:114"></div><div class="grid" style="--t:119"></div><div class="grid" style="--t:124"></div><div class="grid" style="--t:129"></div>
+        <div class="nowl"></div>
+      </div>
+      <div class="row"><div class="lab" style="color:var(--tx2)">Worker 1 <span>idle</span></div>
+        <div class="trk">
+          <div class="seg h" style="--s:104;--e:110;--c:var(--merged)"></div>
+          <div class="tk" style="--t:109.5"><svg class="g"><use href="#g-pr"/></svg></div>
+          <div class="dot" style="--s:110;--e:134"></div>
+          <div class="tk" style="--t:127"><svg class="g" style="color:var(--merged)"><use href="#g-ok"/></svg></div>
+        </div><div class="st">PR #147 ready</div></div>
+      <div class="row"><div class="lab">Worker 2 <span>#106</span></div>
+        <div class="trk">
+          <div class="seg cut" style="--s:104;--e:134;--c:var(--work)"></div>
+          <div class="tk" style="--t:117"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:132"><svg class="g"><use href="#g-tests"/></svg></div>
+        </div><div class="st">12/14 tests</div></div>
+      <div class="row"><div class="lab">Worker 3 <span>#107</span></div>
+        <div class="trk">
+          <div class="seg cut" style="--s:104;--e:134;--c:var(--work)"></div>
+          <div class="tk" style="--t:108"><svg class="g"><use href="#g-pr"/></svg></div>
+          <div class="tk" style="--t:123"><svg class="g"><use href="#g-commit"/></svg></div>
+        </div><div class="st">draft #149</div></div>
+      <div class="row"><div class="lab">Worker 4 <span>#109</span></div>
+        <div class="trk">
+          <div class="seg cut" style="--s:104;--e:134;--c:var(--repair)"></div>
+          <div class="tk" style="--t:106"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:118"><svg class="g"><use href="#g-pr"/></svg></div>
+          <div class="tk" style="--t:128"><svg class="g"><use href="#g-ok"/></svg></div>
+          <div class="tk" style="--t:133"><svg class="g"><use href="#g-fail"/></svg></div>
+        </div><div class="st">repair 1 of 2</div></div>
+      <div class="axis"><div class="lab" style="font-weight:400;font-size:10px;color:var(--tx3);font-family:var(--mono)">last 30 min</div>
+        <div class="trk"><span style="--t:104;transform:none">13:36</span><span style="--t:119">13:51</span><span style="--t:134;transform:translateX(-100%)">now 14:06</span></div><div class="st"></div></div>
+    </div>
+
+    <div class="status">3 workers active · Worker 4 is repairing a Windows check · PR #147 is ready for review.</div>
+    <div class="need"><svg class="g" style="width:13px;height:13px"><use href="#g-decide"/></svg><span><b>Needs you: 1</b> · #113 wants <code>id-token: write</code> in the protected <code>release.yml</code></span></div>
+    <div class="foot">
+      <button class="btn">Open mission control <svg width="12" height="12" viewBox="0 0 12 12"><path d="M4.5 2.5h5v5M9.5 2.5L3 9" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <span class="note">Luna is handling #108 (retry 14:30)</span>
+    </div>
+  </div>
+</div>
+
+<div class="composer">
+  <svg width="20" height="20" viewBox="0 0 20 20"><path d="M10 4v12M4 10h12" stroke="#5D5D5D" stroke-width="1.6" stroke-linecap="round"/></svg>
+  <div class="ph">Ask anything</div>
+  <svg width="20" height="20" viewBox="0 0 20 20"><rect x="7.2" y="3" width="5.6" height="9.5" rx="2.8" fill="none" stroke="#5D5D5D" stroke-width="1.5"/><path d="M4.8 9.5a5.2 5.2 0 0 0 10.4 0M10 14.8V17" fill="none" stroke="#5D5D5D" stroke-width="1.5" stroke-linecap="round"/></svg>
+  <div class="send"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 13V3.5M4 7.2L8 3.2l4 4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+</div>
+</body>
+</html>

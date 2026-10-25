@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Luna Factory · Dispatch · Mobile</title>
+<meta name="viewport" content="width=390">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#FFFFFF;--surf:#F7F7F8;--hair:rgba(0,0,0,.08);--hair2:rgba(0,0,0,.14);
+--ink:#0D0D0D;--ink2:#3D3D3D;--muted:#666666;--faint:#8F8F8F;
+--teal:#0B6B6B;--teal-t:#E6F2F1;--green:#2E7A47;--green-t:#E8F3EC;--amber:#9A5A00;--amber-t:#FBF1E1;--coral:#C2412D;--coral-t:#FCEDEA}
+html,body{width:390px;height:844px;overflow:hidden;background:var(--bg)}
+body{font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;color:var(--ink);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;font-size:14px;line-height:1.45;position:relative}
+.mono{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:.92em}
+.num{font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)} .ink2{color:var(--ink2)}
+a{color:inherit;text-decoration:none}
+svg{display:inline-block;vertical-align:middle;flex:none}
+.ico{display:inline-flex;width:16px;height:16px;align-items:center;justify-content:center;flex:none}
+/* ChatGPT chrome */
+.gpt-bar{position:absolute;left:0;right:0;top:0;height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 16px 0 18px;background:#fff;border-bottom:1px solid var(--hair);z-index:5}
+.gpt-app{display:flex;align-items:center;gap:10px;font-weight:600;font-size:15px}
+.gpt-appicon{width:26px;height:26px;border-radius:7px;background:#0D0D0D;display:flex;align-items:center;justify-content:center}
+.gpt-x{width:36px;height:36px;border-radius:18px;display:flex;align-items:center;justify-content:center;color:#5D5D5D}
+.gpt-dock{position:absolute;left:0;right:0;bottom:0;background:#fff;padding:10px 0 18px;z-index:5}
+.gpt-composer{width:768px;margin:0 auto;background:#fff;border:1px solid rgba(0,0,0,.12);border-radius:28px;box-shadow:0 4px 16px rgba(0,0,0,.06);padding:10px 10px 10px 12px}
+.gpt-row{display:flex;align-items:center;gap:10px}
+.gpt-ph{flex:1;color:#8F8F8F;font-size:15px}
+.gpt-btn{width:36px;height:36px;border-radius:18px;display:flex;align-items:center;justify-content:center;color:#5D5D5D}
+.gpt-send{background:#0D0D0D;color:#fff}
+.gpt-chip{display:inline-flex;align-items:center;gap:7px;background:var(--surf);border:1px solid var(--hair);border-radius:10px;padding:5px 8px 5px 9px;font-size:13px;font-weight:500;margin:0 0 8px 4px;color:var(--ink)}
+.gpt-sugg{width:768px;margin:0 auto 10px;display:flex;gap:8px}
+.gpt-sugg span{border:1px solid rgba(0,0,0,.12);border-radius:18px;padding:7px 13px;font-size:13.5px;color:var(--ink2);background:#fff}
+.gpt-foot{text-align:center;font-size:11.5px;color:var(--faint);margin-top:8px}
+/* typography + primitives */
+.kicker{font-size:12px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.sec{display:flex;align-items:baseline;justify-content:space-between;gap:12px;border-top:1px solid var(--ink);padding-top:9px}
+.sec h2{font-size:13px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;display:flex;align-items:center;gap:7px}
+.sec .aside{font-size:12.5px;color:var(--muted)}
+.mono-w{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:20px;padding:0 5px;border-radius:10px;border:1px solid var(--hair2);font-size:10.5px;font-weight:700;letter-spacing:.02em;color:var(--ink);background:#fff;line-height:1}
+.mono-w.luna{background:var(--ink);color:#fff;border-color:var(--ink)}
+.mono-w.sub{border-style:dashed}
+.btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px;border-radius:17px;font-size:13.5px;font-weight:600;border:1px solid rgba(0,0,0,.16);background:#fff;color:var(--ink);white-space:nowrap}
+.btn.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+.btn.ghost{border-color:transparent;background:transparent;padding:0 8px;text-decoration:underline;text-underline-offset:3px;text-decoration-color:rgba(0,0,0,.25)}
+.ref{font-weight:650;color:var(--ink)}
+code,.code{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:.88em;background:var(--surf);border:1px solid var(--hair);border-radius:5px;padding:0 4px}
+.tag-need{color:var(--coral);font-weight:700}
+
+.sb{height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 26px 0 32px;font-size:15px;font-weight:600}
+.mbar{height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 10px 0 16px;border-bottom:1px solid var(--hair)}
+.mapp{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px}
+.mapp i{width:24px;height:24px;border-radius:7px;background:#0D0D0D;display:inline-flex;align-items:center;justify-content:center}
+.mc{padding:12px 20px 0}
+.kick{font-size:12px;color:var(--muted);display:flex;justify-content:space-between}
+.kick b{color:var(--ink);font-weight:650}
+.sec{align-items:center;margin-top:12px}
+.sec.need{border-top:2px solid var(--coral)}
+.sec h2{font-size:12px}
+.need-h{color:var(--coral)}
+.q{font-size:18px;font-weight:750;line-height:1.27;letter-spacing:-.01em;margin:8px 0 5px}
+.q code{font-size:.78em;font-weight:600}
+.cons{font-size:13.5px;color:var(--ink2);line-height:1.42}
+.ob{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.ob .btn{justify-content:center;height:38px}
+.ob .full{grid-column:1/3}
+.micro{font-size:11.5px;color:var(--muted);display:flex;gap:6px;align-items:center;margin-top:7px}
+.mh{font-size:21px;line-height:1.18;font-weight:800;letter-spacing:-.018em;margin:8px 0 6px}
+.mh .soft{color:#6A6A6A}
+.cl{list-style:none}
+.cl li{display:grid;grid-template-columns:40px 20px 1fr;font-size:13.5px;padding:5px 0;border-top:1px solid var(--hair);color:var(--ink2);line-height:1.4}
+.cl li:first-child{border-top:0}
+.cl .t{color:var(--muted);font-size:12px;padding-top:1px}
+.cl .gl{padding-top:1px}
+.cl b{color:var(--ink);font-weight:650}
+.lg{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:5px}
+.lg b{display:block;color:var(--ink);font-size:14px;font-weight:750}
+.mdock{position:absolute;left:0;right:0;bottom:0;background:#fff;padding:8px 12px 26px}
+.mdock .gpt-composer{width:auto;padding:6px 6px 6px 8px}
+.mdock .gpt-ph{font-size:15px}
+.home{position:absolute;bottom:8px;left:50%;width:134px;height:5px;margin-left:-67px;border-radius:3px;background:#0D0D0D}
+</style></head>
+<body><div class="sb"><span>14:08</span><span style="display:flex;gap:6px;align-items:center"><svg width="18" height="11" viewBox="0 0 18 11"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="5" y="5" width="3" height="6" rx="1"/><rect x="10" y="2.5" width="3" height="8.5" rx="1"/><rect x="15" y="0" width="3" height="11" rx="1"/></svg><svg width="26" height="12" viewBox="0 0 26 12"><rect x=".5" y=".5" width="22" height="11" rx="3" fill="none" stroke="#0D0D0D" opacity=".4"/><rect x="2" y="2" width="16" height="8" rx="1.6"/><rect x="24" y="4" width="1.6" height="4" rx=".8" opacity=".4"/></svg></span></div>
+<div class="mbar"><div class="mapp"><i><svg width="14" height="14" viewBox="0 0 14 14"><path d="M10.8 2.2A6 6 0 1 0 13.8 10 4.8 4.8 0 0 1 10.8 2.2z" fill="#fff"/></svg></i>Luna Factory</div><div class="gpt-x"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg></div></div>
+<div class="mc">
+ <div class="kick"><b>#101 Actions v2</b><span>updated 14:08</span></div>
+ <div class="sec need"><h2 class="need-h"><svg width="12" height="12" viewBox="0 0 16 16"><rect x="3.2" y="3.2" width="9.6" height="9.6" rx="1.4" transform="rotate(45 8 8)" fill="#C2412D"/><rect x="7.1" y="4.6" width="1.8" height="4.4" rx=".9" fill="#fff"/><circle cx="8" cy="11" r="1" fill="#fff"/></svg> Needs you · 1</h2><span class="aside">13:30</span></div>
+ <div class="q">Can #113 add <code>id-token: write</code> to the protected <code>release.yml</code>?</div>
+ <div class="cons">If you skip it, publishing stays manual and #114 Release v2.0.0 can’t finish here.</div>
+ <div class="ob"><span class="btn primary full">Allow for this PR only</span><span class="btn">Skip #113</span><span class="btn">I’ll handle it</span></div>
+ <div class="micro"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M2.5 3.5h11v7.5H7l-3 2.5V11H2.5z"/></svg><span>Your choice is sent to ChatGPT as a message.</span></div>
+ <div class="sec"><h2>Since 13:10</h2><span class="aside">58 min ago</span></div>
+ <div class="mh">Wave 2 is half done. <span class="soft">One decision is holding the release path.</span></div>
+ <ol class="cl">
+  <li><span class="t">14:06</span><span class="gl"><svg width="14" height="14" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.6-3.7" fill="none" stroke="#9A5A00" stroke-width="1.8" stroke-linecap="round"/><path d="M12 1.8v3.1H8.9" fill="none" stroke="#9A5A00" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span>Worker 4 is repairing a Windows test failure on PR <b>#148</b>, 1 of 2.</span></li>
+  <li><span class="t">13:59</span><span class="gl"><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="#2E7A47" stroke-width="1.8"/><circle cx="8" cy="8" r="2.4" fill="#2E7A47"/></svg></span><span>PR <b>#147</b> passed 6/6 checks. Ready for your review.</span></li>
+  <li><span class="t">13:12</span><span class="gl"><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="#666" stroke-width="1.5"/><path d="M8 4.6V8l2.4 1.5" fill="none" stroke="#666" stroke-width="1.5" stroke-linecap="round"/></svg></span><span><b>#108</b> waits for a macos-14 runner. Retry 14:30.</span></li>
+ </ol>
+ <div class="sec"><h2>Flow · 13 issues</h2><span class="aside">3 merged</span></div>
+ <div style="margin-top:9px"><svg width="350" height="8" viewBox="0 0 350 8" aria-label="Flow: 4 waiting, 2 held, 3 in progress, 1 in review, 3 merged"><rect x="0.0" y="0" width="105.2" height="8" rx="2" fill="#BDBDBD"/><rect x="107.2" y="0" width="52.6" height="8" rx="2" fill="#8A8A8A"/><rect x="161.8" y="0" width="78.9" height="8" rx="2" fill="#0B6B6B"/><rect x="242.8" y="0" width="26.3" height="8" rx="2" fill="#5E9B73"/><rect x="271.1" y="0" width="78.9" height="8" rx="2" fill="#2E7A47"/></svg></div>
+ <div class="lg"><span><svg width="10" height="10" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="#8F8F8F" stroke-width="1.5" stroke-dasharray="2.4 2.2"/></svg> <b style="display:inline">4</b><br>Waiting</span><span><svg width="10" height="10" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="#666" stroke-width="1.5"/><path d="M8 4.6V8l2.4 1.5" fill="none" stroke="#666" stroke-width="1.5" stroke-linecap="round"/></svg> <b style="display:inline">2</b><br>Held</span><span><svg width="10" height="10" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="#0B6B6B" stroke-width="1.6" opacity=".35"/><circle cx="8" cy="8" r="3.6" fill="#0B6B6B"/></svg> <b style="display:inline">3</b><br>In progress</span><span><svg width="10" height="10" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="#2E7A47" stroke-width="1.8"/><circle cx="8" cy="8" r="2.4" fill="#2E7A47"/></svg> <b style="display:inline">1</b><br>In review</span><span><svg width="10" height="10" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#2E7A47"/><path d="M4.8 8.3l2.2 2.2 4.3-4.6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg> <b style="display:inline">3</b><br>Merged</span></div>
+</div>
+<div class="mdock"><div class="gpt-composer"><div class="gpt-row"><span class="gpt-btn"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg></span><span class="gpt-ph">Ask about this campaign…</span><span class="gpt-btn gpt-send"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 8v4M7.3 5.5v9M10.6 7v6M14 4.5v11M17 8.5v3"/></svg></span></div></div><div class="home"></div></div></body></html>
