@@ -17,6 +17,7 @@ SKILL_MODE="${AGENT_SKILLS_SKILL_MODE:-auto}"
 INSTALL_METHOD="${AGENT_SKILLS_INSTALL_METHOD:-auto}"
 REF_SPEC="${AGENT_SKILLS_REF:-}"
 FORCE=0
+RCC_TLDR_ARGS=()
 
 usage() {
   cat <<'EOF'
@@ -32,6 +33,8 @@ Options:
   --skill-mode MODE         auto (default), link, or copy
   --install-method MODE     auto (default), git, or archive
   --ref REF                 Release tag, branch, or commit to install
+  --with-rcc-tldr            Opt in to the managed RCC Tealdeer page
+  --rcc-tldr-mode MODE       auto, link, or copy; also opts in
   --force                   Replace conflicting skill entries
   -h, --help                Show this help message
 
@@ -93,6 +96,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --ref)
       REF_SPEC="$2"
+      shift 2
+      ;;
+    --with-rcc-tldr)
+      RCC_TLDR_ARGS+=(--with-rcc-tldr)
+      shift
+      ;;
+    --rcc-tldr-mode)
+      RCC_TLDR_ARGS+=(--rcc-tldr-mode "$2")
       shift 2
       ;;
     --link)
@@ -303,6 +314,7 @@ install_from_git() {
     --install-method git \
     --resolved-ref "${resolved_ref}" \
     --skip-repo-sync \
+    "${RCC_TLDR_ARGS[@]}" \
     $( [[ "$FORCE" -eq 1 ]] && printf '%s' '--force' )
 }
 
@@ -350,6 +362,7 @@ install_from_archive() {
     --install-method archive \
     --resolved-ref "${resolved_ref}" \
     --skip-repo-sync \
+    "${RCC_TLDR_ARGS[@]}" \
     $( [[ "$FORCE" -eq 1 ]] && printf '%s' '--force' )
 }
 

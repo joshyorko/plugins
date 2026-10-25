@@ -31,6 +31,7 @@ Use this skill when the task is about RCC itself rather than a specific RCC-back
 
 ## References
 
+- `references/tldr/README.md`: RCC quick reference and opt-in Tealdeer setup, synchronization, adoption, and uninstall with `scripts/tealdeer.py`.
 - `references/rcc-source-recipes.md`: RCC command map, source tree orientation, holotree/cache, endpoints, remote cache, and fork development recipes.
 - `references/environment-artifacts.md`: v18.19.7 identity, compatibility, publish/acquire/export/exec, archives, leases, lifecycle inspection/repair, GC, and warm reuse.
 - Quick recipes: [RCC health](references/rcc-source-recipes.md#recipe-rcc-health) and [Inspect Environment Artifact](references/environment-artifacts.md#recipe-inspect-environment-artifact).

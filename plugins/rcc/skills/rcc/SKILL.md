@@ -32,6 +32,7 @@ Load the owning specialist, then the linked recipe. These are entry points into 
 | "Inspect this Environment Artifact" | `$rcc-core`: [Inspect Environment Artifact](../rcc-core/references/environment-artifacts.md#recipe-inspect-environment-artifact) |
 | "Why did the CI cache or freeze stop working?" | `$rcc-ci-maintenance`: [CI/cache troubleshooting](../rcc-ci-maintenance/references/environment-artifact-ci.md#recipe-cicache-troubleshooting) |
 | "Give me the TLDR for RCC" | `$rcc-core`: [human page and optional Tealdeer setup](../rcc-core/references/tldr/README.md) |
+| "Enable or remove tldr rcc" | `$rcc-core`: [managed daily use](../rcc-core/references/tldr/README.md#managed-daily-use) |
 
 ## Router rules
 
