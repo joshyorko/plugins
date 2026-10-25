@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Luna Factory · A Flight Recorder · Mobile</title>
+<style>
+  :root{
+    --bg:#212121; --s1:#2A2A2A; --s2:#303030; --hair:rgba(255,255,255,.08); --hair2:rgba(255,255,255,.14);
+    --tx:#ECECEC; --tx2:#B4B4B4; --tx3:#9A9A9A;
+    --merged:#44A06D; --work:#4A88D8; --repair:#B08A1E; --block:#8F8F8F; --you:#E0607A; --wait:#6B6B6B;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+    --span:60; --t0:74;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:390px;height:844px;overflow:hidden;background:var(--bg);color:var(--tx);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;font-size:13px;line-height:1.35;-webkit-font-smoothing:antialiased}
+  .mono{font-family:var(--mono)}
+  svg.g{width:11px;height:11px;display:block;overflow:visible}
+  .sb{height:44px;display:flex;justify-content:space-between;align-items:center;padding:0 26px 0 32px;font-weight:600;font-size:15px}
+  .tb{height:46px;display:flex;justify-content:space-between;align-items:center;padding:0 10px;border-bottom:1px solid var(--hair)}
+  .tb .nm{display:flex;align-items:center;gap:8px;font-weight:600;font-size:15px}
+  .appicon{width:22px;height:22px;border-radius:6px;background:#3A3A3A;display:grid;place-items:center}
+  .ib{width:36px;height:36px;display:grid;place-items:center}
+  .main{padding:12px 16px 0}
+  .crumb{font-family:var(--mono);font-size:11px;color:var(--tx3);display:flex;justify-content:space-between}
+  .crumb .f{display:flex;gap:5px;align-items:center}
+  .crumb .f i{width:6px;height:6px;border-radius:50%;background:var(--work);display:block}
+  h1{font-size:16.5px;font-weight:600;margin-top:4px;line-height:1.28}
+  h1 .mono{color:var(--tx2);font-weight:500;margin-right:5px}
+  .meta{font-size:12px;color:var(--tx2);margin-top:3px}
+
+  .pin{margin-top:12px;border:1px solid var(--hair2);border-radius:12px;background:var(--s1);padding:11px 12px 12px 14px;position:relative}
+  .pin::before{content:"";position:absolute;left:-1px;top:-1px;bottom:-1px;width:3px;border-radius:12px 0 0 12px;background:var(--you)}
+  .pin .k{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--tx2)}
+  .pin .k span:first-child{display:flex;gap:6px;align-items:center;font-weight:600;color:var(--tx);font-size:12px}
+  .pin .t{font-size:13px;margin-top:6px;line-height:1.4}
+  code{font-family:var(--mono);font-size:11.5px;background:rgba(255,255,255,.07);padding:0 3px;border-radius:3px}
+  .acts{display:flex;gap:6px;margin-top:10px}
+  .btn{font:inherit;font-size:12.5px;font-weight:500;border-radius:16px;padding:6px 11px;border:1px solid var(--hair2);background:transparent;color:var(--tx);white-space:nowrap}
+
+  .spine{margin-top:14px}
+  .bar{display:flex;gap:2px;height:7px}
+  .bar span{display:block;border-radius:2px}
+  .hatch{background:repeating-linear-gradient(135deg,#8F8F8F 0 2px,#4a4a4a 2px 5px)}
+  .sl{font-size:11.5px;color:var(--tx2);margin-top:6px;display:flex;flex-wrap:wrap;gap:2px 10px}
+  .sl b{font-family:var(--mono);color:var(--tx);font-weight:600;margin-right:3px}
+
+  .agents{margin-top:12px;border:1px solid var(--hair);border-radius:12px;position:relative}
+  .ah{display:flex;justify-content:space-between;padding:7px 12px 5px;font-family:var(--mono);font-size:10px;color:var(--tx3);border-bottom:1px solid var(--hair)}
+  .ag{display:grid;grid-template-columns:118px 1fr 30px;gap:10px;align-items:center;padding:6px 12px;border-bottom:1px solid var(--hair);min-height:42px}
+  .ag:last-child{border-bottom:0}
+  .ag .n{font-weight:600;font-size:13px}
+  .ag .s{font-size:11px;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+  .ag .f{font-family:var(--mono);font-size:10.5px;color:var(--tx3);text-align:right}
+  .tr{position:relative;height:24px;border-right:1px solid #ECECEC}
+  .tr::before{content:"";position:absolute;left:0;right:0;top:50%;height:1px;background:var(--hair)}
+  .seg{position:absolute;top:7px;height:10px;border-radius:2px;left:calc((var(--s) - var(--t0))*100%/var(--span));width:calc((var(--e) - var(--s))*100%/var(--span));
+       border:1px solid var(--c);background:color-mix(in srgb,var(--c) 28%,#262626)}
+  .seg.hollow{background:#262626}
+  .seg.hb{background:repeating-linear-gradient(135deg,rgba(143,143,143,.6) 0 2px,#262626 2px 5px);border-color:#8F8F8F}
+  .tk{position:absolute;top:-3px;left:calc((var(--t) - var(--t0))*100%/var(--span));transform:translateX(-50%);color:#D6D6D6}
+  .dot{position:absolute;top:12px;height:0;border-top:1px dashed rgba(255,255,255,.3);left:calc((var(--s) - var(--t0))*100%/var(--span));width:calc((var(--e) - var(--s))*100%/var(--span))}
+  .hold{position:absolute;height:5px;border-radius:2px;left:calc((var(--s) - var(--t0))*100%/var(--span));width:calc((var(--e) - var(--s))*100%/var(--span))}
+  .ag.quiet .n,.ag.quiet .s{color:var(--tx3)}
+  .ag.sub{min-height:34px;padding-top:5px;padding-bottom:5px}
+
+  .handled{margin-top:12px;font-size:12px;color:var(--tx2);display:flex;flex-direction:column;gap:6px}
+  .handled div{display:flex;gap:7px;align-items:flex-start}
+  .handled svg{margin-top:2px;flex:none}
+  .handled b{color:var(--tx);font-weight:500}
+
+  .cz{position:absolute;left:0;right:0;bottom:0;height:96px;background:var(--bg);padding:8px 12px 0}
+  .composer{height:50px;border-radius:26px;background:var(--s2);border:1px solid var(--hair);display:flex;align-items:center;gap:10px;padding:0 8px 0 14px}
+  .composer .ph{flex:1;color:var(--tx3);font-size:15px;white-space:nowrap}
+  .send{width:34px;height:34px;border-radius:50%;background:#676767;display:grid;place-items:center}
+  .home{width:134px;height:5px;border-radius:3px;background:#ECECEC;margin:22px auto 0}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="g-commit" viewBox="0 0 12 12"><circle cx="6" cy="6" r="2.6" fill="currentColor"/></symbol>
+    <symbol id="g-pr" viewBox="0 0 12 12"><path d="M3 11V1.2M3 1.6h6.2L7.6 3.9l1.6 2.3H3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
+    <symbol id="g-ok" viewBox="0 0 12 12"><path d="M2.2 6.3l2.5 2.5 5.1-5.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="g-fail" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.9" fill="#212121" stroke="currentColor" stroke-width="1.3"/><path d="M4.1 4.1l3.8 3.8M7.9 4.1L4.1 7.9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="g-block" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.9" fill="#212121" stroke="currentColor" stroke-width="1.3"/><path d="M2.6 9.4l6.8-6.8" stroke="currentColor" stroke-width="1.3"/></symbol>
+    <symbol id="g-decide" viewBox="0 0 12 12"><path d="M6 .4L11.6 6 6 11.6.4 6z" fill="#E0607A"/><path d="M6 3.2v3.3" stroke="#171717" stroke-width="1.5" stroke-linecap="round"/><circle cx="6" cy="8.4" r=".85" fill="#171717"/></symbol>
+    <symbol id="g-retry" viewBox="0 0 12 12"><path d="M9.8 6.4A3.9 3.9 0 1 1 8.6 3.1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M9.6 .9v2.8H6.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="g-tests" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.9" fill="#212121" stroke="currentColor" stroke-width="1.3"/><path d="M6 1.1A4.9 4.9 0 0 1 6 10.9z" fill="currentColor"/></symbol>
+  </defs>
+</svg>
+
+<div class="sb"><span>14:06</span>
+  <svg width="68" height="12" viewBox="0 0 68 12"><g fill="#ECECEC"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="6" width="3" height="6" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></g>
+    <path d="M28 4.5a9 9 0 0 1 12 0M30.5 7a5.5 5.5 0 0 1 7 0" fill="none" stroke="#ECECEC" stroke-width="1.6" stroke-linecap="round"/><circle cx="34" cy="10" r="1.3" fill="#ECECEC"/>
+    <rect x="44" y="1" width="21" height="10" rx="3" fill="none" stroke="#9A9A9A"/><rect x="46" y="3" width="15" height="6" rx="1.5" fill="#ECECEC"/><rect x="66" y="4" width="1.6" height="4" rx=".8" fill="#9A9A9A"/></svg>
+</div>
+<div class="tb">
+  <div class="ib"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="#ECECEC" stroke-width="1.7" stroke-linecap="round"/></svg></div>
+  <div class="nm"><span class="appicon"><svg width="13" height="13" viewBox="0 0 14 14"><path d="M9.8 1.6A5.6 5.6 0 1 0 12.4 9 4.6 4.6 0 0 1 9.8 1.6z" fill="none" stroke="#ECECEC" stroke-width="1.5"/></svg></span>Luna Factory</div>
+  <div class="ib"><svg width="16" height="16" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.3" fill="#B4B4B4"/><circle cx="8" cy="8" r="1.3" fill="#B4B4B4"/><circle cx="12.5" cy="8" r="1.3" fill="#B4B4B4"/></svg></div>
+</div>
+
+<div class="main">
+  <div class="crumb"><span>joshyorko/actions</span><span class="f"><i></i>updated 14:06</span></div>
+  <h1><span class="mono">#101</span>Actions v2: uv packaging and cross-platform CI</h1>
+  <div class="meta">2h 14m of 6h · 3 of 4 workers active · finish: open PRs</div>
+
+  <div class="pin">
+    <div class="k"><span><svg class="g" style="width:12px;height:12px"><use href="#g-decide"/></svg>Needs you · #113</span><span class="mono" style="font-size:10.5px">since 13:30</span></div>
+    <div class="t">OIDC publishing needs <code>id-token: write</code> in the protected <code>release.yml</code>.</div>
+    <div class="acts"><button class="btn">Allow for this PR</button><button class="btn">Skip #113</button><button class="btn">I’ll do it</button></div>
+  </div>
+
+  <div class="spine">
+    <div class="bar">
+      <span style="flex:3;background:var(--merged)"></span><span style="flex:1;border:1.5px solid var(--merged)"></span><span style="flex:3;background:var(--work)"></span>
+      <span class="hatch" style="flex:1"></span><span style="flex:1;background:var(--you)"></span><span style="flex:4;border:1px solid var(--wait)"></span>
+    </div>
+    <div class="sl"><span><b>3</b>merged</span><span><b>1</b>PR ready</span><span><b>3</b>in flight</span><span><b>1</b>blocked</span><span><b>1</b>needs you</span><span><b>4</b>waiting</span></div>
+  </div>
+
+  <div class="agents">
+    <div class="ah"><span>AGENTS</span><span>13:06 ··· last hour ··· now</span></div>
+
+    <div class="ag">
+      <div><div class="n">Luna</div><div class="s">coordinator · owns #101</div></div>
+      <div class="tr">
+        <div class="hold" style="--s:80;--e:134;top:4px;background:repeating-linear-gradient(135deg,#8F8F8F 0 1.5px,#3a3a3a 1.5px 4px)"></div>
+        <div class="hold" style="--s:98;--e:134;top:15px;background:var(--you)"></div>
+        <div class="tk" style="--t:80;top:1px"><svg class="g"><use href="#g-block"/></svg></div>
+        <div class="tk" style="--t:98;top:12px"><svg class="g"><use href="#g-decide"/></svg></div>
+      </div>
+      <div class="f">2m</div>
+    </div>
+
+    <div class="ag quiet">
+      <div><div class="n">Worker 1</div><div class="s">idle · opened PR #147</div></div>
+      <div class="tr">
+        <div class="seg hollow" style="--s:74;--e:110;--c:var(--merged)"></div>
+        <div class="tk" style="--t:109;top:6px"><svg class="g"><use href="#g-pr"/></svg></div>
+        <div class="dot" style="--s:110;--e:134"></div>
+        <div class="tk" style="--t:127;top:6px"><svg class="g"><use href="#g-ok"/></svg></div>
+      </div>
+      <div class="f">41m</div>
+    </div>
+
+    <div class="ag">
+      <div><div class="n">Worker 2</div><div class="s">#106 google-sheets</div></div>
+      <div class="tr">
+        <div class="seg" style="--s:74;--e:134;--c:var(--work)"></div>
+        <div class="tk" style="--t:94;top:6px"><svg class="g"><use href="#g-commit"/></svg></div>
+        <div class="tk" style="--t:117;top:6px"><svg class="g"><use href="#g-commit"/></svg></div>
+        <div class="tk" style="--t:130;top:6px"><svg class="g"><use href="#g-tests"/></svg></div>
+      </div>
+      <div class="f">2m</div>
+    </div>
+
+    <div class="ag">
+      <div><div class="n">Worker 3</div><div class="s">#107 slack · draft #149</div></div>
+      <div class="tr">
+        <div class="seg" style="--s:74;--e:134;--c:var(--work)"></div>
+        <div class="tk" style="--t:84;top:6px"><svg class="g"><use href="#g-commit"/></svg></div>
+        <div class="tk" style="--t:99;top:6px"><svg class="g"><use href="#g-commit"/></svg></div>
+        <div class="tk" style="--t:108;top:6px"><svg class="g"><use href="#g-pr"/></svg></div>
+        <div class="tk" style="--t:123;top:6px"><svg class="g"><use href="#g-commit"/></svg></div>
+      </div>
+      <div class="f">9m</div>
+    </div>
+
+    <div class="ag">
+      <div><div class="n">Worker 4</div><div class="s">#109 · repair 1 of 2</div></div>
+      <div class="tr">
+        <div class="seg hb" style="--s:74;--e:80;--c:#8F8F8F"></div>
+        <div class="seg" style="--s:82;--e:134;--c:var(--repair)"></div>
+        <div class="tk" style="--t:96;top:6px"><svg class="g"><use href="#g-commit"/></svg></div>
+        <div class="tk" style="--t:118;top:6px"><svg class="g"><use href="#g-pr"/></svg></div>
+        <div class="tk" style="--t:126;top:6px"><svg class="g"><use href="#g-ok"/></svg></div>
+        <div class="tk" style="--t:131;top:6px"><svg class="g"><use href="#g-fail"/></svg></div>
+      </div>
+      <div class="f">2m</div>
+    </div>
+
+    <div class="ag sub">
+      <div style="display:flex;gap:6px;align-items:center;padding-left:6px"><svg width="10" height="14"><path d="M1 0v8h8" fill="none" stroke="rgba(255,255,255,.4)"/></svg><div><div class="n" style="font-size:12px;font-weight:500">CI triage</div><div class="s">reading Windows log</div></div></div>
+      <div class="tr" style="height:16px">
+        <div class="seg" style="--s:132.5;--e:134;--c:var(--repair);top:3px;height:10px"></div>
+      </div>
+      <div class="f">1m</div>
+    </div>
+  </div>
+
+  <div class="handled">
+    <div><svg class="g" style="color:var(--merged)"><use href="#g-ok"/></svg><span><b>PR #147 ready for review</b> · 6/6 checks · not urgent</span></div>
+    <div><svg class="g" style="color:#B4B4B4"><use href="#g-retry"/></svg><span><b>Luna is handling</b> #108 runner queue · retry at 14:30</span></div>
+  </div>
+</div>
+
+<div class="cz">
+  <div class="composer">
+    <svg width="20" height="20" viewBox="0 0 20 20"><path d="M10 4v12M4 10h12" stroke="#B4B4B4" stroke-width="1.6" stroke-linecap="round"/></svg>
+    <div class="ph">Ask about this campaign…</div>
+    <svg width="20" height="20" viewBox="0 0 20 20"><rect x="7.2" y="3" width="5.6" height="9.5" rx="2.8" fill="none" stroke="#B4B4B4" stroke-width="1.5"/><path d="M4.8 9.5a5.2 5.2 0 0 0 10.4 0M10 14.8V17" fill="none" stroke="#B4B4B4" stroke-width="1.5" stroke-linecap="round"/></svg>
+    <div class="send"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 13V3.5M4 7.2L8 3.2l4 4" fill="none" stroke="#212121" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+  </div>
+  <div class="home"></div>
+</div>
+</body>
+</html>

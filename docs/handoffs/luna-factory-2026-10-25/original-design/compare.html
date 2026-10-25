@@ -1,0 +1,95 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  :root{color-scheme:light dark}
+  body{margin:0;font-family:var(--font-sans);color:var(--foreground)}
+  .wrap{display:flex;flex-direction:column;gap:14px}
+  .dirs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .dir{all:unset;cursor:pointer;border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;display:flex;flex-direction:column;gap:3px}
+  .dir:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
+  .dir[aria-pressed="true"]{border-color:var(--foreground);background:var(--secondary)}
+  .dir b{font-size:14px}
+  .dir span{font-size:12px;color:var(--muted-foreground);line-height:1.35}
+  .rec{font-size:11px;font-weight:600;color:var(--accent);letter-spacing:.02em}
+  .screens{display:flex;gap:6px;flex-wrap:wrap}
+  .scr{all:unset;cursor:pointer;font-size:12.5px;padding:5px 10px;border-radius:999px;border:1px solid var(--border);color:var(--muted-foreground)}
+  .scr:focus-visible{outline:2px solid var(--ring)}
+  .scr[aria-pressed="true"]{color:var(--foreground);border-color:var(--foreground)}
+  .stage{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:var(--card);display:flex;justify-content:center;padding:16px}
+  .stage img{display:block;max-width:100%;height:auto;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.15)}
+  .stage.narrow img{max-width:360px}
+  .cap{font-size:12.5px;color:var(--muted-foreground);line-height:1.45;margin-top:-4px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{font-weight:600;color:var(--muted-foreground);font-size:11.5px}
+  td:first-child{color:var(--muted-foreground);width:30%}
+  .m{font-variant-numeric:tabular-nums;letter-spacing:1px}
+  .best{font-weight:600}
+  h3{font-size:13px;margin:6px 0 0;font-weight:600}
+</style></head>
+<body><div class="wrap">
+  <div class="dirs" role="group" aria-label="Direction">
+    <button class="dir" data-d="a" aria-pressed="false"><b>A · Flight Recorder</b><span>Agents as swimlanes over time. Tracing-waterfall feel.</span></button>
+    <button class="dir" data-d="b" aria-pressed="true"><span class="rec">RECOMMENDED</span><b>B · Campaign Map</b><span>Issue graph in waves; agents live on the issues they work.</span></button>
+    <button class="dir" data-d="c" aria-pressed="false"><b>C · Dispatch</b><span>"Since you last looked" briefing plus a flow river.</span></button>
+  </div>
+  <div class="screens" role="group" aria-label="Screen">
+    <button class="scr" data-s="swarm" aria-pressed="true">Active swarm</button>
+    <button class="scr" data-s="inspect" aria-pressed="false">Inspect #109 · Worker 4</button>
+    <button class="scr" data-s="overview" aria-pressed="false">All campaigns</button>
+    <button class="scr" data-s="inline" aria-pressed="false">Inline card</button>
+    <button class="scr" data-s="mobile" aria-pressed="false">Mobile</button>
+  </div>
+  <div class="stage" id="stage"><img id="shot" alt=""></div>
+  <div class="cap" id="cap"></div>
+
+  <h3>How each direction fits your workflow</h3>
+  <table>
+    <thead><tr><th></th><th>A · Lanes</th><th>B · Map</th><th>C · Dispatch</th></tr></thead>
+    <tbody>
+      <tr><td>Dependencies, what's ready</td><td class="m">●●○</td><td class="m best">●●●</td><td class="m">●○○</td></tr>
+      <tr><td>Who's on what, coordinator → helpers</td><td class="m best">●●●</td><td class="m">●●○</td><td class="m">●○○</td></tr>
+      <tr><td>Is it making progress over time?</td><td class="m best">●●●</td><td class="m">●○○</td><td class="m">●●○</td></tr>
+      <tr><td>Periodic check-in, attention</td><td class="m">●●○</td><td class="m">●●○</td><td class="m best">●●●</td></tr>
+      <tr><td>Scales to dozens of issues</td><td class="m">●●●</td><td class="m">●●○</td><td class="m">●●○</td></tr>
+      <tr><td>Inline and mobile</td><td class="m">●●○</td><td class="m">●●○</td><td class="m best">●●●</td></tr>
+      <tr><td>Main picture is Luna's proven state</td><td>No, it's observed via CAS</td><td class="best">Yes, the graph</td><td>Yes</td></tr>
+      <tr><td>Earliest honest version</td><td>P1.5, after the CAS timeline adapter</td><td class="best">P0, today's tools</td><td class="best">P0, today's tools</td></tr>
+    </tbody>
+  </table>
+</div>
+<script>
+const shots={
+ "a-swarm":"/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/a-swarm.png","a-inspect":"/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/a-inspect.png","a-overview":"/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/a-overview.png","a-inline":"/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/a-inline.png","a-mobile":"/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/a-mobile.png",
+ "b-swarm":"/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/b-swarm.png","b-inspect":"/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/b-inspect.png","b-overview":"/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/b-overview.png","b-inline":"/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/b-inline.png","b-mobile":"/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/b-mobile.png",
+ "c-swarm":"/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/c-swarm.png","c-inspect":"/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/c-inspect.png","c-overview":"/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/c-overview.png","c-inline":"/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/c-inline.png","c-mobile":"/home/kdlocpanda/second_brain/Projects/luna-factory-ux/shots/c-mobile.png"};
+const caps={
+ a:{swarm:"One lane per agent on a wall-clock axis. Luna's lane carries merges and holds. CI triage is a tethered sub-lane under Worker 4. Dependency strip, bottleneck callout and PR checks sit below and to the right.",
+    inspect:"Worker 4's lane expands into a drawer showing Luna's assignment, checks with the failing step, the subagent, the timeline and the diff. The composer chip carries the selection.",
+    overview:"Campaigns as rows, each with a 2-hour agent trace. Needs you sits above. Review and Luna-is-handling items share one quiet line.",
+    inline:"The last 30 minutes as mini lanes, one status sentence, one decision line and one action.",
+    mobile:"The decision is pinned at the top, followed by agents with mini traces."},
+ b:{swarm:"Waves from left to right with a ready-now frontier and the critical path to #101 highlighted. Agent tokens dock on their issues, tethered to Luna. The pulse rail separates Needs you, Ready for review and Luna is handling.",
+    inspect:"Selecting #109 dims the map to its neighbourhood. The inspector shows why it's in this wave, who's on it, the current step, checks with the failing line, the diff and the timeline.",
+    overview:"The decision comes first, with each option's consequence spelled out. One featured live campaign with its map, then the others as rows with small graphs.",
+    inline:"A mini wave map, a status sentence, the decision line and one action.",
+    mobile:"Waves become a vertical stack with settled waves collapsed. The decision is pinned at the top."},
+ c:{swarm:"Opens on what changed since 13:10, with a burn-up of real merges. The right column separates Needs you, Ready for review and Luna is handling. The flow river runs from Waiting through Held, In progress and In review to Merged.",
+    inspect:"A dossier: on the left, the story of #109 from assignment to repair; on the right, the facts (checks, diff, budget, related issues, what happens next).",
+    overview:"Needs you, then Running, then Finished as typographic rows. A since-13:10 change log and the crew sit on the right.",
+    inline:"Headline, three change lines, the decision as a question and one action.",
+    mobile:"The decision first, then the briefing, then the flow as one segmented line."}};
+let d="b",s="swarm";
+const img=document.getElementById("shot"),cap=document.getElementById("cap"),stage=document.getElementById("stage");
+function render(){
+  img.src=shots[d+"-"+s];img.alt="Direction "+d.toUpperCase()+" "+s+" mockup";
+  cap.textContent=caps[d][s];
+  stage.classList.toggle("narrow",s==="mobile");
+  document.querySelectorAll(".dir").forEach(b=>b.setAttribute("aria-pressed",b.dataset.d===d));
+  document.querySelectorAll(".scr").forEach(b=>b.setAttribute("aria-pressed",b.dataset.s===s));
+}
+document.querySelectorAll(".dir").forEach(b=>b.onclick=()=>{d=b.dataset.d;render()});
+document.querySelectorAll(".scr").forEach(b=>b.onclick=()=>{s=b.dataset.s;render()});
+render();
+</script>
+</body></html>

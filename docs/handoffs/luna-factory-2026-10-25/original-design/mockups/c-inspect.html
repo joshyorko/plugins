@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Luna Factory · Dispatch · Inspect</title>
+<meta name="viewport" content="width=1440">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#FFFFFF;--surf:#F7F7F8;--hair:rgba(0,0,0,.08);--hair2:rgba(0,0,0,.14);
+--ink:#0D0D0D;--ink2:#3D3D3D;--muted:#666666;--faint:#8F8F8F;
+--teal:#0B6B6B;--teal-t:#E6F2F1;--green:#2E7A47;--green-t:#E8F3EC;--amber:#9A5A00;--amber-t:#FBF1E1;--coral:#C2412D;--coral-t:#FCEDEA}
+html,body{width:1440px;height:900px;overflow:hidden;background:var(--bg)}
+body{font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;color:var(--ink);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;font-size:14px;line-height:1.45;position:relative}
+.mono{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:.92em}
+.num{font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)} .ink2{color:var(--ink2)}
+a{color:inherit;text-decoration:none}
+svg{display:inline-block;vertical-align:middle;flex:none}
+.ico{display:inline-flex;width:16px;height:16px;align-items:center;justify-content:center;flex:none}
+/* ChatGPT chrome */
+.gpt-bar{position:absolute;left:0;right:0;top:0;height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 16px 0 18px;background:#fff;border-bottom:1px solid var(--hair);z-index:5}
+.gpt-app{display:flex;align-items:center;gap:10px;font-weight:600;font-size:15px}
+.gpt-appicon{width:26px;height:26px;border-radius:7px;background:#0D0D0D;display:flex;align-items:center;justify-content:center}
+.gpt-x{width:36px;height:36px;border-radius:18px;display:flex;align-items:center;justify-content:center;color:#5D5D5D}
+.gpt-dock{position:absolute;left:0;right:0;bottom:0;background:#fff;padding:10px 0 18px;z-index:5}
+.gpt-composer{width:768px;margin:0 auto;background:#fff;border:1px solid rgba(0,0,0,.12);border-radius:28px;box-shadow:0 4px 16px rgba(0,0,0,.06);padding:10px 10px 10px 12px}
+.gpt-row{display:flex;align-items:center;gap:10px}
+.gpt-ph{flex:1;color:#8F8F8F;font-size:15px}
+.gpt-btn{width:36px;height:36px;border-radius:18px;display:flex;align-items:center;justify-content:center;color:#5D5D5D}
+.gpt-send{background:#0D0D0D;color:#fff}
+.gpt-chip{display:inline-flex;align-items:center;gap:7px;background:var(--surf);border:1px solid var(--hair);border-radius:10px;padding:5px 8px 5px 9px;font-size:13px;font-weight:500;margin:0 0 8px 4px;color:var(--ink)}
+.gpt-sugg{width:768px;margin:0 auto 10px;display:flex;gap:8px}
+.gpt-sugg span{border:1px solid rgba(0,0,0,.12);border-radius:18px;padding:7px 13px;font-size:13.5px;color:var(--ink2);background:#fff}
+.gpt-foot{text-align:center;font-size:11.5px;color:var(--faint);margin-top:8px}
+/* typography + primitives */
+.kicker{font-size:12px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.sec{display:flex;align-items:baseline;justify-content:space-between;gap:12px;border-top:1px solid var(--ink);padding-top:9px}
+.sec h2{font-size:13px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;display:flex;align-items:center;gap:7px}
+.sec .aside{font-size:12.5px;color:var(--muted)}
+.mono-w{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:20px;padding:0 5px;border-radius:10px;border:1px solid var(--hair2);font-size:10.5px;font-weight:700;letter-spacing:.02em;color:var(--ink);background:#fff;line-height:1}
+.mono-w.luna{background:var(--ink);color:#fff;border-color:var(--ink)}
+.mono-w.sub{border-style:dashed}
+.btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px;border-radius:17px;font-size:13.5px;font-weight:600;border:1px solid rgba(0,0,0,.16);background:#fff;color:var(--ink);white-space:nowrap}
+.btn.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+.btn.ghost{border-color:transparent;background:transparent;padding:0 8px;text-decoration:underline;text-underline-offset:3px;text-decoration-color:rgba(0,0,0,.25)}
+.ref{font-weight:650;color:var(--ink)}
+code,.code{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:.88em;background:var(--surf);border:1px solid var(--hair);border-radius:5px;padding:0 4px}
+.tag-need{color:var(--coral);font-weight:700}
+
+.app{position:absolute;top:52px;left:0;right:0;bottom:0;padding:0 56px}
+.subhead{height:50px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--hair);font-size:13.5px}
+.crumbs{display:flex;align-items:center;gap:10px;white-space:nowrap}
+.crumbs .back{display:inline-flex;align-items:center;gap:4px;color:var(--muted)}
+.crumbs .sep{color:var(--faint)}
+.meta{display:flex;align-items:center;gap:14px;color:var(--muted);white-space:nowrap}
+.meta b{color:var(--ink);font-weight:600}
+.fresh{display:inline-flex;align-items:center;gap:6px;color:var(--ink2)}
+
+.crew{display:flex;align-items:center;flex-wrap:nowrap;gap:10px;font-size:13.5px;white-space:nowrap}
+.crew-i{display:inline-flex;align-items:center;gap:6px;padding:3px 0}
+.crew-i.sel{background:var(--teal-t);border-radius:12px;padding:3px 9px 3px 4px;box-shadow:inset 0 0 0 1.5px var(--teal)}
+.crew-w{color:var(--ink2)}
+.crew-ago{color:var(--muted);font-size:12px}
+.crew-sub{color:var(--muted);display:inline-flex;align-items:center;gap:5px;margin-left:2px}
+.crew-dot{color:var(--faint)}
+
+.lede{margin-top:20px}
+h1{font-size:30px;line-height:1.15;font-weight:800;letter-spacing:-.02em;margin:6px 0 16px;white-space:nowrap}
+h1 .soft{color:#6A6A6A}
+.dos{display:grid;grid-template-columns:780px 492px;column-gap:56px}
+.sec{align-items:center}
+.tl{list-style:none;position:relative;margin-top:10px}
+.tl li{display:grid;grid-template-columns:52px 28px 1fr;position:relative;padding-bottom:17px}
+.tl li::before{content:"";position:absolute;left:65.5px;top:20px;bottom:-1px;width:1.5px;background:rgba(0,0,0,.12)}
+.tl li:last-child::before{display:none}
+.tl .t{font-size:12.5px;color:var(--muted);padding-top:1px}
+.tl .n{display:flex;justify-content:center;padding-top:1px;position:relative;z-index:1}
+.tl .n svg{background:#fff;border-radius:50%;box-shadow:0 0 0 3px #fff}
+.tl .h{font-size:14.5px;font-weight:650}
+.tl .d{font-size:13.5px;color:var(--ink2);margin-top:1px;line-height:1.45}
+.cm{font-size:13px;color:var(--ink2);margin-top:3px}
+.cm div{display:flex;gap:10px;padding:1px 0}
+.cm .ct{color:var(--muted);width:38px}
+.log{margin-top:6px;background:var(--surf);border:1px solid var(--hair);border-left:3px solid var(--amber);border-radius:6px;padding:8px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.55;color:var(--ink);white-space:pre}
+.log .m{color:var(--muted)}
+.unv{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:650;color:var(--muted);border:1px dashed rgba(0,0,0,.25);border-radius:9px;padding:0 7px;margin-left:6px;vertical-align:1px}
+.now .h{color:var(--amber)}
+.facts-col .blk{margin-bottom:14px}
+.chk{list-style:none;margin-top:6px;display:grid;grid-template-columns:1fr 1fr;column-gap:24px}
+.chk li{display:grid;grid-template-columns:20px 1fr auto;align-items:center;padding:5px 0;border-top:1px solid var(--hair);font-size:13.5px}
+.chk li:nth-child(-n+2){border-top:0}
+.chk .dur{color:var(--muted);font-size:12.5px}
+.chk .bad{color:var(--amber);font-weight:650}
+.diff{list-style:none;margin-top:6px}
+.diff li{display:grid;grid-template-columns:1fr 90px 100px;column-gap:14px;align-items:center;padding:5px 0;border-top:1px solid var(--hair);font-size:13px}
+.diff li:first-child{border-top:0}
+.diff .f{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
+.diff .c{text-align:right;color:var(--ink2)} .diff .c b{color:var(--green);font-weight:650}
+.bars{display:flex;gap:2px;justify-content:flex-end}
+.bars i{display:block;width:9px;height:9px;border-radius:2px;background:#2E7A47}
+.bars i.r{background:#7A7A7A} .bars i.e{background:rgba(0,0,0,.09)}
+.two{display:grid;grid-template-columns:1fr 1fr;column-gap:24px}
+.pips{display:flex;gap:6px;margin:10px 0 6px}
+.pips span{flex:1;height:8px;border-radius:4px;background:rgba(0,0,0,.09)}
+.pips span.on{background:#9A5A00}
+.small{font-size:13px;color:var(--ink2);line-height:1.45}
+.rel{list-style:none;margin-top:8px;font-size:13px}
+.rel li{display:flex;gap:7px;align-items:center;padding:3px 0;color:var(--ink2)}
+.rel b{color:var(--ink)}
+.nx{list-style:none;margin-top:6px}
+.nx li{display:grid;grid-template-columns:22px 1fr;padding:6px 0;border-top:1px solid var(--hair);font-size:13.5px;color:var(--ink2);line-height:1.42}
+.nx li:first-child{border-top:0}
+.nx .k{font-weight:700;color:var(--muted);font-size:12.5px;padding-top:1px}
+.nx b{color:var(--ink);font-weight:600}
+</style></head>
+<body><header class="gpt-bar"><div class="gpt-app"><span class="gpt-appicon"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M10.8 2.2A6 6 0 1 0 13.8 10 4.8 4.8 0 0 1 10.8 2.2z" fill="#fff"/></svg></span>Luna Factory</div><div class="gpt-x"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg></div></header><div class="app">
+<div class="subhead"><div class="crumbs"><span class="back"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg>#101 Actions v2</span><span class="sep">/</span><b>Worker 4</b><span class="sep">·</span><b>#109 Cache RCC holotree in CI</b></div><div class="meta"><div class="crew"><span class="kicker" style="margin-right:4px">Crew</span><span class="crew-i"><span class="mono-w luna">L</span><b>Luna</b> <span class="crew-w">coordinating</span><span class="crew-ago">2m</span></span><span class="crew-dot">·</span><span class="crew-i"><span class="mono-w ">W2</span><span class="crew-w">#106</span><span class="crew-ago">4m</span></span><span class="crew-dot">·</span><span class="crew-i"><span class="mono-w ">W3</span><span class="crew-w">#107</span><span class="crew-ago">9m</span></span><span class="crew-dot">·</span><span class="crew-i sel"><span class="mono-w ">W4</span><span class="crew-w">#109</span><span class="crew-ago">2m</span><span class="crew-sub">↳ <span class="mono-w sub">CI</span> triage · 1m</span></span><span class="crew-dot">·</span><span class="crew-i"><span class="mono-w ">W1</span><span class="crew-w">free since 13:41</span></span></div></div></div>
+<div class="lede"><div class="kicker">#109 · Worker 4 · PR #148 · updated 14:08</div>
+<h1>Worker 4 is repairing a Windows-only cache failure. <span class="soft">Nothing else waits on it.</span></h1></div>
+<div class="dos"><div>
+<div class="sec"><h2>The story of #109</h2><span class="aside">newest at the bottom · last event 14:08</span></div>
+<ol class="tl">
+ <li><span class="t">13:20</span><span class="n"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#3D3D3D" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="5.2" r="2.7"/><path d="M2.8 14c.6-2.8 2.7-4.4 5.2-4.4s4.6 1.6 5.2 4.4"/></svg></span><div><div class="h">Assigned to Worker 4</div><div class="d">#103 (shared CI) and #104 (pin RCC 18.19) had merged, so #109 was unblocked and a worker slot was free.</div></div></li>
+ <li><span class="t">13:24</span><span class="n"><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.2" fill="#fff" stroke="#3D3D3D" stroke-width="1.6"/><path d="M1 8h3.6M11.4 8H15" stroke="#3D3D3D" stroke-width="1.6"/></svg></span><div><div class="h">3 commits on <span class="code">luna/109-holotree-cache</span></div><div class="cm"><div><span class="ct">13:24</span><span>Add holotree cache step to the shared CI workflow</span></div><div><span class="ct">13:38</span><span>Key the cache on <span class="code">rcc.lock</span> and runner OS</span></div><div><span class="ct">13:47</span><span>Assert the second CI job gets a cache hit</span></div></div></div></li>
+ <li><span class="t">13:49</span><span class="n"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#3D3D3D" stroke-width="1.5" stroke-linecap="round"><circle cx="4" cy="3.5" r="1.8"/><circle cx="4" cy="12.5" r="1.8"/><circle cx="12" cy="12.5" r="1.8"/><path d="M4 5.3v5.4M12 10.7V6.5c0-1.4-.8-2.2-2.2-2.2H7.5"/><path d="M9 2.6L7.3 4.3 9 6"/></svg></span><div><div class="h">Opened PR #148</div><div class="d">Checks started on linux, macos and windows.</div></div></li>
+ <li><span class="t">14:06</span><span class="n"><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#9A5A00"/><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg></span><div><div class="h"><span class="code">test (windows)</span> failed <span class="muted" style="font-weight:400">· 5 of 6 checks passed</span></div><div class="log"><span class="m">tests/test_holotree.py::test_cache_restore_windows</span> FAILED
+AssertionError: holotree not found at C:\ProgramData\robocorp\ht
+<span class="m">  cache was restored to D:\a\_temp\robocorp\ht (ROBOCORP_HOME not set)</span></div></div></li>
+ <li><span class="t">14:07</span><span class="n"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#0B6B6B" stroke-width="1.6" stroke-linecap="round"><circle cx="7" cy="7" r="4.4"/><path d="M10.3 10.3L14 14"/></svg></span><div><div class="h">CI triage subagent is reading the Windows job log <span class="unv">unverified</span></div><div class="d">Early read: Windows runners don’t set <span class="code">ROBOCORP_HOME</span>, so restore and lookup use different paths.</div></div></li>
+ <li class="now"><span class="t">14:08</span><span class="n"><svg width="14" height="14" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.6-3.7" fill="none" stroke="#9A5A00" stroke-width="1.8" stroke-linecap="round"/><path d="M12 1.8v3.1H8.9" fill="none" stroke="#9A5A00" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span><div><div class="h">Repair 1 of 2 in progress</div><div class="d">Worker 4 is setting <span class="code">ROBOCORP_HOME</span> for Windows in <span class="code">ci.yml</span>. If attempt 2 also fails, Luna stops and asks you.</div></div></li>
+</ol></div><div class="facts-col">
+<div class="blk">
+ <div class="sec"><h2>Checks · 5 of 6</h2><span class="aside">PR #148 · 14:06</span></div>
+ <ul class="chk">
+  <li><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="#2E7A47" stroke-width="1.6"/><path d="M5.3 8.2l1.9 1.9 3.6-3.9" fill="none" stroke="#2E7A47" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span>lint</span><span class="dur">0:41</span></li>
+  <li><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="#2E7A47" stroke-width="1.6"/><path d="M5.3 8.2l1.9 1.9 3.6-3.9" fill="none" stroke="#2E7A47" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span>test (linux)</span><span class="dur">3:05</span></li>
+  <li><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="#2E7A47" stroke-width="1.6"/><path d="M5.3 8.2l1.9 1.9 3.6-3.9" fill="none" stroke="#2E7A47" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span>typecheck</span><span class="dur">1:12</span></li>
+  <li><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="#2E7A47" stroke-width="1.6"/><path d="M5.3 8.2l1.9 1.9 3.6-3.9" fill="none" stroke="#2E7A47" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span>test (macos)</span><span class="dur">4:22</span></li>
+  <li><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="#2E7A47" stroke-width="1.6"/><path d="M5.3 8.2l1.9 1.9 3.6-3.9" fill="none" stroke="#2E7A47" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span>build</span><span class="dur">2:10</span></li>
+  <li><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#9A5A00"/><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg><span class="bad">test (windows)</span><span class="dur">failed 6:48</span></li>
+ </ul>
+</div>
+<div class="blk">
+ <div class="sec"><h2>Diff · <span style="color:var(--green)">+86</span> −12</h2><span class="aside">3 files</span></div>
+ <ul class="diff">
+  <li><span class="f">.github/workflows/ci.yml</span><span class="c"><b>+48</b> −10</span><span class="bars"><i></i><i></i><i></i><i></i><i></i><i class="r"></i><i class="e"></i><i class="e"></i></span></li>
+  <li><span class="f">scripts/cache_holotree.py</span><span class="c"><b>+31</b> −2</span><span class="bars"><i></i><i></i><i></i><i class="r"></i><i class="e"></i><i class="e"></i><i class="e"></i><i class="e"></i></span></li>
+  <li><span class="f">tests/test_holotree.py</span><span class="c"><b>+7</b> −0</span><span class="bars"><i></i><i class="e"></i><i class="e"></i><i class="e"></i><i class="e"></i><i class="e"></i><i class="e"></i><i class="e"></i></span></li>
+ </ul>
+</div>
+<div class="two">
+ <div class="blk">
+  <div class="sec"><h2>Repair budget</h2></div>
+  <div class="pips"><span class="on"></span><span></span></div>
+  <div class="small"><b>1 of 2 in use.</b> One attempt left after this one; then it comes to you.</div>
+ </div>
+ <div class="blk">
+  <div class="sec"><h2>Related</h2></div>
+  <ul class="rel">
+   <li><svg width="13" height="13" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#2E7A47"/><path d="M4.8 8.3l2.2 2.2 4.3-4.6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>needs <b>#103</b>, <b>#104</b> · merged</span></li>
+   <li><svg width="13" height="13" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="#8F8F8F" stroke-width="1.5" stroke-dasharray="2.4 2.2"/></svg><span>nothing waits on #109</span></li>
+   <li><svg width="13" height="13" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="#666" stroke-width="1.5"/><path d="M8 4.6V8l2.4 1.5" fill="none" stroke="#666" stroke-width="1.5" stroke-linecap="round"/></svg><span><b>#108</b> also edits <span class="code">ci.yml</span></span></li>
+  </ul>
+ </div>
+</div>
+<div class="blk">
+ <div class="sec"><h2>What happens next</h2><span class="aside">Luna’s plan, not yet done</span></div>
+ <ol class="nx">
+  <li><span class="k">1</span><span>Worker 4 pushes the repair; all 6 checks start again (windows took 6:48).</span></li>
+  <li><span class="k">2</span><span>If all 6 pass, PR #148 joins <b>Ready for your review</b>.</span></li>
+ </ol>
+</div></div></div>
+</div><div class="gpt-dock"><div class="gpt-sugg"><span>Why is Worker 4 stuck?</span><span>Prioritize merging ready PRs</span><span>Show the full Windows log</span></div><div class="gpt-composer"><div class="gpt-chip"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="1.8" fill="currentColor"/></svg>#109 · Worker 4<span style="color:#8F8F8F;display:inline-flex"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg></span></div><div class="gpt-row"><span class="gpt-btn"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg></span><span class="gpt-ph">Ask about this campaign…</span><span class="gpt-btn"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="7" y="2.5" width="6" height="10" rx="3"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5"/></svg></span><span class="gpt-btn gpt-send"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 8v4M7.3 5.5v9M10.6 7v6M14 4.5v11M17 8.5v3"/></svg></span></div></div></div></body></html>

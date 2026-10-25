@@ -1,0 +1,26 @@
+Checkpoint verification, 2026-10-25
+
+PR #91: recovered 80 successful historical mutation events; 16 changed files.
+Parent: 17732947f2eea4e6b21bef084b5b6bdb6155096c
+Checkpoint: 7951f40fa68ca6218e3a9fe11387668ce80b0837
+git diff --check: PASS. cargo fmt --check: FAIL.
+
+PR #96: recovered 22 successful historical mutation events; five changed files.
+Parent: bf2cad0b4ace0c6b791a6f2bb60fee3b6e885223
+Checkpoint: 0b8675eb6e14cb83a3fcd29a88c28fb2566656b7
+git diff --check: PASS. cargo fmt --check: PASS.
+
+Formatting used the pinned Rust 1.99.0 tooling container. Recovery patches and
+archived briefs had zero matches for the credential patterns checked. This is
+not a comprehensive secret audit or a security-remediation review.
+
+Full Rust tests, clippy, backend Python tests, UI tests, host/browser captures,
+independent security review, live qualification canary, and live ChatGPT
+acceptance were not rerun during this checkpoint turn.
+
+The handoff snapshot passed bin/check: 53 unit tests and repository validation.
+42 archived source files were copied byte-for-byte and SHA-256 recorded.
+
+The archive preserves source bytes. git diff --cached --check reports five
+existing trailing-whitespace lines in the archived UX review, original mockup,
+and captured formatting diagnostic. Those historical bytes were retained.

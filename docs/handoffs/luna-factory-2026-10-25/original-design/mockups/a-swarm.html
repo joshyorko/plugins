@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Luna Factory · A Flight Recorder · Swarm #101</title>
+<style>
+  :root{
+    --bg:#212121; --s1:#2A2A2A; --s2:#303030; --hair:rgba(255,255,255,.08); --hair2:rgba(255,255,255,.14);
+    --tx:#ECECEC; --tx2:#B4B4B4; --tx3:#9A9A9A;
+    --merged:#44A06D; --work:#4A88D8; --repair:#B08A1E; --block:#8F8F8F; --you:#E0607A; --wait:#6B6B6B;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+    --span:168; /* minutes on the time axis: 11:52 → 14:40 */
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:1440px;height:900px;overflow:hidden;background:var(--bg);color:var(--tx);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;font-size:13px;line-height:1.35;-webkit-font-smoothing:antialiased}
+  .mono{font-family:var(--mono)}
+  .muted{color:var(--tx3)} .sec{color:var(--tx2)}
+  svg.g{width:12px;height:12px;display:block;overflow:visible}
+
+  /* ---------- ChatGPT chrome ---------- */
+  .topbar{height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 16px 0 18px;border-bottom:1px solid var(--hair)}
+  .appname{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600}
+  .appicon{width:24px;height:24px;border-radius:7px;background:#3A3A3A;display:grid;place-items:center}
+  .appname .dim{font-weight:400;color:var(--tx3);font-size:13px}
+  .iconbtn{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;color:var(--tx2)}
+  .composer-zone{position:absolute;left:0;right:0;bottom:0;height:96px;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:14px}
+  .composer{width:768px;height:54px;border-radius:28px;background:var(--s2);border:1px solid var(--hair);display:flex;align-items:center;gap:10px;padding:0 10px 0 14px;box-shadow:0 0 0 1px rgba(0,0,0,.2)}
+  .composer .ph{flex:1;color:var(--tx3);font-size:15px}
+  .send{width:34px;height:34px;border-radius:50%;background:#676767;display:grid;place-items:center}
+  .disclaimer{font-size:11px;color:var(--tx3);margin-top:8px}
+
+  /* ---------- App ---------- */
+  .app{position:absolute;top:48px;left:0;right:0;bottom:96px;padding:18px 28px 0;display:grid;grid-template-columns:1fr 340px;gap:24px}
+  .head{display:flex;justify-content:space-between;align-items:flex-start}
+  .crumb{font-size:12px;color:var(--tx3);display:flex;gap:8px;align-items:center}
+  h1{font-size:19px;font-weight:600;letter-spacing:-.01em;margin-top:3px}
+  h1 .num{font-family:var(--mono);font-weight:500;color:var(--tx2);margin-right:6px}
+  .meta{font-size:12px;color:var(--tx2);margin-top:5px;display:flex;gap:14px}
+  .meta b{font-weight:500;color:var(--tx)}
+  .fresh{font-family:var(--mono);font-size:11px;color:var(--tx3);display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .fresh i{width:6px;height:6px;border-radius:50%;background:var(--work);display:block}
+
+  .decision{display:flex;align-items:center;gap:10px;border:1px solid var(--hair2);border-left:3px solid var(--you);border-radius:8px;padding:8px 10px 8px 12px;background:var(--s1);max-width:460px}
+  .decision .t{font-size:12.5px;line-height:1.3}
+  .decision .t b{font-weight:600}
+  .btn{font:inherit;font-size:12.5px;font-weight:500;border-radius:16px;padding:6px 12px;border:1px solid var(--hair2);background:transparent;color:var(--tx);white-space:nowrap}
+  .btn.primary{background:#ECECEC;color:#171717;border-color:#ECECEC}
+
+  /* progress spine */
+  .spine{margin-top:16px}
+  .spine .bar{display:flex;gap:2px;height:8px}
+  .spine .bar span{border-radius:2px;display:block}
+  .spine .labels{display:flex;align-items:center;gap:2px;margin-top:6px;font-size:11.5px;color:var(--tx2);white-space:nowrap}
+  .spine .labels span{display:block;overflow:visible}
+  .spine .labels .fresh{display:flex}
+  .spine .labels b{font-family:var(--mono);color:var(--tx);font-weight:600;margin-right:3px}
+  .hatch{background:repeating-linear-gradient(135deg,#8F8F8F 0 2px,#4a4a4a 2px 5px)}
+
+  /* lanes */
+  .lanes{position:relative;margin-top:16px;border:1px solid var(--hair);border-radius:10px;padding-bottom:4px}
+  .overlay{position:absolute;left:196px;right:16px;top:0;bottom:30px;pointer-events:none}
+  .grid{position:absolute;top:0;bottom:0;width:1px;background:var(--hair);left:calc(var(--t)*100%/var(--span))}
+  .grid.major{background:rgba(255,255,255,.11)}
+  .future{position:absolute;top:0;bottom:0;right:0;left:calc(134*100%/var(--span));background:rgba(255,255,255,.025);border-left:1px solid #ECECEC}
+  .nowtag{position:absolute;top:4px;left:calc(134*100%/var(--span));transform:translateX(-50%);background:#ECECEC;color:#171717;font-family:var(--mono);font-size:10.5px;font-weight:600;padding:1px 5px;border-radius:3px}
+  .row{display:flex;position:relative;border-top:1px solid var(--hair)}
+  .row.axis{border-top:0;height:26px}
+  .lab{width:196px;flex:none;padding:8px 12px 0 14px}
+  .lab .n{display:flex;justify-content:space-between;font-weight:600;font-size:13px}
+  .lab .n .fresh{font-weight:400}
+  .lab .s{font-size:11.5px;color:var(--tx2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .trk{flex:1;position:relative;margin-right:16px}
+  .axis .trk span{position:absolute;top:7px;left:calc(var(--t)*100%/var(--span));transform:translateX(-50%);font-family:var(--mono);font-size:10.5px;color:var(--tx3)}
+  .axis .lab{font-family:var(--mono);font-size:10px;color:var(--tx3);letter-spacing:.06em;padding-top:8px}
+  .seg{position:absolute;top:22px;height:20px;left:calc(var(--s)*100%/var(--span));width:calc((var(--e) - var(--s))*100%/var(--span));
+       border-radius:3px;border:1px solid var(--c);background:color-mix(in srgb,var(--c) 22%,#262626);
+       font-family:var(--mono);font-size:10.5px;color:var(--tx);padding:3px 0 0 7px;white-space:nowrap;overflow:hidden}
+  .seg::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--c)}
+  .seg.hollow{background:#262626}
+  .seg.hatch{background:repeating-linear-gradient(135deg,rgba(143,143,143,.55) 0 2px,#262626 2px 6px);border-color:#8F8F8F}
+  .seg .sub{color:var(--tx2)}
+  .tk{position:absolute;top:5px;left:calc(var(--t)*100%/var(--span));transform:translateX(-50%);color:#D6D6D6}
+  .tk::after{content:"";position:absolute;left:50%;top:14px;width:1px;height:4px;background:rgba(255,255,255,.35)}
+  .state{position:absolute;top:24px;left:calc(136*100%/var(--span));font-size:11px;color:var(--tx2);display:flex;gap:5px;align-items:center;white-space:nowrap}
+  .dotted{position:absolute;top:31px;height:0;border-top:1px dashed rgba(255,255,255,.28);left:calc(var(--s)*100%/var(--span));width:calc((var(--e) - var(--s))*100%/var(--span))}
+  .idle{position:absolute;top:26px;font-size:10.5px;font-family:var(--mono);color:#7d7d7d;left:calc(var(--s)*100%/var(--span))}
+
+  /* luna lane */
+  .luna .trk{height:76px}
+  .spineline{position:absolute;top:13px;left:0;width:calc(134*100%/var(--span));height:1px;background:rgba(255,255,255,.22)}
+  .mk{position:absolute;top:7px;left:calc(var(--t)*100%/var(--span));transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:2px}
+  .mk em{font-style:normal;font-family:var(--mono);font-size:10px;color:var(--tx2)}
+  .hold{position:absolute;height:16px;left:calc(var(--s)*100%/var(--span));width:calc((var(--e) - var(--s))*100%/var(--span));border-radius:3px;font-family:var(--mono);font-size:10.5px;padding:1px 0 0 18px;white-space:nowrap;overflow:hidden;color:var(--tx)}
+  .hold svg{position:absolute;left:4px;top:2px}
+
+  .legend{display:flex;gap:16px;align-items:center;padding:8px 14px 2px;border-top:1px solid var(--hair);font-size:11px;color:var(--tx2);white-space:nowrap}
+  .legend span{display:flex;align-items:center;gap:5px}
+  .sw{width:14px;height:9px;border-radius:2px;border:1px solid var(--c);background:color-mix(in srgb,var(--c) 30%,#262626);display:block}
+
+  /* bottom: bottleneck + dependency strip */
+  .bottom{display:grid;grid-template-columns:240px 1fr;gap:16px;margin-top:14px}
+  .callout{border:1px solid var(--hair2);border-radius:10px;padding:12px 14px;background:var(--s1)}
+  .callout .k{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--tx3);display:flex;gap:6px;align-items:center}
+  .callout .big{font-size:14.5px;font-weight:600;margin-top:8px;line-height:1.35}
+  .callout .big .mono{font-weight:600}
+  .callout p{font-size:12px;color:var(--tx2);margin-top:8px;line-height:1.45}
+  .callout .handled{margin-top:10px;font-size:11.5px;color:var(--tx2);display:flex;gap:6px;align-items:center;border-top:1px solid var(--hair);padding-top:9px}
+  .deps{position:relative;border:1px solid var(--hair);border-radius:10px;padding:10px 14px}
+  .deps .k{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--tx3);display:flex;justify-content:space-between}
+  .deps .k span:last-child{text-transform:none;letter-spacing:0}
+  .dgrid{position:relative;height:158px;width:730px;margin:6px auto 0}
+  .wave{position:absolute;top:0;font-family:var(--mono);font-size:10px;color:var(--tx3)}
+  .chip{position:absolute;width:160px;height:20px;border-radius:4px;border:1px solid var(--hair2);background:#262626;font-family:var(--mono);font-size:10.5px;display:flex;align-items:center;gap:6px;padding:0 6px;white-space:nowrap;color:var(--tx2)}
+  .chip b{color:var(--tx);font-weight:500}
+  .chip .st{width:10px;height:10px;flex:none;display:block}
+  .chip.hl{border-color:#ECECEC;background:#2f2f2f;color:var(--tx)}
+  .chip.dim{opacity:.55}
+  svg.edges{position:absolute;left:0;top:0;width:730px;height:158px;overflow:visible}
+
+  /* rail */
+  .rail{border-left:1px solid var(--hair);padding-left:20px;display:flex;flex-direction:column;min-height:0}
+  .rail h2{font-size:12px;font-weight:600;display:flex;justify-content:space-between;align-items:baseline;color:var(--tx)}
+  .rail h2 .fresh{font-weight:400}
+  .ev{display:grid;grid-template-columns:40px 16px 1fr;gap:0 6px;padding:8px 0;border-bottom:1px solid var(--hair)}
+  .ev .tm{font-family:var(--mono);font-size:11px;color:var(--tx3);padding-top:1px}
+  .ev .gl{padding-top:2px;color:#D6D6D6}
+  .ev .tx{font-size:12.5px;line-height:1.38}
+  .ev .ln{grid-column:3;font-size:11px;color:var(--tx3);margin-top:2px;display:flex;align-items:center;gap:4px}
+  .ev .ln::before{content:"";width:8px;height:2px;background:var(--lc,#777);display:block;border-radius:1px}
+  .ev.sel{background:rgba(255,255,255,.035);margin:0 -8px;padding:8px;border-radius:6px;border-bottom-color:transparent}
+  code{font-family:var(--mono);font-size:11.5px;color:var(--tx);background:rgba(255,255,255,.06);padding:0 3px;border-radius:3px}
+  .prs{margin-top:16px}
+  .pr{padding:9px 0;border-bottom:1px solid var(--hair);display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center}
+  .pr .t{font-size:12.5px} .pr .t .mono{color:var(--tx2)}
+  .pr .d{font-size:11.5px;color:var(--tx2);grid-column:1}
+  .pips{display:flex;gap:2px;grid-row:1 / span 2;grid-column:2}
+  .pips i{width:7px;height:14px;border-radius:2px;background:var(--hair2);display:block}
+  .pips i.ok{background:var(--merged)} .pips i.no{background:transparent;border:1.5px solid var(--repair)} .pips i.run{background:transparent;border:1px dashed #8a8a8a}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="g-commit" viewBox="0 0 12 12"><circle cx="6" cy="6" r="2.6" fill="currentColor"/><circle cx="6" cy="6" r="4.3" fill="none" stroke="currentColor" stroke-width="1" opacity=".45"/></symbol>
+    <symbol id="g-pr" viewBox="0 0 12 12"><path d="M3 11V1.2M3 1.6h6.2L7.6 3.9l1.6 2.3H3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
+    <symbol id="g-ok" viewBox="0 0 12 12"><path d="M2.2 6.3l2.5 2.5 5.1-5.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="g-fail" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.9" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.1 4.1l3.8 3.8M7.9 4.1L4.1 7.9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="g-block" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.9" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2.6 9.4l6.8-6.8" stroke="currentColor" stroke-width="1.3"/></symbol>
+    <symbol id="g-merge" viewBox="0 0 12 12"><circle cx="6" cy="6" r="5.6" fill="#44A06D"/><path d="M3.4 6.2l1.8 1.8 3.5-3.8" fill="none" stroke="#171717" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="g-decide" viewBox="0 0 12 12"><path d="M6 .4L11.6 6 6 11.6.4 6z" fill="#E0607A"/><path d="M6 3.2v3.3" stroke="#171717" stroke-width="1.5" stroke-linecap="round"/><circle cx="6" cy="8.4" r=".85" fill="#171717"/></symbol>
+    <symbol id="g-retry" viewBox="0 0 12 12"><path d="M9.8 6.4A3.9 3.9 0 1 1 8.6 3.1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M9.6 .9v2.8H6.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="g-tests" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.9" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6 1.1A4.9 4.9 0 0 1 6 10.9z" fill="currentColor"/></symbol>
+    <symbol id="g-repair" viewBox="0 0 12 12"><path d="M8.6 1.1a2.7 2.7 0 0 0-2.4 3.7L1.4 9.6l1 1 4.8-4.8a2.7 2.7 0 0 0 3.7-2.4L9.3 5 7.9 4.6 7.5 3.2z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol>
+    <symbol id="g-assign" viewBox="0 0 12 12"><path d="M1.5 6h7M6 2.8L9.2 6 6 9.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<!-- ChatGPT fullscreen chrome -->
+<div class="topbar">
+  <div class="appname">
+    <div class="appicon"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M9.8 1.6A5.6 5.6 0 1 0 12.4 9 4.6 4.6 0 0 1 9.8 1.6z" fill="none" stroke="#ECECEC" stroke-width="1.4"/></svg></div>
+    Luna Factory <span class="dim">· joshyorko/actions #101</span>
+  </div>
+  <div style="display:flex;gap:4px">
+    <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.2" fill="#B4B4B4"/><circle cx="8" cy="8" r="1.2" fill="#B4B4B4"/><circle cx="12.5" cy="8" r="1.2" fill="#B4B4B4"/></svg></div>
+    <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="#ECECEC" stroke-width="1.6" stroke-linecap="round"/></svg></div>
+  </div>
+</div>
+
+<div class="app">
+  <!-- LEFT: recorder -->
+  <div style="min-width:0">
+    <div class="head">
+      <div>
+        <div class="crumb"><span class="mono">joshyorko/actions</span><span>·</span><span>Campaign</span></div>
+        <h1><span class="num">#101</span>Actions v2: uv packaging and cross-platform CI</h1>
+        <div class="meta">
+          <span>Started <b class="mono">11:52</b> · <b>2h 14m</b> of 6h</span>
+          <span><b>3 of 4</b> workers active</span>
+          <span>Finish: <b>open PRs</b> (Luna can’t merge)</span>
+        </div>
+      </div>
+      <div class="decision">
+        <svg class="g" style="width:14px;height:14px;flex:none"><use href="#g-decide"/></svg>
+        <div class="t"><b>Needs you:</b> <span class="mono">#113</span> wants <code>id-token: write</code> in protected <span class="mono">release.yml</span></div>
+        <button class="btn primary">Decide</button>
+      </div>
+    </div>
+
+    <div class="spine">
+      <div class="bar">
+        <span style="flex:3;background:var(--merged)"></span>
+        <span style="flex:1;background:transparent;border:1.5px solid var(--merged)"></span>
+        <span style="flex:3;background:var(--work)"></span>
+        <span class="hatch" style="flex:1"></span>
+        <span style="flex:1;background:var(--you)"></span>
+        <span style="flex:4;background:transparent;border:1px solid var(--wait)"></span>
+      </div>
+      <div class="labels">
+        <span style="flex:3"><b>3</b>merged</span>
+        <span style="flex:1"><b>1</b>PR ready</span>
+        <span style="flex:3"><b>3</b>in flight</span>
+        <span style="flex:1"><b>1</b>blocked</span>
+        <span style="flex:1"><b>1</b>needs you</span>
+        <span style="flex:4;display:flex;justify-content:space-between"><span><b>4</b>waiting on deps</span><span class="fresh"><i></i>updated 14:06</span></span>
+      </div>
+    </div>
+
+    <div class="lanes">
+      <div class="overlay">
+        <div class="grid" style="--t:8"></div><div class="grid" style="--t:23"></div><div class="grid major" style="--t:38"></div>
+        <div class="grid" style="--t:53"></div><div class="grid major" style="--t:68"></div><div class="grid" style="--t:83"></div>
+        <div class="grid major" style="--t:98"></div><div class="grid" style="--t:113"></div><div class="grid major" style="--t:128"></div>
+        <div class="grid" style="--t:143"></div><div class="grid major" style="--t:158"></div>
+        <div class="future"></div>
+        <div class="nowtag">now 14:06</div>
+      </div>
+
+      <div class="row axis">
+        <div class="lab">WALL CLOCK</div>
+        <div class="trk">
+          <span style="--t:0">11:52</span><span style="--t:38">12:30</span><span style="--t:68">13:00</span>
+          <span style="--t:98">13:30</span><span style="--t:158">14:30</span>
+          <span style="--t:147;color:#8a8a8a;font-size:10px">scheduled</span>
+        </div>
+      </div>
+
+      <!-- Luna -->
+      <div class="row luna">
+        <div class="lab">
+          <div class="n">Luna <span class="fresh">2m ago</span></div>
+          <div class="s">coordinator · owns #101</div>
+          <div class="s muted" style="margin-top:6px">queued repair for #109</div>
+        </div>
+        <div class="trk">
+          <div class="spineline"></div>
+          <div class="mk" style="--t:46"><svg class="g"><use href="#g-merge"/></svg><em>#141</em></div>
+          <div class="mk" style="--t:54"><svg class="g"><use href="#g-merge"/></svg><em>#140</em></div>
+          <div class="mk" style="--t:66"><svg class="g"><use href="#g-merge"/></svg><em>#142</em></div>
+          <div class="mk" style="--t:80;color:#D6D6D6"><svg class="g"><use href="#g-block"/></svg><em>#108</em></div>
+          <div class="mk" style="--t:98"><svg class="g"><use href="#g-decide"/></svg><em>#113</em></div>
+          <div class="mk" style="--t:132;color:#D6D6D6"><svg class="g"><use href="#g-repair"/></svg></div>
+          <div class="mk" style="--t:158;color:#ECECEC"><svg class="g"><use href="#g-retry"/></svg></div><div style="position:absolute;top:7px;right:calc(12*100%/var(--span));font-family:var(--mono);font-size:10px;color:var(--tx);white-space:nowrap">retry #108 14:30</div>
+          <div class="hold" style="--s:80;--e:158;top:40px;background:repeating-linear-gradient(135deg,rgba(143,143,143,.45) 0 2px,#262626 2px 6px);border:1px solid #8F8F8F">
+            <svg class="g" style="color:#ECECEC"><use href="#g-block"/></svg>#108 no macos-14 runner · Luna is handling</div>
+          <div class="hold" style="--s:98;--e:134;top:58px;background:color-mix(in srgb,var(--you) 22%,#262626);border:1px solid var(--you)">
+            <svg class="g"><use href="#g-decide"/></svg>#113 needs you · 36m</div>
+        </div>
+      </div>
+
+      <!-- Worker 1 -->
+      <div class="row">
+        <div class="lab">
+          <div class="n" style="color:var(--tx2)">Worker 1 <span class="fresh">41m ago</span></div>
+          <div class="s muted">idle · released after #105</div>
+        </div>
+        <div class="trk" style="height:46px">
+          <div class="tk" style="--t:18"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:33"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:44"><svg class="g"><use href="#g-pr"/></svg></div>
+          <div class="seg" style="--s:2;--e:45;--c:var(--merged)">#102 uv lockfile</div>
+          <div class="tk" style="--t:72"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:90"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:101"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:109"><svg class="g"><use href="#g-pr"/></svg></div>
+          <div class="seg hollow" style="--s:56;--e:110;--c:var(--merged)">#105 browser pack <span class="sub">→ PR #147</span></div>
+          <div class="dotted" style="--s:110;--e:134"></div>
+          <div class="tk" style="--t:127"><svg class="g"><use href="#g-ok"/></svg></div>
+          <div class="state"><span class="muted">idle · quiet 25m</span></div>
+        </div>
+      </div>
+
+      <!-- Worker 2 -->
+      <div class="row">
+        <div class="lab">
+          <div class="n">Worker 2 <span class="fresh">2m ago</span></div>
+          <div class="s">#106 google-sheets</div>
+        </div>
+        <div class="trk" style="height:46px">
+          <div class="tk" style="--t:14"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:36"><svg class="g"><use href="#g-pr"/></svg></div>
+          <div class="seg" style="--s:2;--e:37;--c:var(--merged)">#103 shared CI</div>
+          <div class="tk" style="--t:70"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:94"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:117"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:132"><svg class="g"><use href="#g-tests"/></svg></div>
+          <div class="seg" style="--s:48;--e:134;--c:var(--work)">#106 google-sheets <span class="sub">· no PR yet</span></div>
+          <div class="state">12/14 tests local</div>
+        </div>
+      </div>
+
+      <!-- Worker 3 -->
+      <div class="row">
+        <div class="lab">
+          <div class="n">Worker 3 <span class="fresh">9m ago</span></div>
+          <div class="s">#107 slack pack</div>
+        </div>
+        <div class="trk" style="height:46px">
+          <div class="tk" style="--t:24"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:42"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:58"><svg class="g"><use href="#g-pr"/></svg></div>
+          <div class="seg" style="--s:3;--e:59;--c:var(--merged)">#104 pin RCC 18.19</div>
+          <div class="tk" style="--t:84"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:99"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:108"><svg class="g"><use href="#g-pr"/></svg></div>
+          <div class="tk" style="--t:123"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="seg" style="--s:70;--e:134;--c:var(--work)">#107 slack pack <span class="sub">· draft #149</span></div>
+          <div class="state">2/6 checks so far</div>
+        </div>
+      </div>
+
+      <!-- Worker 4 -->
+      <div class="row">
+        <div class="lab">
+          <div class="n">Worker 4 <span class="fresh">2m ago</span></div>
+          <div class="s">#109 holotree · repair 1 of 2</div>
+        </div>
+        <div class="trk" style="height:46px">
+          <div class="idle" style="--s:2">idle · wave 1 had 3 issues</div>
+          <div class="tk" style="--t:64"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:80"><svg class="g"><use href="#g-block"/></svg></div>
+          <div class="seg hatch" style="--s:52;--e:80;--c:var(--block)">#108 matrix CI</div>
+          <div class="tk" style="--t:96"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:106"><svg class="g"><use href="#g-commit"/></svg></div>
+          <div class="tk" style="--t:118"><svg class="g"><use href="#g-pr"/></svg></div>
+          <div class="tk" style="--t:127"><svg class="g"><use href="#g-ok"/></svg></div>
+          <div class="tk" style="--t:133.5"><svg class="g"><use href="#g-fail"/></svg></div>
+          <div class="seg" style="--s:82;--e:134;--c:var(--repair)">#109 holotree cache <span class="sub">· PR #148</span></div>
+          <div class="state"><svg class="g"><use href="#g-repair"/></svg>repair 1 of 2</div>
+        </div>
+      </div>
+
+      <!-- CI triage subagent -->
+      <div class="row" style="border-top:1px dashed var(--hair)">
+        <div class="lab" style="padding:5px 12px 6px 30px;position:relative">
+          <svg width="12" height="20" style="position:absolute;left:15px;top:0"><path d="M1 0v10h9" fill="none" stroke="rgba(255,255,255,.35)" stroke-width="1"/></svg>
+          <div class="n" style="font-size:12px;font-weight:500"><span>CI triage <span class="muted" style="font-weight:400;font-size:11px">subagent</span></span><span class="fresh">1m ago</span></div>
+        </div>
+        <div class="trk" style="height:28px">
+          <div style="position:absolute;left:calc(133*100%/var(--span));top:-10px;height:14px;border-left:1px dashed rgba(255,255,255,.5)"></div>
+          <div style="position:absolute;top:5px;height:12px;left:calc(133*100%/var(--span));width:calc(1*100%/var(--span));min-width:6px;background:var(--repair);border-radius:2px"></div>
+          <div class="state" style="top:5px">reading Windows job log</div>
+        </div>
+      </div>
+
+      <div class="legend">
+        <span><i class="sw" style="--c:var(--merged)"></i>merged</span>
+        <span><i class="sw" style="--c:var(--merged);background:#262626"></i>PR ready</span>
+        <span><i class="sw" style="--c:var(--work)"></i>working</span>
+        <span><i class="sw" style="--c:var(--repair)"></i>repairing</span>
+        <span><i class="sw hatch" style="--c:#8F8F8F;border-color:#8F8F8F"></i>blocked</span>
+        <span style="color:var(--tx3)">|</span>
+        <span><svg class="g"><use href="#g-commit"/></svg>commit</span>
+        <span><svg class="g"><use href="#g-pr"/></svg>PR opened</span>
+        <span><svg class="g"><use href="#g-ok"/></svg>checks pass</span>
+        <span><svg class="g"><use href="#g-fail"/></svg>check failed</span>
+        <span><svg class="g"><use href="#g-merge"/></svg>merged</span>
+        <span><svg class="g"><use href="#g-decide"/></svg>needs you</span>
+      </div>
+    </div>
+
+    <div class="bottom">
+      <div class="callout">
+        <div class="k"><svg class="g" style="color:#B4B4B4"><use href="#g-block"/></svg>Bottleneck</div>
+        <div class="big"><span class="mono">#108</span> blocks <span class="mono">#110</span> → <span class="mono">#114</span>. Luna retries at <span class="mono">14:30</span>.</div>
+        <p>No macos-14 runner since 13:12; the queue is about 45 minutes. Release v2.0.0 also waits on #111, #112 and your call on #113.</p>
+        <div class="handled"><svg class="g"><use href="#g-retry"/></svg>Luna is handling it. Nothing for you.</div>
+      </div>
+      <div class="deps">
+        <div class="k"><span>Dependency strip · 13 issues, 4 waves</span><span class="muted">highlighting the #108 chain</span></div>
+        <div class="dgrid">
+          <div class="wave" style="left:0">WAVE 1</div><div class="wave" style="left:190px">WAVE 2</div><div class="wave" style="left:380px">WAVE 3</div><div class="wave" style="left:570px">WAVE 4</div>
+          <svg class="edges" viewBox="0 0 730 158" preserveAspectRatio="none">
+            <g fill="none" stroke="rgba(255,255,255,.13)" stroke-width="1"><path d="M160 52 C175.0 52 175.0 28 190 28"/><path d="M160 52 C175.0 52 175.0 52 190 52"/><path d="M160 52 C175.0 52 175.0 76 190 76"/><path d="M160 100 C175.0 100 175.0 124 190 124"/><path d="M160 100 C175.0 100 175.0 148 190 148"/><path d="M160 148 C175.0 148 175.0 148 190 148"/><path d="M350 28 C365.0 28 365.0 52 380 52"/><path d="M350 52 C365.0 52 365.0 52 380 52"/><path d="M350 76 C365.0 76 365.0 52 380 52"/><path d="M350 28 C365.0 28 365.0 76 380 76"/><path d="M350 52 C365.0 52 365.0 76 380 76"/><path d="M350 76 C365.0 76 365.0 76 380 76"/><path d="M540 52 C555.0 52 555.0 76 570 76"/><path d="M540 76 C555.0 76 555.0 76 570 76"/><path d="M350 124 C460 124 460 76 570 76"/></g><g fill="none" stroke="#ECECEC" stroke-width="1.5"><path d="M160 100 C175.0 100 175.0 100 190 100"/><path d="M350 100 C365.0 100 365.0 100 380 100"/><path d="M540 100 C555.0 100 555.0 76 570 76"/></g>
+          </svg>
+          <!-- wave 1 -->
+          <div class="chip dim" style="left:0;top:42px"><svg class="st"><use href="#g-merge"/></svg><b>#102</b> uv lockfile</div>
+          <div class="chip hl" style="left:0;top:90px"><svg class="st"><use href="#g-merge"/></svg><b>#103</b> shared CI</div>
+          <div class="chip dim" style="left:0;top:138px"><svg class="st"><use href="#g-merge"/></svg><b>#104</b> pin RCC 18.19</div>
+          <!-- wave 2 -->
+          <div class="chip dim" style="left:190px;top:18px"><svg class="st" style="color:#44A06D"><use href="#g-ok"/></svg><b>#105</b> browser · PR</div>
+          <div class="chip dim" style="left:190px;top:42px"><i class="st" style="background:var(--work);border-radius:2px"></i><b>#106</b> google-sheets</div>
+          <div class="chip dim" style="left:190px;top:66px"><i class="st" style="background:var(--work);border-radius:2px"></i><b>#107</b> slack pack</div>
+          <div class="chip hl" style="left:190px;top:90px"><i class="st hatch" style="border-radius:2px"></i><b>#108</b> matrix CI</div>
+          <div class="chip dim" style="left:190px;top:114px"><svg class="st"><use href="#g-decide"/></svg><b>#113</b> OIDC publish</div>
+          <div class="chip dim" style="left:190px;top:138px"><i class="st" style="background:var(--repair);border-radius:2px"></i><b>#109</b> holotree cache</div>
+          <!-- wave 3 -->
+          <div class="chip dim" style="left:380px;top:42px"><i class="st" style="border:1px solid #8a8a8a;border-radius:2px"></i><b>#111</b> uv docs</div>
+          <div class="chip dim" style="left:380px;top:66px"><i class="st" style="border:1px solid #8a8a8a;border-radius:2px"></i><b>#112</b> drop conda.yaml</div>
+          <div class="chip hl" style="left:380px;top:90px"><i class="st" style="border:1px solid #ECECEC;border-radius:2px"></i><b>#110</b> signed artifacts</div>
+          <!-- wave 4 -->
+          <div class="chip hl" style="left:570px;top:66px"><i class="st" style="border:1px solid #ECECEC;border-radius:2px"></i><b>#114</b> release v2.0.0</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: event rail -->
+  <div class="rail">
+    <h2>Recent events <span class="fresh">newest first · 14:06</span></h2>
+    <div style="margin-top:6px">
+      <div class="ev sel" style="--lc:var(--repair)"><div class="tm">14:06</div><div class="gl"><svg class="g"><use href="#g-fail"/></svg></div>
+        <div class="tx"><code>test (windows)</code> failed on PR #148. Repair 1 of 2 started.</div><div class="ln">Worker 4 lane</div></div>
+      <div class="ev" style="--lc:var(--work)"><div class="tm">14:04</div><div class="gl"><svg class="g"><use href="#g-tests"/></svg></div>
+        <div class="tx">12 of 14 tests passing locally for google-sheets.</div><div class="ln">Worker 2 lane</div></div>
+      <div class="ev" style="--lc:var(--merged)"><div class="tm">13:59</div><div class="gl"><svg class="g"><use href="#g-ok"/></svg></div>
+        <div class="tx">PR #147: all 6 checks passing.</div><div class="ln">Worker 1 lane</div></div>
+      <div class="ev" style="--lc:var(--work)"><div class="tm">13:55</div><div class="gl"><svg class="g"><use href="#g-commit"/></svg></div>
+        <div class="tx">Pushed 3 commits to <code>luna/107-slack</code>.</div><div class="ln">Worker 3 lane</div></div>
+      <div class="ev" style="--lc:var(--merged)"><div class="tm">13:41</div><div class="gl"><svg class="g"><use href="#g-pr"/></svg></div>
+        <div class="tx">Opened PR #147 for #105 and was released.</div><div class="ln">Worker 1 lane</div></div>
+      <div class="ev" style="--lc:var(--you)"><div class="tm">13:30</div><div class="gl"><svg class="g"><use href="#g-decide"/></svg></div>
+        <div class="tx">Luna paused #113: protected file <code>.github/workflows/release.yml</code>.</div><div class="ln">Luna lane</div></div>
+      <div class="ev" style="--lc:#8F8F8F"><div class="tm">13:12</div><div class="gl"><svg class="g"><use href="#g-block"/></svg></div>
+        <div class="tx">#108 blocked: no macos-14 runner. Luna retries at 14:30.</div><div class="ln">Luna lane</div></div>
+      <div class="ev" style="--lc:var(--merged);border-bottom:0"><div class="tm">12:58</div><div class="gl"><svg class="g"><use href="#g-merge"/></svg></div>
+        <div class="tx">PR #142 merged (#104).</div><div class="ln">Luna lane</div></div>
+    </div>
+
+    <div class="prs">
+      <h2>Pull requests <span class="fresh">3 open</span></h2>
+      <div class="pr"><div class="t"><span class="mono">PR #147</span> · browser pack</div>
+        <div class="pips"><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i></div>
+        <div class="d">Ready for your review · 6/6 · +412 −1,108</div></div>
+      <div class="pr"><div class="t"><span class="mono">PR #148</span> · holotree cache</div>
+        <div class="pips"><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="no"></i></div>
+        <div class="d">5/6 · windows failed · Luna repairing</div></div>
+      <div class="pr" style="border-bottom:0"><div class="t"><span class="mono">PR #149</span> · slack pack <span class="muted">· draft</span></div>
+        <div class="pips"><i class="ok"></i><i class="ok"></i><i class="run"></i><i class="run"></i><i class="run"></i><i class="run"></i></div>
+        <div class="d">2/6 · 4 checks in progress</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ChatGPT composer (overlays bottom) -->
+<div class="composer-zone">
+  <div class="composer">
+    <svg width="20" height="20" viewBox="0 0 20 20"><path d="M10 4v12M4 10h12" stroke="#B4B4B4" stroke-width="1.6" stroke-linecap="round"/></svg>
+    <div class="ph">Ask about this campaign…</div>
+    <svg width="20" height="20" viewBox="0 0 20 20"><rect x="7.2" y="3" width="5.6" height="9.5" rx="2.8" fill="none" stroke="#B4B4B4" stroke-width="1.5"/><path d="M4.8 9.5a5.2 5.2 0 0 0 10.4 0M10 14.8V17" fill="none" stroke="#B4B4B4" stroke-width="1.5" stroke-linecap="round"/></svg>
+    <div class="send"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 13V3.5M4 7.2L8 3.2l4 4" fill="none" stroke="#212121" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+  </div>
+  <div class="disclaimer">ChatGPT can make mistakes. Check important info.</div>
+</div>
+</body>
+</html>
