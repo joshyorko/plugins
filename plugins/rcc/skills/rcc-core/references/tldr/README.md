@@ -6,28 +6,33 @@ Tealdeer is optional; agents use the specialist recipes without installing it. B
 
 ## Preview
 
-Use Tealdeer's `--render` option to render the page without installing it:
+Run the shell examples from the `rcc-core` skill directory, the directory containing its `SKILL.md`. In a checkout this is `plugins/rcc/skills/rcc-core`; for an installed plugin, use the skill directory shown by your agent. The examples work in either location.
+
+Use Tealdeer's `--render` option to render the page without installing it or creating a cache:
 
 ```sh
-tldr --render plugins/rcc/skills/rcc-core/references/tldr/rcc.page.md
+tldr --render references/tldr/rcc.page.md
 ```
 
 ## Install for Tealdeer
 
-Tealdeer reads custom pages from its custom pages directory. On Linux the default is usually `~/.local/share/tealdeer/pages/`. Get the actual path with `tldr --show-paths`, set `custom_pages_dir` to that path, and copy the file there as `rcc.page.md`. The guard below stops if that filename already exists:
+Tealdeer reads custom pages from its custom pages directory. Run `tldr --show-paths` first. The variables below use Linux's XDG defaults; if your configuration reports different paths, set them to the reported `Custom pages dir` and `Cache dir` before continuing. The guard keeps an existing custom page.
+
+Tealdeer 1.9.1 also requires a `tldr-pages` directory under its cache directory before serving custom pages. Creating that empty directory enables offline lookup; it does not download upstream pages or clear an existing cache.
 
 ```sh
-custom_pages_dir="$HOME/.local/share/tealdeer/pages"
+custom_pages_dir="${XDG_DATA_HOME:-$HOME/.local/share}/tealdeer/pages"
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/tealdeer"
 if test -e "${custom_pages_dir%/}/rcc.page.md"; then
   printf '%s\n' 'rcc.page.md already exists; keep or back it up before replacing it.' >&2
 else
-  install -D plugins/rcc/skills/rcc-core/references/tldr/rcc.page.md "${custom_pages_dir%/}/rcc.page.md"
+  install -D references/tldr/rcc.page.md "${custom_pages_dir%/}/rcc.page.md" &&
+    mkdir -p "${cache_dir%/}/tldr-pages" &&
+    tldr --no-auto-update rcc
 fi
 ```
 
-Replace the example directory with the `Custom pages dir` path reported on your system.
-After installation, run `tldr rcc` to view the page.
-On a fresh Tealdeer installation, run `tldr --update` once if it reports a missing page cache. This downloads Tealdeer's upstream pages; it is not required for `--render` or for the agent recipes.
+After installation, `tldr rcc` displays the page. The setup command uses `--no-auto-update` so it also works when automatic cache updates are enabled. Use `tldr --update` only if you also want to download upstream pages. Neither preview nor custom-page lookup requires that download.
 
 If you prefer a separate directory, set an absolute `custom_pages_dir` in Tealdeer's configuration:
 

@@ -206,6 +206,65 @@ class RecipeContractTests(unittest.TestCase):
                     self.assertIn(target, skill_text)
 
 
+@unittest.skipUnless(shutil.which("tldr"), "Tealdeer is required for TLDR setup checks")
+class TealdeerSetupTests(unittest.TestCase):
+    def setUp(self) -> None:
+        version = subprocess.run(["tldr", "--version"], text=True, capture_output=True,
+                                 check=True)
+        if not version.stdout.startswith("tealdeer "):
+            self.skipTest("TLDR setup checks require the Tealdeer client")
+        temporary = tempfile.TemporaryDirectory(prefix="rcc-tldr-setup-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.skill = self.root / "installed skills" / "rcc-core"
+        destination = self.skill / "references" / "tldr"
+        destination.mkdir(parents=True)
+        shutil.copy2(TLDR, destination / TLDR.name)
+        self.environment = os.environ.copy()
+        self.environment.update({
+            "XDG_CONFIG_HOME": str(self.root / "config"),
+            "XDG_CACHE_HOME": str(self.root / "cache"),
+            "XDG_DATA_HOME": str(self.root / "data"),
+            "NO_COLOR": "1",
+        })
+        config = self.root / "config" / "tealdeer" / "config.toml"
+        config.parent.mkdir(parents=True)
+        config.write_text("[updates]\nauto_update = true\n")
+
+    def run_example(self, marker: str) -> subprocess.CompletedProcess[str]:
+        examples = re.findall(r"```sh\n(.*?)```", README.read_text(), re.S)
+        command = next(example for example in examples if marker in example)
+        return subprocess.run(["sh", "-eu", "-c", command], cwd=self.skill,
+                              env=self.environment, text=True, capture_output=True,
+                              timeout=30)
+
+    def test_preview_works_from_an_installed_skill_without_a_cache(self) -> None:
+        result = self.run_example("--render")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("rcc version", result.stdout)
+        self.assertFalse((self.root / "cache").exists())
+
+    def test_fresh_install_serves_the_page_without_downloading_a_cache(self) -> None:
+        result = self.run_example("install -D")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        page = self.root / "data" / "tealdeer" / "pages" / "rcc.page.md"
+        self.assertEqual(page.read_bytes(), TLDR.read_bytes())
+        result = subprocess.run(["tldr", "--no-auto-update", "rcc"],
+                                cwd=self.root, env=self.environment, text=True,
+                                capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("rcc version", result.stdout)
+
+    def test_install_keeps_an_existing_custom_page(self) -> None:
+        page = self.root / "data" / "tealdeer" / "pages" / "rcc.page.md"
+        page.parent.mkdir(parents=True)
+        page.write_text("existing custom page\n")
+        result = self.run_example("install -D")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(page.read_text(), "existing custom page\n")
+        self.assertIn("already exists", result.stderr)
+
+
 @unittest.skipUnless(
     os.environ.get("RCC_RECIPE_RUNTIME") == "1" and shutil.which("rcc"),
     "set RCC_RECIPE_RUNTIME=1 with rcc installed to run disposable CLI checks",
