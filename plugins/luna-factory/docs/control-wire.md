@@ -189,6 +189,20 @@ host removal suppresses automatic refresh reattachment. Opaque update IDs suppre
 own echoes. Each mounted app keeps separate selection and attachment state; the
 extension does not promise cross-instance shared selection.
 
+## Execution qualification (#71)
+
+`capabilities.execution` is `{eligible, reason, profiles:[{alias, status, reason, max_capacity}]}`
+with no paths. `eligible` is true only when a configured profile has a current
+operator-recorded `ordinary` grant for its exact profile fingerprint. Every native
+effect path (start, launch, owner dispatch, automatic continuation, repair, steer,
+resume) refuses otherwise with a stable typed reason. The final check is under the
+native writer lock immediately before the first write; a revocation committed before
+that point prevents the frame, while bytes already handed to the operating system may
+complete. Active turns are rechecked on new-work events and every ten seconds. Containment,
+reconcile, recovery, planning and reads are not gated. Grants are written only through
+the operator CLI; no MCP tool is added and the catalog is unchanged. See
+[execution qualification](execution-qualification.md).
+
 Native-local is a planning preference only. The discovery catalog marks every
 execution route ineligible pending exact target/authentication/entitlement and
 lifecycle qualification. Existing native execution behavior is retained; this

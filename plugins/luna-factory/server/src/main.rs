@@ -4,11 +4,28 @@ use luna_factoryd::{
     config::Config,
     lifecycle::Factory,
     native::{NativeClient, validate_luna_route},
+    qualification::{self, ExecutionProfile},
     store::repository_subject,
 };
 use serde_json::json;
 use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
+
+async fn current_provider_identity(
+    config: &Config,
+) -> Result<Option<qualification::NativeServerIdentity>> {
+    if config.native_transport != "existing_daemon" {
+        return Ok(None);
+    }
+    let client =
+        NativeClient::connect_existing(&config.codex_binary, config.native_socket.as_deref())
+            .await?;
+    let identity = client
+        .provider_identity()
+        .context(qualification::PROVIDER_MISMATCH)?;
+    client.shutdown().await?;
+    Ok(Some(identity))
+}
 
 #[derive(Parser)]
 #[command(version, about = "Local Luna Factory MCP runtime")]
@@ -48,6 +65,51 @@ enum Command {
         #[arg(long)]
         request_id: String,
     },
+    /// Print the exact execution profile and its fingerprint. Reads no secrets.
+    QualificationProfile {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        profile: String,
+    },
+    /// Operator-only: record a qualification grant for the current exact profile.
+    RecordQualification {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        profile: String,
+        #[arg(long)]
+        evidence: PathBuf,
+        #[arg(long)]
+        scope: String,
+        #[arg(long, default_value_t = 1)]
+        max_capacity: u32,
+        #[arg(long)]
+        expires_in_days: Option<u64>,
+    },
+    /// Operator-only: revoke a recorded grant by fingerprint.
+    RevokeQualification {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        fingerprint: String,
+    },
+    /// List recorded grants; evidence content is never echoed.
+    Qualifications {
+        #[arg(long)]
+        config: PathBuf,
+    },
+    /// Operator-only canary for a `qualification_only` grant. Never reachable via MCP.
+    QualificationCanary {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        profile: String,
+        #[arg(long)]
+        workspace: PathBuf,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     Version,
 }
 #[tokio::main]
@@ -77,6 +139,116 @@ async fn main() -> Result<()> {
                     &config,
                     &request_id
                 )?)?
+            );
+        }
+        Command::QualificationProfile { config, profile } => {
+            let config = Config::load(&config)?;
+            let profile = ExecutionProfile::from_config(&config, &profile)?;
+            let provider_identity = current_provider_identity(&config).await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &json!({"profile":profile,"fingerprint":profile.fingerprint(),"provider_identity":provider_identity})
+                )?
+            );
+        }
+        Command::RecordQualification {
+            config,
+            profile,
+            evidence,
+            scope,
+            max_capacity,
+            expires_in_days,
+        } => {
+            let config = Config::load(&config)?;
+            qualification::ensure_operator_context()?;
+            let provider_identity = current_provider_identity(&config).await?;
+            let profile = ExecutionProfile::from_config(&config, &profile)?;
+            let fingerprint = profile.fingerprint();
+            let confirmation = qualification::confirm_operator_action(
+                &format!(
+                    "Record execution qualification\nprofile: {}\nfingerprint: {}\ntransport: {}\nmodel: {}\neffort: {}\nprovider_identity: {}\nevidence: {}\nscope: {}\nmax_capacity: {}\nexpires_in_days: {:?}",
+                    profile.profile,
+                    fingerprint,
+                    profile.transport,
+                    profile.model,
+                    profile.effort,
+                    serde_json::to_string(&provider_identity)?,
+                    evidence.display(),
+                    scope,
+                    max_capacity,
+                    expires_in_days
+                ),
+                &profile.profile,
+            )?;
+            let record = qualification::record(
+                &config,
+                qualification::RecordRequest {
+                    alias: &profile,
+                    evidence: &evidence,
+                    scope: qualification::Scope::parse(&scope)?,
+                    max_capacity,
+                    expires_in_days,
+                    provider_identity,
+                },
+                &confirmation,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&record)?);
+        }
+        Command::RevokeQualification {
+            config,
+            fingerprint,
+        } => {
+            let config = Config::load(&config)?;
+            qualification::ensure_operator_context()?;
+            let profile = qualification::profile_alias(&config, &fingerprint)?;
+            let confirmation = qualification::confirm_operator_action(
+                &format!(
+                    "Revoke execution qualification\nprofile: {profile}\nfingerprint: {fingerprint}"
+                ),
+                &profile,
+            )?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&qualification::revoke(
+                    &config,
+                    &fingerprint,
+                    &confirmation
+                )?)?
+            );
+        }
+        Command::Qualifications { config } => {
+            let config = Config::load(&config)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&qualification::list(&config)?)?
+            );
+        }
+        Command::QualificationCanary {
+            config,
+            profile,
+            workspace,
+            output,
+        } => {
+            let config = Config::load(&config)?;
+            // Approved registrations are repositories too; the canary must avoid all of them.
+            let effective = luna_factoryd::repositories::effective_config(
+                &config,
+                &luna_factoryd::store::Store::open(&config)?.repository_registrations()?,
+            );
+            let preconditions =
+                qualification::canary_preconditions(&effective, &profile, &workspace)?;
+            if let Some(output) = output {
+                ensure!(
+                    !output.exists(),
+                    "qualification_canary_output_exists; refusing to overwrite"
+                );
+            }
+            eprintln!("{}", serde_json::to_string_pretty(&preconditions)?);
+            // Never fake success: no native process is started and no evidence is written
+            // until the bounded owner turn, independent hash check and cessation proof exist.
+            anyhow::bail!(
+                "qualification_canary_not_yet_implemented: preconditions passed; no native process was started and no evidence was written"
             );
         }
         Command::Status { config } => {

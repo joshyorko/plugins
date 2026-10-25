@@ -415,6 +415,7 @@ pub(crate) fn validate_request(config: &Config, request: &StartRequest) -> Resul
 impl Store {
     pub fn open(config: &Config) -> Result<Self> {
         config.validate()?;
+        crate::qualification::validate_store_boundary(config, &[])?;
         let parent = config
             .database
             .parent()
@@ -447,6 +448,10 @@ impl Store {
           CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS repository_registrations (id TEXT PRIMARY KEY, alias TEXT NOT NULL UNIQUE, payload TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS campaigns (id TEXT PRIMARY KEY, idem TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL, repository_identity TEXT NOT NULL, forge_key TEXT NOT NULL, planning_run_id TEXT NOT NULL UNIQUE REFERENCES runs(id), payload TEXT NOT NULL, UNIQUE(repository_identity, forge_key));")?;
+        // Additive, idempotent; user_version unchanged (see crate::qualification).
+        connection.execute_batch(crate::qualification::TABLE_SQL)?;
+        crate::qualification::validate_store_boundary_from_connection(config, &connection)
+            .map_err(|_| anyhow::anyhow!(crate::qualification::STORE_EXPOSED))?;
         let mut store = Self { connection };
         store.migrate_control()?;
         store.migrate_receipt_attribution()?;

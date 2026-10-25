@@ -46,7 +46,11 @@ fn setup() -> (tempfile::TempDir, Factory, StartRequest) {
     std::fs::write(&skill, "Synthetic fixture skill; not a live loading proof").unwrap();
     let config:Config=serde_json::from_value(json!({"listen":"127.0.0.1:8787","database":dir.path().join("state/runs.sqlite"),"codex_binary":binary,"skill_path":skill,"repositories":{"fixture":{"root":repo,"max_finish":"local_candidate"}},"profiles":{"default":{"effort":"high"}},"limits":{"capacity":2,"repair_attempts":2,"wall_seconds":300}})).unwrap();
     let request=serde_json::from_value(json!({"repository":"fixture","objective":"Synthetic factory test","acceptance":["A1 fixture only"],"non_goals":[],"finish":"local_candidate","profile":"default","capacity":1,"repair_attempts":2,"wall_seconds":300,"idempotency_key":"fixture-1"})).unwrap();
-    (dir, Factory::new(config).unwrap(), request)
+    (
+        dir,
+        Factory::new(support::qualified(config)).unwrap(),
+        request,
+    )
 }
 fn calls(dir: &tempfile::TempDir) -> Vec<Value> {
     std::fs::read_to_string(dir.path().join("calls.jsonl"))
@@ -272,7 +276,7 @@ async fn confirmed_preflight_failure_does_not_leave_an_unrecoverable_claim() {
     let mut config = (*factory.config).clone();
     config.database = dir.path().join("other-state/runs.sqlite");
     config.codex_binary = PathBuf::from("/bin/false");
-    let unavailable = Factory::new(config).unwrap();
+    let unavailable = Factory::new(support::qualified(config)).unwrap();
     let request:StartRequest=serde_json::from_value(json!({"repository":"fixture","objective":"bounded","acceptance":["passes"],"non_goals":[],"finish":"local_candidate","profile":"default","capacity":1,"repair_attempts":2,"wall_seconds":300,"idempotency_key":"blocked-start"})).unwrap();
     let result = unavailable.start(request).await.unwrap();
     assert_eq!(result["state"], "FAILED");
@@ -611,7 +615,7 @@ async fn missing_dispatch_correlation_keeps_claim_without_a_new_turn() {
     run = serde_json::from_value(value).unwrap();
     store.save(&mut run).unwrap();
     drop(store);
-    let factory = Factory::new(config).unwrap();
+    let factory = Factory::new(support::qualified(config)).unwrap();
     let result = factory.resume(&run.id).await.unwrap();
     assert_eq!(result["state"], "BLOCKED");
     assert_eq!(result["claim_held"], true);
@@ -652,7 +656,7 @@ async fn restart_recovers_a_completed_dispatch_without_starting_a_thread_or_turn
         json!([{"id":"turn-1","status":"completed","client_id":"persisted-dispatch"}]).to_string(),
     )
     .unwrap();
-    let factory = Factory::new(config).unwrap();
+    let factory = Factory::new(support::qualified(config)).unwrap();
     factory.reconcile_startup().await.unwrap();
     let recovered = factory.get(&run.id).await.unwrap();
     assert_eq!(recovered["state"], "CONVERGED");
@@ -680,7 +684,7 @@ async fn ambiguous_recovery_blocks_one_run_without_preventing_service_startup() 
     store.save(&mut run).unwrap();
     drop(store);
     std::fs::write(dir.path().join("native_history.json"),json!([{"id":"turn-1","status":"interrupted","client_id":"duplicate-client-id"},{"id":"turn-2","status":"interrupted","client_id":"duplicate-client-id"}]).to_string()).unwrap();
-    let factory = Factory::new(config).unwrap();
+    let factory = Factory::new(support::qualified(config)).unwrap();
     assert!(factory.reconcile_startup().await.is_ok());
     assert_eq!(factory.get(&run.id).await.unwrap()["state"], "BLOCKED");
     assert!(factory.resume(&run.id).await.is_ok());
@@ -823,7 +827,7 @@ async fn restart_preserves_pending_and_unknown_terminal_stops_without_replay() {
         store.save(&mut run).unwrap();
         drop(store);
         std::fs::write(dir.path().join("mode"), "terminal_lost_ack").unwrap();
-        let factory = Factory::new(config).unwrap();
+        let factory = Factory::new(support::qualified(config)).unwrap();
         factory.reconcile_startup().await.unwrap();
         let stopped = factory.cancel(&run.id).await.unwrap();
         assert_eq!(stopped["claim_held"], true);
@@ -968,7 +972,7 @@ async fn unproved_delivery_cannot_offer_retry_or_release_its_claim() {
     drop(base);
     config.repositories.get_mut("fixture").unwrap().max_finish = "pr".into();
     request.finish = "pr".into();
-    let factory = Factory::new(config).unwrap();
+    let factory = Factory::new(support::qualified(config)).unwrap();
     let run = factory.start(request).await.unwrap();
     let id = run["id"].as_str().unwrap();
     predicate_report(
@@ -1052,7 +1056,7 @@ async fn two_no_progress_returns_require_explicit_labelled_diagnosis_without_bud
     drop(base);
     config.limits.repair_attempts = 3;
     request.repair_attempts = 3;
-    let factory = Factory::new(config).unwrap();
+    let factory = Factory::new(support::qualified(config)).unwrap();
     let mut run = factory.start(request).await.unwrap();
     let id = run["id"].as_str().unwrap().to_owned();
     let deadline = run["deadline_at"].clone();
@@ -1321,7 +1325,7 @@ async fn observed_push_remains_unknown_even_when_owner_requests_an_answer() {
     drop(base);
     config.repositories.get_mut("fixture").unwrap().max_finish = "push".into();
     request.finish = "push".into();
-    let factory = Factory::new(config).unwrap();
+    let factory = Factory::new(support::qualified(config)).unwrap();
     let run = factory.start(request).await.unwrap();
     let id = run["id"].as_str().unwrap();
     let subject =

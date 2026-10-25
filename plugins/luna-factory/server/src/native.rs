@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
+    pin::Pin,
     process::Stdio,
     sync::{
         Arc, Mutex as StdMutex, Weak,
@@ -19,7 +20,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, Command},
     sync::{Mutex, broadcast, oneshot},
     task::JoinHandle,
@@ -55,6 +56,21 @@ pub struct NativeTerminalTarget {
 pub const LUNA_MODEL: &str = "gpt-6-luna";
 const MAX_PENDING: usize = 128;
 const MAX_PAGES: usize = 100;
+const GUARDED_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Debug)]
+pub(crate) struct QualificationWriteTimeout;
+
+impl std::fmt::Display for QualificationWriteTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("qualification_write_timeout")
+    }
+}
+impl std::error::Error for QualificationWriteTimeout {}
+
+pub(crate) fn is_qualification_write_timeout(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<QualificationWriteTimeout>().is_some()
+}
 
 type Pending = HashMap<u64, oneshot::Sender<Result<Value>>>;
 
@@ -103,6 +119,113 @@ enum NativeWriter {
     WebSocket(SharedDaemonSocket),
 }
 
+fn provider_identity(
+    response: &Value,
+) -> Result<Option<crate::qualification::NativeServerIdentity>> {
+    let Some(info) = response
+        .get("serverInfo")
+        .or_else(|| response.get("server_info"))
+    else {
+        return Ok(None);
+    };
+    let (Some(name), Some(version)) = (
+        info.get("name").and_then(Value::as_str),
+        info.get("version").and_then(Value::as_str),
+    ) else {
+        return Ok(None);
+    };
+    if name.is_empty()
+        || version.is_empty()
+        || name.len() > 128
+        || version.len() > 128
+        || name.chars().any(char::is_control)
+        || version.chars().any(char::is_control)
+    {
+        return Err(anyhow!(crate::qualification::PROVIDER_MISMATCH));
+    }
+    let read_hash = |direct: &[&str], nested: Option<(&str, &[&str])>| -> Result<Option<String>> {
+        let value = direct
+            .iter()
+            .find_map(|key| info.get(*key))
+            .or_else(|| nested.and_then(|(object, keys)| info.get(object).and_then(|v| keys.iter().find_map(|key| v.get(*key)))));
+        match value {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(value))
+                if !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control) =>
+            {
+                Ok(Some(value.clone()))
+            }
+            Some(_) => Err(anyhow!(crate::qualification::PROVIDER_MISMATCH)),
+        }
+    };
+    let build_hash = read_hash(&["buildHash", "build_hash"], Some(("buildInfo", &["hash", "sha256"])))?;
+    let binary_hash = read_hash(&["binaryHash", "binary_hash"], Some(("binary", &["hash", "sha256"])))?;
+    Ok(Some(crate::qualification::NativeServerIdentity {
+        name: name.to_owned(),
+        version: version.to_owned(),
+        build_hash,
+        binary_hash,
+    }))
+}
+
+fn is_effectful_method(method: &str) -> bool {
+    matches!(
+        method,
+        "thread/start" | "turn/start" | "thread/resume" | "turn/steer"
+    )
+}
+
+#[cfg(debug_assertions)]
+fn assert_test_binary() {
+    let executable = std::env::current_exe()
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_default();
+    assert!(executable.rsplit_once('-').is_some_and(|(_, suffix)| {
+        suffix.len() >= 8 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }));
+}
+
+async fn write_stdio_guarded<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    bytes: &[u8],
+    authorization: &crate::qualification::DispatchAuthorization,
+    frame_guard: &mut WriteGuard,
+) -> Result<()> {
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let written = std::future::poll_fn(|cx| {
+            if offset == 0
+                && let Err(error) = authorization.check()
+            {
+                return std::task::Poll::Ready(Err(error));
+            }
+            match Pin::new(&mut *writer).poll_write(cx, &bytes[offset..]) {
+                std::task::Poll::Ready(Ok(count)) => {
+                    if count > 0 {
+                        frame_guard.complete = false;
+                    }
+                    std::task::Poll::Ready(Ok(count))
+                }
+                std::task::Poll::Ready(Err(_)) => {
+                    std::task::Poll::Ready(Err(anyhow!("native write failed; outcome unknown")))
+                }
+                std::task::Poll::Pending => std::task::Poll::Pending,
+            }
+        })
+        .await?;
+        ensure!(written > 0, "native writer accepted zero bytes");
+        offset += written;
+    }
+    writer
+        .flush()
+        .await
+        .map_err(|_| anyhow!("native write failed; outcome unknown"))
+}
+
 struct Inner {
     stdin: Mutex<Option<NativeWriter>>,
     child: Mutex<Option<Child>>,
@@ -113,11 +236,14 @@ struct Inner {
     events: broadcast::Sender<Value>,
     next_id: AtomicU64,
     closed: AtomicBool,
+    provider_identity: StdMutex<Option<crate::qualification::NativeServerIdentity>>,
     options: NativeOptions,
 }
 impl Inner {
     fn fail_pending(&self, reason: &'static str) {
-        self.closed.store(true, Ordering::Release);
+        if self.closed.swap(true, Ordering::AcqRel) {
+            return;
+        }
         #[cfg(unix)]
         if let Some(socket) = &self.daemon_socket {
             // Drop the physical connection and every buffered WebSocket frame.
@@ -146,10 +272,6 @@ impl Drop for Inner {
         }
     }
 }
-
-/// Revalidated under the native writer lock, after all asynchronous preflight.
-/// A rejection writes no request bytes and leaves reconciliation available.
-pub type DispatchGuard<'a> = dyn Fn() -> Result<()> + Send + Sync + 'a;
 
 #[derive(Clone)]
 pub struct NativeClient {
@@ -190,6 +312,7 @@ impl NativeClient {
             events,
             next_id: AtomicU64::new(1),
             closed: AtomicBool::new(false),
+            provider_identity: StdMutex::new(None),
             options,
         });
         let weak = Arc::downgrade(&inner);
@@ -214,7 +337,7 @@ impl NativeClient {
             .expect("task lock")
             .extend([stdout_task, stderr_task]);
         let client = Self { inner };
-        client.initialize().await?;
+        client.initialize(false).await?;
         Ok(client)
     }
 
@@ -278,20 +401,26 @@ impl NativeClient {
                 events,
                 next_id: AtomicU64::new(1),
                 closed: AtomicBool::new(false),
+                provider_identity: StdMutex::new(None),
                 options,
             });
             let weak = Arc::downgrade(&inner);
             let task = tokio::spawn(read_websocket(socket, weak));
             inner.tasks.lock().expect("task lock").push(task);
             let client = Self { inner };
-            client.initialize().await?;
+            client.initialize(true).await?;
             Ok(client)
         }
     }
 
-    async fn initialize(&self) -> Result<()> {
+    async fn initialize(&self, require_provider_identity: bool) -> Result<()> {
         let handshake = timeout(self.inner.options.request_timeout, async {
-            self.request("initialize", json!({"clientInfo":{"name":"luna_factory", "title":"Luna Factory", "version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}})).await?;
+            let response = self.request("initialize", json!({"clientInfo":{"name":"luna_factory", "title":"Luna Factory", "version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}})).await?;
+            let identity = provider_identity(&response)?;
+            if require_provider_identity {
+                ensure!(identity.is_some(), crate::qualification::PROVIDER_MISMATCH);
+            }
+            *self.inner.provider_identity.lock().expect("provider identity lock") = identity;
             self.write_message(json!({"method":"initialized"})).await
         }).await.map_err(|_| anyhow!("native initialize timed out")).and_then(|result| result);
         if let Err(error) = handshake {
@@ -311,19 +440,52 @@ impl NativeClient {
         self.inner.closed.load(Ordering::Acquire)
     }
 
-    pub async fn request(&self, method: &str, params: Value) -> Result<Value> {
-        self.request_guarded(method, params, &|| Ok(())).await
+    pub fn provider_identity(&self) -> Option<crate::qualification::NativeServerIdentity> {
+        self.inner
+            .provider_identity
+            .lock()
+            .expect("provider identity lock")
+            .clone()
+    }
+
+    pub(crate) async fn request(&self, method: &str, params: Value) -> Result<Value> {
+        self.request_inner(method, params, None, false).await
     }
 
     async fn request_guarded(
         &self,
         method: &str,
         params: Value,
-        guard: &DispatchGuard<'_>,
+        authorization: &crate::qualification::DispatchAuthorization,
+    ) -> Result<Value> {
+        ensure!(
+            is_effectful_method(method),
+            "native_effect_method_not_guarded"
+        );
+        self.request_inner(method, params, Some(authorization), false)
+            .await
+    }
+
+    #[cfg(debug_assertions)]
+    pub async fn test_request(&self, method: &str, params: Value) -> Result<Value> {
+        assert_test_binary();
+        self.request_inner(method, params, None, true).await
+    }
+
+    async fn request_inner(
+        &self,
+        method: &str,
+        params: Value,
+        authorization: Option<&crate::qualification::DispatchAuthorization>,
+        test_only: bool,
     ) -> Result<Value> {
         ensure!(
             !method.is_empty() && method.len() <= 128,
             "invalid native method"
+        );
+        ensure!(
+            !is_effectful_method(method) || authorization.is_some() || test_only,
+            "native_effect_requires_qualification_guard"
         );
         ensure!(
             !self.inner.closed.load(Ordering::Acquire),
@@ -349,13 +511,24 @@ impl NativeClient {
             id,
         };
         let operation = async {
-            self.write_message_guarded(json!({"id":id, "method":method, "params":params}), guard)
-                .await?;
+            self.write_message_guarded(
+                json!({"id":id, "method":method, "params":params}),
+                authorization,
+            )
+            .await?;
             receiver
                 .await
                 .map_err(|_| anyhow!("native response channel closed"))?
         };
-        match timeout(self.inner.options.request_timeout, operation).await {
+        match timeout(
+            self.inner
+                .options
+                .request_timeout
+                .max(GUARDED_WRITE_TIMEOUT + Duration::from_secs(1)),
+            operation,
+        )
+        .await
+        {
             Ok(result) => result,
             Err(_) => {
                 bail!("native request timed out; outcome unknown, reconcile before any retry")
@@ -364,10 +537,49 @@ impl NativeClient {
     }
 
     async fn write_message(&self, message: Value) -> Result<()> {
-        self.write_message_guarded(message, &|| Ok(())).await
+        self.write_message_guarded(message, None).await
     }
 
-    async fn write_message_guarded(&self, message: Value, guard: &DispatchGuard<'_>) -> Result<()> {
+    async fn write_message_guarded(
+        &self,
+        message: Value,
+        authorization: Option<&crate::qualification::DispatchAuthorization>,
+    ) -> Result<()> {
+        let qualified_write = authorization.is_some();
+        let timeout_reason = if qualified_write {
+            "qualification_write_timeout"
+        } else {
+            "native_write_timeout"
+        };
+        let timing_out = Arc::new(AtomicBool::new(false));
+        let mut write = Box::pin(self.write_message_inner(
+            message,
+            authorization,
+            timing_out.clone(),
+            timeout_reason,
+        ));
+        tokio::select! {
+            result = &mut write => result,
+            _ = tokio::time::sleep(GUARDED_WRITE_TIMEOUT) => {
+                timing_out.store(true, Ordering::Release);
+                drop(write);
+                self.invalidate_after_write_timeout(timeout_reason).await;
+                if qualified_write {
+                    Err(QualificationWriteTimeout.into())
+                } else {
+                    Err(anyhow!(timeout_reason))
+                }
+            }
+        }
+    }
+
+    async fn write_message_inner(
+        &self,
+        message: Value,
+        authorization: Option<&crate::qualification::DispatchAuthorization>,
+        timing_out: Arc<AtomicBool>,
+        timeout_reason: &'static str,
+    ) -> Result<()> {
         let text = serde_json::to_string(&message)?;
         ensure!(
             text.len() < self.inner.options.max_frame_bytes,
@@ -382,17 +594,28 @@ impl NativeClient {
         let mut frame_guard = WriteGuard {
             inner: Arc::downgrade(&self.inner),
             complete: true,
+            timing_out,
+            timeout_reason,
         };
         let result = match writer {
             NativeWriter::Stdio(writer) => {
                 let mut bytes = text.into_bytes();
                 bytes.push(b'\n');
-                guard()?;
-                frame_guard.complete = false;
-                if writer.write_all(&bytes).await.is_err() || writer.flush().await.is_err() {
-                    Err(anyhow!("native write failed; outcome unknown"))
+                if let Some(authorization) = authorization {
+                    write_stdio_guarded(writer, &bytes, authorization, &mut frame_guard).await
                 } else {
-                    Ok(())
+                    frame_guard.complete = false;
+                    async {
+                        writer
+                            .write_all(&bytes)
+                            .await
+                            .map_err(|_| anyhow!("native write failed; outcome unknown"))?;
+                        writer
+                            .flush()
+                            .await
+                            .map_err(|_| anyhow!("native write failed; outcome unknown"))
+                    }
+                    .await
                 }
             }
             #[cfg(unix)]
@@ -419,7 +642,9 @@ impl NativeClient {
                                     "native transport is closed"
                                 )));
                             }
-                            if let Err(error) = guard() {
+                            if let Some(authorization) = authorization
+                                && let Err(error) = authorization.check()
+                            {
                                 return std::task::Poll::Ready(Err(error));
                             }
                             frame_guard.complete = false;
@@ -448,6 +673,14 @@ impl NativeClient {
         }
         frame_guard.complete = true;
         Ok(())
+    }
+
+    async fn invalidate_after_write_timeout(&self, reason: &'static str) {
+        self.inner.fail_pending(reason);
+        self.inner.stdin.lock().await.take();
+        if let Some(child) = self.inner.child.lock().await.as_mut() {
+            let _ = child.start_kill();
+        }
     }
 
     pub async fn shutdown(&self) -> Result<()> {
@@ -479,6 +712,8 @@ impl NativeClient {
 struct WriteGuard {
     inner: Weak<Inner>,
     complete: bool,
+    timing_out: Arc<AtomicBool>,
+    timeout_reason: &'static str,
 }
 impl Drop for WriteGuard {
     fn drop(&mut self) {
@@ -486,7 +721,11 @@ impl Drop for WriteGuard {
             return;
         }
         if let Some(inner) = self.inner.upgrade() {
-            inner.fail_pending("native write interrupted; partial frame outcome unknown");
+            inner.fail_pending(if self.timing_out.load(Ordering::Acquire) {
+                self.timeout_reason
+            } else {
+                "native write interrupted; partial frame outcome unknown"
+            });
         }
     }
 }
@@ -901,22 +1140,12 @@ impl NativeClient {
 
     /// `max_threads` is the trusted bounded native concurrent-worker capacity.
     /// The current 0.159.2 setting is agents.max_concurrent_threads_per_session.
-    pub async fn start_thread(
+    pub(crate) async fn start_thread_guarded(
         &self,
         cwd: &Path,
         effort: &str,
         max_threads: usize,
-    ) -> Result<Value> {
-        self.start_thread_guarded(cwd, effort, max_threads, &|| Ok(()))
-            .await
-    }
-
-    pub async fn start_thread_guarded(
-        &self,
-        cwd: &Path,
-        effort: &str,
-        max_threads: usize,
-        guard: &DispatchGuard<'_>,
+        guard: &crate::qualification::DispatchAuthorization,
     ) -> Result<Value> {
         ensure!(
             cwd.is_absolute() && cwd.is_dir(),
@@ -942,48 +1171,8 @@ impl NativeClient {
         Ok(response)
     }
 
-    pub async fn start_skill_turn(
-        &self,
-        thread_id: &str,
-        skill_path: &Path,
-        objective: &str,
-        effort: &str,
-        output_schema: Option<Value>,
-    ) -> Result<Value> {
-        self.start_skill_turn_with_id(
-            thread_id,
-            skill_path,
-            objective,
-            effort,
-            output_schema,
-            None,
-        )
-        .await
-    }
-
-    pub async fn start_skill_turn_with_id(
-        &self,
-        thread_id: &str,
-        skill_path: &Path,
-        objective: &str,
-        effort: &str,
-        output_schema: Option<Value>,
-        dispatch_id: Option<&str>,
-    ) -> Result<Value> {
-        self.start_skill_turn_with_id_guarded(
-            thread_id,
-            skill_path,
-            objective,
-            effort,
-            output_schema,
-            dispatch_id,
-            &|| Ok(()),
-        )
-        .await
-    }
-
     #[allow(clippy::too_many_arguments)] // Additive policy boundary for the native protocol helper.
-    pub async fn start_skill_turn_with_id_guarded(
+    pub(crate) async fn start_skill_turn_with_id_guarded(
         &self,
         thread_id: &str,
         skill_path: &Path,
@@ -991,7 +1180,7 @@ impl NativeClient {
         effort: &str,
         output_schema: Option<Value>,
         dispatch_id: Option<&str>,
-        guard: &DispatchGuard<'_>,
+        guard: &crate::qualification::DispatchAuthorization,
     ) -> Result<Value> {
         validate_id(thread_id)?;
         if let Some(dispatch_id) = dispatch_id {
@@ -1019,24 +1208,151 @@ impl NativeClient {
         self.request_guarded("turn/start", params, guard).await
     }
 
-    pub async fn resume_thread(&self, thread_id: &str) -> Result<Value> {
+    /// The guard runs after the writer is owned, immediately before the first byte.
+    pub(crate) async fn resume_thread_guarded(
+        &self,
+        thread_id: &str,
+        guard: &crate::qualification::DispatchAuthorization,
+    ) -> Result<Value> {
         validate_id(thread_id)?;
         // No overrides: preserve the same thread's runtime/provider/security.
-        self.request(
+        self.request_guarded(
             "thread/resume",
             json!({"threadId":thread_id, "excludeTurns":true}),
+            guard,
         )
         .await
     }
 
-    pub async fn steer_turn(&self, thread_id: &str, turn_id: &str, text: &str) -> Result<Value> {
+    /// The guard runs after the writer is owned, immediately before the first byte.
+    pub(crate) async fn steer_turn_guarded(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+        text: &str,
+        guard: &crate::qualification::DispatchAuthorization,
+    ) -> Result<Value> {
         validate_id(thread_id)?;
         validate_id(turn_id)?;
         ensure!(
             !text.trim().is_empty() && text.len() <= 64 * 1024,
             "invalid bounded steering input"
         );
-        self.request("turn/steer", json!({"threadId":thread_id, "expectedTurnId":turn_id, "input":[{"type":"text","text":text}]})).await
+        self.request_guarded("turn/steer", json!({"threadId":thread_id, "expectedTurnId":turn_id, "input":[{"type":"text","text":text}]}), guard).await
+    }
+
+    #[cfg(debug_assertions)]
+    pub async fn test_start_thread(
+        &self,
+        cwd: &Path,
+        effort: &str,
+        max_threads: usize,
+    ) -> Result<Value> {
+        self.test_start_thread_guarded(cwd, effort, max_threads, || Ok(()))
+            .await
+    }
+
+    #[cfg(debug_assertions)]
+    pub async fn test_start_thread_guarded(
+        &self,
+        cwd: &Path,
+        effort: &str,
+        max_threads: usize,
+        check: impl Fn() -> Result<()> + Send + Sync + 'static,
+    ) -> Result<Value> {
+        assert_test_binary();
+        let authorization = crate::qualification::test_dispatch_authorization(check);
+        self.start_thread_guarded(cwd, effort, max_threads, &authorization)
+            .await
+    }
+
+    #[cfg(debug_assertions)]
+    pub async fn test_start_skill_turn(
+        &self,
+        thread_id: &str,
+        skill_path: &Path,
+        objective: &str,
+        effort: &str,
+        output_schema: Option<Value>,
+    ) -> Result<Value> {
+        self.test_start_skill_turn_with_id(
+            thread_id,
+            skill_path,
+            objective,
+            effort,
+            output_schema,
+            None,
+        )
+        .await
+    }
+
+    #[cfg(debug_assertions)]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn test_start_skill_turn_with_id(
+        &self,
+        thread_id: &str,
+        skill_path: &Path,
+        objective: &str,
+        effort: &str,
+        output_schema: Option<Value>,
+        dispatch_id: Option<&str>,
+    ) -> Result<Value> {
+        self.test_start_skill_turn_with_id_guarded(
+            thread_id,
+            skill_path,
+            objective,
+            effort,
+            output_schema,
+            dispatch_id,
+            || Ok(()),
+        )
+        .await
+    }
+
+    #[cfg(debug_assertions)]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn test_start_skill_turn_with_id_guarded(
+        &self,
+        thread_id: &str,
+        skill_path: &Path,
+        objective: &str,
+        effort: &str,
+        output_schema: Option<Value>,
+        dispatch_id: Option<&str>,
+        check: impl Fn() -> Result<()> + Send + Sync + 'static,
+    ) -> Result<Value> {
+        assert_test_binary();
+        let authorization = crate::qualification::test_dispatch_authorization(check);
+        self.start_skill_turn_with_id_guarded(
+            thread_id,
+            skill_path,
+            objective,
+            effort,
+            output_schema,
+            dispatch_id,
+            &authorization,
+        )
+        .await
+    }
+
+    #[cfg(debug_assertions)]
+    pub async fn test_resume_thread(&self, thread_id: &str) -> Result<Value> {
+        assert_test_binary();
+        let authorization = crate::qualification::test_dispatch_authorization(|| Ok(()));
+        self.resume_thread_guarded(thread_id, &authorization).await
+    }
+
+    #[cfg(debug_assertions)]
+    pub async fn test_steer_turn(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+        text: &str,
+    ) -> Result<Value> {
+        assert_test_binary();
+        let authorization = crate::qualification::test_dispatch_authorization(|| Ok(()));
+        self.steer_turn_guarded(thread_id, turn_id, text, &authorization)
+            .await
     }
 
     /// An accepted interrupt is a request, never cancellation completion proof.
@@ -1276,6 +1592,147 @@ impl NativeClient {
 mod dispatch_guard_tests {
     use super::*;
 
+    struct GateState {
+        ready: AtomicBool,
+        blocked: AtomicBool,
+        bytes: StdMutex<Vec<u8>>,
+        waker: StdMutex<Option<std::task::Waker>>,
+    }
+
+    struct GateWriter(Arc<GateState>);
+
+    impl AsyncWrite for GateWriter {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            bytes: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            if !self.0.ready.load(Ordering::Acquire) {
+                self.0.blocked.store(true, Ordering::Release);
+                *self.0.waker.lock().unwrap() = Some(cx.waker().clone());
+                return std::task::Poll::Pending;
+            }
+            self.0.bytes.lock().unwrap().extend_from_slice(bytes);
+            std::task::Poll::Ready(Ok(bytes.len()))
+        }
+
+        fn poll_flush(
+            self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(
+            self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    fn qualification_fixture() -> (tempfile::TempDir, crate::config::Config, String) {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = directory.path().join("repo");
+        std::fs::create_dir(&repository).unwrap();
+        let binary = directory.path().join("codex-fixture");
+        std::fs::write(&binary, b"native-fixture-binary").unwrap();
+        let skill = directory.path().join("SKILL.md");
+        std::fs::write(&skill, "synthetic skill").unwrap();
+        let config: crate::config::Config = serde_json::from_value(json!({
+            "listen":"127.0.0.1:8787",
+            "database":directory.path().join("state/runs.sqlite"),
+            "codex_binary":binary,
+            "skill_path":skill,
+            "repositories":{"fixture":{"root":repository,"max_finish":"local_candidate"}},
+            "profiles":{"default":{"effort":"high"}},
+            "limits":{"capacity":2,"repair_attempts":0,"wall_seconds":300}
+        }))
+        .unwrap();
+        let profile = crate::qualification::ExecutionProfile::from_config(&config, "default")
+            .unwrap()
+            .fingerprint();
+        let evidence = directory.path().join("evidence.json");
+        std::fs::write(
+            &evidence,
+            json!({
+                "profile_fingerprint":profile,
+                "qualification_run":{"harness":crate::qualification::HARNESS,"outcome":"passed",
+                    "started_at":1,"finished_at":2,"checks":[{"passed":true}],"cessation":{"verified":true}}
+            })
+            .to_string(),
+        )
+        .unwrap();
+        crate::qualification::record(
+            &config,
+            crate::qualification::RecordRequest {
+                alias: "default",
+                evidence: &evidence,
+                scope: crate::qualification::Scope::Ordinary,
+                max_capacity: 1,
+                expires_in_days: None,
+                provider_identity: None,
+            },
+            &crate::qualification::test_operator_confirmation(),
+        )
+        .unwrap();
+        (directory, config, profile)
+    }
+
+    #[tokio::test]
+    async fn blocked_transport_rechecks_revocation_before_handing_first_byte() {
+        let (_directory, config, fingerprint) = qualification_fixture();
+        let authorization =
+            crate::qualification::dispatch_authorization(&config, "default", 1, None);
+        let state = Arc::new(GateState {
+            ready: AtomicBool::new(false),
+            blocked: AtomicBool::new(false),
+            bytes: StdMutex::new(Vec::new()),
+            waker: StdMutex::new(None),
+        });
+        let write_state = state.clone();
+        let mut writer = GateWriter(write_state);
+        let mut frame_guard = WriteGuard {
+            inner: Weak::new(),
+            complete: true,
+            timing_out: Arc::new(AtomicBool::new(false)),
+            timeout_reason: "qualification_write_timeout",
+        };
+        let write = tokio::spawn(async move {
+            write_stdio_guarded(
+                &mut writer,
+                b"{\"method\":\"turn/start\"}\n",
+                &authorization,
+                &mut frame_guard,
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !state.blocked.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        crate::qualification::revoke(
+            &config,
+            &fingerprint,
+            &crate::qualification::test_operator_confirmation(),
+        )
+        .unwrap();
+        state.ready.store(true, Ordering::Release);
+        if let Some(waker) = state.waker.lock().unwrap().take() {
+            waker.wake();
+        }
+
+        let error = write.await.unwrap().unwrap_err();
+        assert_eq!(
+            crate::qualification::denied_code(&error),
+            Some(crate::qualification::REVOKED)
+        );
+        assert!(state.bytes.lock().unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn waiting_for_native_writer_does_not_freeze_dispatch_authority() {
         let script = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1287,16 +1744,19 @@ mod dispatch_guard_tests {
         .await
         .unwrap();
         let writer = client.inner.stdin.lock().await;
-        let clock = AtomicU64::new(99);
+        let clock = Arc::new(AtomicU64::new(99));
         let deadline = 100;
-        let guard = || {
+        let guard_clock = clock.clone();
+        let guard = move || {
             ensure!(
-                clock.load(Ordering::SeqCst) < deadline,
+                guard_clock.load(Ordering::SeqCst) < deadline,
                 "time_budget_exhausted"
             );
             Ok(())
         };
-        let request = client.request_guarded("turn/start", json!({"threadId":"owner"}), &guard);
+        let authorization = crate::qualification::test_dispatch_authorization(guard);
+        let request =
+            client.request_guarded("turn/start", json!({"threadId":"owner"}), &authorization);
         tokio::pin!(request);
         tokio::select! {
             result = &mut request => panic!("writer lock was bypassed: {result:?}"),
@@ -1326,7 +1786,7 @@ mod dispatch_guard_tests {
             let initialize: Value =
                 serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
             ws.send(Message::Text(
-                json!({"id":initialize["id"],"result":{}})
+                json!({"id":initialize["id"],"result":{"serverInfo":{"name":"codex-fixture","version":"1.0","buildHash":"fixture-sha256"}}})
                     .to_string()
                     .into(),
             ))
@@ -1351,12 +1811,18 @@ mod dispatch_guard_tests {
             .await
             .unwrap();
         let writer = client.inner.stdin.lock().await;
-        let clock = AtomicU64::new(99);
-        let guard = || {
-            ensure!(clock.load(Ordering::SeqCst) < 100, "time_budget_exhausted");
+        let clock = Arc::new(AtomicU64::new(99));
+        let guard_clock = clock.clone();
+        let guard = move || {
+            ensure!(
+                guard_clock.load(Ordering::SeqCst) < 100,
+                "time_budget_exhausted"
+            );
             Ok(())
         };
-        let request = client.request_guarded("turn/start", json!({"threadId":"owner"}), &guard);
+        let authorization = crate::qualification::test_dispatch_authorization(guard);
+        let request =
+            client.request_guarded("turn/start", json!({"threadId":"owner"}), &authorization);
         tokio::pin!(request);
         tokio::select! {
             result = &mut request => panic!("writer mutex was bypassed: {result:?}"),

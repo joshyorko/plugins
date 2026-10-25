@@ -1,4 +1,5 @@
 //! Actual Factory regression tests over a labeled subprocess fixture. No live inference.
+#[allow(dead_code)]
 mod support;
 use luna_factoryd::{
     config::Config,
@@ -136,7 +137,7 @@ async fn restart_rejects_revoked_repository_profile_and_reduced_authority_before
             "lower_capacity" => config.limits.capacity = 1,
             _ => unreachable!(),
         }
-        let factory = Factory::new(config).unwrap();
+        let factory = Factory::new(support::qualified(config)).unwrap();
         assert!(
             factory.resume(&run.id).await.is_err(),
             "resumed after {change}"
@@ -160,7 +161,7 @@ async fn event_lag_does_not_remove_the_persisted_deadline_watchdog() {
         json!({"active":{"owner":true,"child":true},"turn":1,"closed_once":false}).to_string(),
     )
     .unwrap();
-    let factory = Factory::new(config).unwrap();
+    let factory = Factory::new(support::qualified(config)).unwrap();
     factory.reconcile_startup().await.unwrap();
     let blocked = wait_state(&factory, &run.id, "BLOCKED").await;
     assert_eq!(blocked["claim_held"], true);
@@ -182,7 +183,7 @@ async fn event_lag_does_not_remove_the_persisted_deadline_watchdog() {
 async fn closed_daemon_proxy_reconnects_and_cancels_the_same_owned_execution() {
     let (dir, config, request) = setup();
     std::fs::write(dir.path().join("mode"), "close_once").unwrap();
-    let factory = Factory::new(config).unwrap();
+    let factory = Factory::new(support::qualified(config)).unwrap();
     let run = factory.start(request).await.unwrap();
     let id = run["id"].as_str().unwrap();
     wait_state(&factory, id, "BLOCKED").await;
@@ -219,7 +220,7 @@ async fn closed_daemon_proxy_reconnects_and_cancels_the_same_owned_execution() {
 #[tokio::test]
 async fn resume_keeps_one_event_listener_and_counts_each_child_failure_once() {
     let (dir, config, request) = setup();
-    let factory = Factory::new(config).unwrap();
+    let factory = Factory::new(support::qualified(config)).unwrap();
     let run = factory.start(request).await.unwrap();
     let id = run["id"].as_str().unwrap();
     assert_eq!(factory.cancel(id).await.unwrap()["state"], "CANCELLED");
