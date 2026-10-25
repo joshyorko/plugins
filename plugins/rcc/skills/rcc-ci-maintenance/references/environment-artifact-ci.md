@@ -37,3 +37,28 @@ The workflow's self-host compatibility pin is v18.18.1, not the immediately prec
 - Treat coordinator notification/reason strings as advisory; verify Artifact closure and trust.
 - On disk exhaustion, preserve the `ENOSPC` classification and retry only after bounded cleanup/recovery.
 - Collect receipts and logs before cleanup, but redact credentials and keep source/build/runtime/release statuses distinct.
+
+## Recipe: CI/cache troubleshooting
+
+**Intent:** Locate whether a CI environment failure is in RCC setup, freeze/config selection, cache resolution, Artifact provider/trust, or the robot task.
+
+**Owner:** `$rcc-ci-maintenance` for workflow/cache wiring; route RCC internals to `$rcc-core` and project tasks to `$rcc-robots`.
+
+**Preflight:** Confirm the pinned RCC version is v18.19.7; identify the CI runner OS/architecture and isolated `ROBOCORP_HOME`; inspect selected `environmentConfigs`, freeze files, cache key inputs, masked provider variables, trust roots, logs, and receipts.
+
+**Command:**
+
+```sh
+rcc version
+rcc diagnostics --quick --json
+rcc ht list --json
+rcc ht vars -r robot.yaml --json
+```
+
+**Success evidence:** Compare selected freeze/config and cache key inputs (OS, architecture, RCC version, dependency/config hashes) with runner values; `ht vars` must resolve the expected environment. For Artifact jobs, use [Inspect Environment Artifact](../../rcc-core/references/environment-artifacts.md#recipe-inspect-environment-artifact) separately, then classify the first failing gate before changing CI configuration.
+
+**Side effects:** Local inspection can write RCC logs; diagnostics may probe endpoints. `ht vars` can download dependencies, run post-install hooks, and write cache state. Review hooks before resolving; output may contain environment secrets, endpoints, and paths. Do not print secrets or broadly delete CI caches. Preserve logs/receipts and prefer correcting cache keys over deleting shared state.
+
+**Failure routing:** Install/config/cache setup goes to `$rcc-ci-maintenance`; Artifact/provider/trust semantics go to `$rcc-core`; task behavior goes to `$rcc-robots`.
+
+**Source:** Installed RCC v18.19.7 `rcc diagnostics --help`, `rcc holotree list --help`, `rcc ht vars --help`; [Pin And Isolate](#pin-and-isolate) and [Failure Handling](#failure-handling).

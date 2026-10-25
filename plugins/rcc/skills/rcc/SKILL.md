@@ -19,7 +19,21 @@ Treat RCC as the center of gravity for this stack. Frame the domain as RCC-manag
 - Use `$action-server` for `joshyorko/actions` packages, `package.yaml` v2, PyPI `actions-core` and `actions-runtime`, `actions.mcp`, Docker/Compose builds and deployments, OpenAPI/MCP exposure, secrets, dev tasks, action tests, and typed responses.
 - Use `$rcc-ci-maintenance` for RCC in GitHub Actions, `ROBOCORP_HOME` cache, pinned RCC install, scheduled maintenance automation, allowlist dependency maintenance, bot PR flows, and CI cache hygiene.
 
-## Router Rules
+## Quick operational recipes
+
+Load the owning specialist, then the linked recipe. These are entry points into the existing references.
+
+| Request | Owner and recipe |
+| --- | --- |
+| "What's the fastest way to check RCC health?" | `$rcc-core`: [RCC health](../rcc-core/references/rcc-source-recipes.md#recipe-rcc-health) |
+| "Create a new robot" | `$rcc-robots`: [New robot](../rcc-robots/references/rcc-command-recipes.md#recipe-new-robot) |
+| "How do I run this robot?" | `$rcc-robots`: [Run robot](../rcc-robots/references/rcc-command-recipes.md#recipe-run-robot) |
+| "Why isn't my RCC environment starting?" | `$rcc-core` first for RCC/Holotree failures: [Debug environment](../rcc-robots/references/troubleshooting-validation.md#recipe-debug-environment); `$rcc-robots` for project dependency/configuration failures |
+| "Inspect this Environment Artifact" | `$rcc-core`: [Inspect Environment Artifact](../rcc-core/references/environment-artifacts.md#recipe-inspect-environment-artifact) |
+| "Why did the CI cache or freeze stop working?" | `$rcc-ci-maintenance`: [CI/cache troubleshooting](../rcc-ci-maintenance/references/environment-artifact-ci.md#recipe-cicache-troubleshooting) |
+| "Give me the TLDR for RCC" | `$rcc-core`: [human page and optional Tealdeer setup](../rcc-core/references/tldr/README.md) |
+
+## Router rules
 
 - Do not keep detailed command recipes in this router. Load one specialist skill and its references.
 - Route `rcc env`, `rcc provider`, and `rcc cache serve` to `$rcc-core`. If the artifact problem is specifically a robot/package configuration or task-runtime problem, pull in `$rcc-robots` after the RCC lifecycle boundary is clear.

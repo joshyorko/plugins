@@ -35,6 +35,7 @@ Retain ownership of `robot.yaml`, `conda.yaml`, holotree, freeze files, task run
 - `references/rcc-command-recipes.md`: command selection, `robot.yaml`, `conda.yaml`, holotree, bundles, and cache hygiene.
 - `references/robot-project-recipes.md`: Josh automation-project templates, Python/browser/work item/UV-native patterns, and template release behavior.
 - `references/troubleshooting-validation.md`: environment, dependency, runtime, work item, Action Server, and repo validation playbooks.
+- Quick recipes: [New robot](references/rcc-command-recipes.md#recipe-new-robot), [Run robot](references/rcc-command-recipes.md#recipe-run-robot), and [Debug environment](references/troubleshooting-validation.md#recipe-debug-environment).
 - `references/hooks.md`: optional Claude Code hook assets and command guardrails for RCC projects.
 - `../rcc-workitems/references/docdb-rpa-patterns.md`: DocDB-backed production robot task surface, helper task boundary, local smoke ladder, and CI queue semantics.
 - `../rcc/references/python-library-audit.md`: cross-source Python library map, examples, and source refresh workflow.
