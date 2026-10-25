@@ -695,6 +695,10 @@ pub struct GithubReader {
     requests: std::sync::atomic::AtomicU64,
     /// Debug-build fixture only: clone from `<dir>/<owner>/<repo>.git` instead of GitHub.
     clone_source: std::sync::OnceLock<PathBuf>,
+    /// Debug-build race seam invoked after token minting and before Git starts.
+    clone_hook: std::sync::OnceLock<Arc<dyn Fn() + Send + Sync>>,
+    /// Debug-build seam invoked once Git has finished touching the staging tree.
+    clone_complete_hook: std::sync::OnceLock<Arc<dyn Fn() + Send + Sync>>,
 }
 impl fmt::Debug for GithubReader {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -795,6 +799,8 @@ impl GithubReader {
             state: Mutex::new(State::default()),
             requests: std::sync::atomic::AtomicU64::new(0),
             clone_source: std::sync::OnceLock::new(),
+            clone_hook: std::sync::OnceLock::new(),
+            clone_complete_hook: std::sync::OnceLock::new(),
         }
     }
     /// Network requests attempted by this reader (diagnostic counter for tests).
@@ -2487,7 +2493,6 @@ pub fn canonical_remote(repository: &RepoName, web_host: &str) -> String {
 /// `.git/config` and never logged. Protocols are pinned and prompts are off.
 fn clone_command(
     source: &str,
-    target: &Path,
     branch: Option<&str>,
     token: Option<&Secret>,
     protocol: &str,
@@ -2522,7 +2527,9 @@ fn clone_command(
     if let Some(branch) = branch {
         command.arg("--branch").arg(branch);
     }
-    command.arg("--").arg(source).arg(target);
+    // The staging directory is created before token minting and the child enters
+    // it with fchdir; clone into `.` so no mutable path is resolved after checks.
+    command.arg("--").arg(source).arg(".");
     command
 }
 
@@ -2536,6 +2543,19 @@ impl GithubReader {
         cfg!(debug_assertions)
             && self.base.as_ref().is_some_and(|base| base.loopback)
             && self.clone_source.set(directory).is_ok()
+    }
+
+    /// Test-only race seam for replacing the workspace pathname while the
+    /// already-pinned staging directory remains open.
+    #[doc(hidden)]
+    pub fn use_clone_hook(&self, hook: Arc<dyn Fn() + Send + Sync>) -> bool {
+        cfg!(debug_assertions) && self.clone_hook.set(hook).is_ok()
+    }
+
+    /// Test-only seam after Git completes and before lifecycle publication.
+    #[doc(hidden)]
+    pub fn use_clone_completion_hook(&self, hook: Arc<dyn Fn() + Send + Sync>) -> bool {
+        cfg!(debug_assertions) && self.clone_complete_hook.set(hook).is_ok()
     }
 
     /// One page of the repositories the installation can see. Each entry is marked
@@ -2624,7 +2644,7 @@ impl GithubReader {
     pub async fn clone_repository(
         &self,
         repository: &RepoName,
-        target: &Path,
+        staging: &crate::workspaces::PinnedStaging,
         max_bytes: u64,
     ) -> std::result::Result<Option<String>, &'static str> {
         if let Some(reason) = self.unconfigured_reason() {
@@ -2635,6 +2655,11 @@ impl GithubReader {
             .token(&mut budget, repository, Scope::Contents)
             .await
             .map_err(|failure| failure.reason())?;
+        if cfg!(debug_assertions)
+            && let Some(hook) = self.clone_hook.get()
+        {
+            hook();
+        }
         let web_host = self.web_host().to_owned();
         let (source, protocol) = match self.clone_source.get() {
             Some(directory) => (
@@ -2650,7 +2675,6 @@ impl GithubReader {
         };
         let mut command = clone_command(
             &source,
-            target,
             token.default_branch.as_deref(),
             Some(&token.token),
             protocol,
@@ -2658,24 +2682,45 @@ impl GithubReader {
         command
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stderr(std::process::Stdio::piped());
+        staging
+            .prepare_clone_command(&mut command, max_bytes)
+            .map_err(|_| "github_clone_failed")?;
         let mut command = tokio::process::Command::from(command);
         command.kill_on_drop(true);
         let mut child = command.spawn().map_err(|_| "git_unavailable")?;
-        let status = wait_for_workspace_clone(&mut child, target, max_bytes, CLONE_TIMEOUT).await?;
+        let stderr = child.stderr.take().ok_or("github_clone_failed")?;
+        let stderr_task = tokio::spawn(read_clone_stderr(stderr));
+        let status =
+            wait_for_workspace_clone(&mut child, staging, max_bytes, CLONE_TIMEOUT).await?;
+        let stderr = stderr_task.await.unwrap_or_default();
+        if !status.success() {
+            if child_was_signaled(&status) || clone_hit_file_limit(&stderr) {
+                return Err("clone_too_large");
+            }
+            return Err("github_clone_failed");
+        }
+        if staging.size(max_bytes).is_none_or(|size| size > max_bytes) {
+            return Err("clone_too_large");
+        }
+        let mut set_origin = crate::workspaces::git_command();
+        set_origin
+            .args(["remote", "set-url", "origin"])
+            .arg(canonical_remote(repository, &web_host))
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        staging
+            .prepare_clone_command(&mut set_origin, max_bytes)
+            .map_err(|_| "github_clone_failed")?;
+        let status = tokio::process::Command::from(set_origin)
+            .status()
+            .await
+            .map_err(|_| "github_clone_failed")?;
         if !status.success() {
             return Err("github_clone_failed");
         }
-        crate::store::git(
-            target,
-            &[
-                "remote",
-                "set-url",
-                "origin",
-                &canonical_remote(repository, &web_host),
-            ],
-        )
-        .map_err(|_| "github_clone_failed")?;
+        let target = staging.path();
         let config =
             std::fs::read(target.join(".git/config")).map_err(|_| "github_clone_failed")?;
         let text = String::from_utf8_lossy(&config).to_ascii_lowercase();
@@ -2685,19 +2730,24 @@ impl GithubReader {
         {
             return Err("github_clone_credential_persisted");
         }
+        if cfg!(debug_assertions)
+            && let Some(hook) = self.clone_complete_hook.get()
+        {
+            hook();
+        }
         Ok(token.default_branch)
     }
 }
 
 async fn wait_for_workspace_clone(
     child: &mut tokio::process::Child,
-    target: &Path,
+    staging: &crate::workspaces::PinnedStaging,
     max_bytes: u64,
     timeout: Duration,
 ) -> std::result::Result<std::process::ExitStatus, &'static str> {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        if workspace_size(target).is_none_or(|size| size > max_bytes) {
+        if staging.size(max_bytes).is_none_or(|size| size > max_bytes) {
             let _ = child.kill().await;
             let _ = child.wait().await;
             return Err("clone_too_large");
@@ -2708,38 +2758,47 @@ async fn wait_for_workspace_clone(
             return Err("github_clone_timeout");
         }
         match child.try_wait().map_err(|_| "git_unavailable")? {
+            Some(status) if child_was_signaled(&status) => return Err("clone_too_large"),
             Some(status) => return Ok(status),
             None => tokio::time::sleep(Duration::from_millis(100)).await,
         }
     }
 }
 
-/// Measure regular files without following symlinks. A failed walk is treated
-/// as over-limit so an unreadable staging tree cannot bypass the ceiling.
-fn workspace_size(root: &Path) -> Option<u64> {
-    match std::fs::symlink_metadata(root) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(0),
-        Err(_) => return None,
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => return None,
-        Ok(_) => {}
-    }
-    fn visit(path: &Path, total: &mut u64) -> Option<()> {
-        for entry in std::fs::read_dir(path).ok()? {
-            let entry = entry.ok()?;
-            let metadata = std::fs::symlink_metadata(entry.path()).ok()?;
-            if metadata.file_type().is_symlink() {
-                continue;
-            }
-            if metadata.is_dir() {
-                visit(&entry.path(), total)?;
-            } else if metadata.is_file() {
-                *total = total.saturating_add(metadata.len());
+async fn read_clone_stderr(mut stderr: tokio::process::ChildStderr) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    let mut kept = Vec::new();
+    let mut buffer = [0_u8; 4096];
+    loop {
+        match stderr.read(&mut buffer).await {
+            Ok(0) | Err(_) => break,
+            Ok(read) => {
+                if kept.len() < 16 * 1024 {
+                    let take = read.min(16 * 1024 - kept.len());
+                    kept.extend_from_slice(&buffer[..take]);
+                }
             }
         }
-        Some(())
     }
-    let mut total = 0;
-    visit(root, &mut total).map(|()| total)
+    kept
+}
+
+fn clone_hit_file_limit(stderr: &[u8]) -> bool {
+    let lower = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+    lower.contains("file too large") || lower.contains("file size limit exceeded")
+}
+
+fn child_was_signaled(status: &std::process::ExitStatus) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal().is_some()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = status;
+        false
+    }
 }
 
 pub type SharedReader = Arc<GithubReader>;
@@ -2947,7 +3006,6 @@ mod tests {
         let token = Secret("ghs_clonesecret".into());
         let command = clone_command(
             "https://github.com/joshyorko/plugins.git",
-            Path::new("/w/.tmp"),
             Some("main"),
             Some(&token),
             "https",
@@ -3036,25 +3094,5 @@ mod tests {
             serde_json::from_value::<GithubAppConfig>(json!({"app_id":1,"private_key_path":"/k.pem","allowed_repositories":["a/b"],"token":"x"}))
                 .is_err()
         );
-    }
-
-    #[tokio::test]
-    async fn clone_size_monitor_kills_a_child_that_exceeds_the_limit() {
-        let temp = tempfile::tempdir().unwrap();
-        let target = temp.path().join("clone");
-        std::fs::create_dir(&target).unwrap();
-        let mut child = tokio::process::Command::new("sh")
-            .args(["-c", "exec yes x > \"$1/file\"", "sh"])
-            .arg(&target)
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-        assert_eq!(
-            wait_for_workspace_clone(&mut child, &target, 1024 * 1024, Duration::from_secs(10))
-                .await
-                .unwrap_err(),
-            "clone_too_large"
-        );
-        assert!(std::fs::metadata(target.join("file")).unwrap().len() > 1024 * 1024);
     }
 }

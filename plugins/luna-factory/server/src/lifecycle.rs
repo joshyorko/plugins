@@ -1396,26 +1396,27 @@ impl Factory {
             matches!(crate::workspaces::target_state(&target)?, Target::Missing),
             "workspace_path_conflict"
         );
-        let staging = crate::workspaces::StagingGuard::new(crate::workspaces::staging_path(
-            workspaces, "connect",
-        ));
-        workspaces.check_root()?;
+        // Keep this directory descriptor across token minting and clone startup:
+        // a replaced workspace pathname cannot redirect the child's cwd.
+        let pinned_root = workspaces.open_pinned_root()?;
+        let staging = pinned_root.staging("connect")?;
         record.default_branch = match self
             .github
-            .clone_repository(&repository, staging.path(), workspaces.max_clone_bytes())
+            .clone_repository(&repository, &staging, workspaces.max_clone_bytes())
             .await
         {
             Ok(branch) => branch,
             Err(reason) => bail!(reason),
         };
-        let (device, inode) = crate::workspaces::directory_identity(staging.path())?;
+        let staging_path = staging.path();
+        let (device, inode) = crate::workspaces::directory_identity(&staging_path)?;
         record.device = Some(device);
         record.inode = Some(inode);
         let origin = crate::github::canonical_remote(&repository, self.github.web_host());
-        crate::workspaces::verify_recorded_repository(staging.path(), &record, Some(&origin))?;
+        crate::workspaces::verify_recorded_repository(&staging_path, &record, Some(&origin))?;
         self.save_pending_workspace(&record).await?;
         workspaces.check_root()?;
-        crate::workspaces::publish(staging.path(), &target)?;
+        staging.publish(&record.directory)?;
         let record = self.register_workspace(workspaces, record).await?;
         Ok(record.connect_result("connected"))
     }

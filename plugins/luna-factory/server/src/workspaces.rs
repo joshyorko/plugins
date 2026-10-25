@@ -105,6 +105,11 @@ impl Workspaces {
         );
         Ok(())
     }
+    /// Open the configured root once and pin all connect-clone filesystem work
+    /// to its captured identity, even if the path is replaced during an await.
+    pub fn open_pinned_root(&self) -> Result<PinnedWorkspaceRoot> {
+        PinnedWorkspaceRoot::open(self)
+    }
     pub fn max_clone_bytes(&self) -> u64 {
         self.max_clone_bytes.unwrap_or(DEFAULT_MAX_CLONE_BYTES)
     }
@@ -122,6 +127,411 @@ impl Workspaces {
             max_finish: MAX_FINISH.into(),
         }
     }
+}
+
+/// A workspace directory held by descriptor rather than by its mutable path.
+pub struct PinnedWorkspaceRoot {
+    #[cfg(target_os = "linux")]
+    fd: std::os::fd::OwnedFd,
+}
+
+impl PinnedWorkspaceRoot {
+    #[cfg(target_os = "linux")]
+    fn open(workspaces: &Workspaces) -> Result<Self> {
+        use std::os::fd::{AsRawFd, FromRawFd};
+        let expected = workspaces
+            .root_identity
+            .get()
+            .context("workspace_root_identity_unavailable")?;
+        let path = std::ffi::CString::new(workspaces.root.as_os_str().as_encoded_bytes())
+            .context("workspace_root_changed")?;
+        // SAFETY: `path` is a NUL-terminated path; the returned fd is owned below.
+        let raw = unsafe {
+            libc::open(
+                path.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        ensure!(raw >= 0, "workspace_root_changed");
+        // SAFETY: `open` returned a new descriptor which this value owns.
+        let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(raw) };
+        let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: `fd` is open and `metadata` points to writable storage.
+        ensure!(
+            unsafe { libc::fstat(fd.as_raw_fd(), metadata.as_mut_ptr()) } == 0,
+            "workspace_root_changed"
+        );
+        // SAFETY: fstat succeeded and initialized the structure.
+        let metadata = unsafe { metadata.assume_init() };
+        ensure!(
+            metadata.st_mode & libc::S_IFMT == libc::S_IFDIR
+                && metadata.st_dev == expected.device
+                && metadata.st_ino == expected.inode,
+            "workspace_root_changed"
+        );
+        Ok(Self { fd })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn open(_: &Workspaces) -> Result<Self> {
+        anyhow::bail!("workspace_fd_operations_require_linux")
+    }
+
+    /// Create a mode-0700 staging directory under the pinned root.
+    pub fn staging(&self, kind: &str) -> Result<PinnedStaging> {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::fd::{AsRawFd, FromRawFd};
+            let name = format!(".luna-{kind}-{}", uuid::Uuid::new_v4().simple());
+            let c_name = c_name(&name)?;
+            // SAFETY: `fd` names an open directory and `c_name` is a valid child name.
+            ensure!(
+                unsafe { libc::mkdirat(self.fd.as_raw_fd(), c_name.as_ptr(), 0o700) } == 0,
+                "workspace_staging_invalid"
+            );
+            // SAFETY: `openat` returns an owned fd; O_NOFOLLOW prevents path redirection.
+            let raw = unsafe {
+                libc::openat(
+                    self.fd.as_raw_fd(),
+                    c_name.as_ptr(),
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                )
+            };
+            if raw < 0 {
+                let _ = unsafe {
+                    libc::unlinkat(self.fd.as_raw_fd(), c_name.as_ptr(), libc::AT_REMOVEDIR)
+                };
+                anyhow::bail!("workspace_staging_invalid");
+            }
+            // SAFETY: `openat` returned a new descriptor which this value owns.
+            let directory = unsafe { std::os::fd::OwnedFd::from_raw_fd(raw) };
+            let root = self.fd.try_clone().context("workspace_staging_invalid")?;
+            Ok(PinnedStaging {
+                root,
+                directory,
+                name,
+            })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = kind;
+            anyhow::bail!("workspace_fd_operations_require_linux")
+        }
+    }
+}
+
+/// Private staging area whose parent and contents stay reachable through fds.
+pub struct PinnedStaging {
+    #[cfg(target_os = "linux")]
+    root: std::os::fd::OwnedFd,
+    #[cfg(target_os = "linux")]
+    directory: std::os::fd::OwnedFd,
+    #[cfg(target_os = "linux")]
+    name: String,
+}
+
+impl PinnedStaging {
+    /// `/proc/self/fd` keeps existing repository validators anchored to this fd.
+    pub fn path(&self) -> PathBuf {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::fd::AsRawFd;
+            PathBuf::from(format!("/proc/self/fd/{}/.", self.directory.as_raw_fd()))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            PathBuf::new()
+        }
+    }
+
+    /// Arrange for the child to enter this directory and enforce the hard
+    /// per-file clone limit before it executes git.
+    pub fn prepare_clone_command(
+        &self,
+        command: &mut std::process::Command,
+        max_bytes: u64,
+    ) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::{fd::AsRawFd, unix::process::CommandExt};
+            let directory_fd = self.directory.as_raw_fd();
+            let limit: libc::rlim_t = max_bytes;
+            // SAFETY: the captured descriptor remains open while this staging
+            // guard lives; both operations are async-signal-safe in pre_exec.
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::fchdir(directory_fd) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    let limits = libc::rlimit {
+                        rlim_cur: limit,
+                        rlim_max: limit,
+                    };
+                    if libc::setrlimit(libc::RLIMIT_FSIZE, &limits) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            Ok(())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (command, max_bytes);
+            anyhow::bail!("workspace_fd_operations_require_linux")
+        }
+    }
+
+    /// Atomically publish without replacing an existing target, relative to
+    /// the pinned root descriptor.
+    pub fn publish(&self, final_name: &str) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::fd::AsRawFd;
+            let from = c_name(&self.name)?;
+            let to = c_name(final_name)?;
+            // Linux renameat2 provides an atomic no-replace publication.
+            // SAFETY: both directory descriptors are held open and names are NUL-free.
+            let result = unsafe {
+                libc::syscall(
+                    libc::SYS_renameat2,
+                    self.root.as_raw_fd(),
+                    from.as_ptr(),
+                    self.root.as_raw_fd(),
+                    to.as_ptr(),
+                    libc::RENAME_NOREPLACE,
+                )
+            };
+            if result == 0 {
+                return Ok(());
+            }
+            let error = std::io::Error::last_os_error();
+            if !matches!(error.raw_os_error(), Some(code) if code == libc::ENOSYS || code == libc::EINVAL)
+            {
+                anyhow::bail!("workspace_path_conflict");
+            }
+            // Old Linux kernels may lack renameat2. Check through the fd, then
+            // renameat; this fallback preserves the existing best-effort contract.
+            let mut target = std::mem::MaybeUninit::<libc::stat>::uninit();
+            // SAFETY: both pointers are valid; AT_SYMLINK_NOFOLLOW never follows a target.
+            let exists = unsafe {
+                libc::fstatat(
+                    self.root.as_raw_fd(),
+                    to.as_ptr(),
+                    target.as_mut_ptr(),
+                    libc::AT_SYMLINK_NOFOLLOW,
+                )
+            };
+            if exists == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ENOENT) {
+                anyhow::bail!("workspace_path_conflict");
+            }
+            // SAFETY: source and destination are names relative to held directory fds.
+            ensure!(
+                unsafe {
+                    libc::renameat(
+                        self.root.as_raw_fd(),
+                        from.as_ptr(),
+                        self.root.as_raw_fd(),
+                        to.as_ptr(),
+                    )
+                } == 0,
+                "workspace_path_conflict"
+            );
+            Ok(())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = final_name;
+            anyhow::bail!("workspace_fd_operations_require_linux")
+        }
+    }
+
+    /// Keep total-size sampling anchored to this staging directory descriptor.
+    pub fn size(&self, maximum: u64) -> Option<u64> {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::fd::AsRawFd;
+            size_directory(self.directory.as_raw_fd(), maximum)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = maximum;
+            None
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for PinnedStaging {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd;
+        let Ok(name) = c_name(&self.name) else { return };
+        let _ = remove_tree_at(self.root.as_raw_fd(), &name);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn c_name(name: &str) -> Result<std::ffi::CString> {
+    use std::os::unix::ffi::OsStrExt;
+    std::ffi::CString::new(std::ffi::OsStr::new(name).as_bytes())
+        .context("workspace_staging_invalid")
+}
+
+#[cfg(target_os = "linux")]
+fn remove_tree_at(parent: std::os::fd::RawFd, name: &std::ffi::CStr) -> std::io::Result<()> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    // SAFETY: fstatat inspects the entry without following symlinks.
+    let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
+    if unsafe {
+        libc::fstatat(
+            parent,
+            name.as_ptr(),
+            metadata.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } != 0
+    {
+        let error = std::io::Error::last_os_error();
+        return if error.raw_os_error() == Some(libc::ENOENT) {
+            Ok(())
+        } else {
+            Err(error)
+        };
+    }
+    // SAFETY: fstatat succeeded and initialized metadata.
+    let metadata = unsafe { metadata.assume_init() };
+    if metadata.st_mode & libc::S_IFMT != libc::S_IFDIR {
+        // SAFETY: unlinkat removes this name itself and does not follow symlinks.
+        return if unsafe { libc::unlinkat(parent, name.as_ptr(), 0) } == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        };
+    }
+    // SAFETY: openat refuses symlinks and yields an owned directory descriptor.
+    let raw = unsafe {
+        libc::openat(
+            parent,
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if raw < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `raw` is newly opened and owned here.
+    let directory = unsafe { std::os::fd::OwnedFd::from_raw_fd(raw) };
+    let scan_fd = unsafe { libc::fcntl(directory.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
+    if scan_fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: fdopendir takes ownership of scan_fd on success.
+    let stream = unsafe { libc::fdopendir(scan_fd) };
+    if stream.is_null() {
+        let error = std::io::Error::last_os_error();
+        unsafe { libc::close(scan_fd) };
+        return Err(error);
+    }
+    let mut names = Vec::new();
+    loop {
+        // SAFETY: stream is a live DIR* until closed below.
+        let entry = unsafe { libc::readdir(stream) };
+        if entry.is_null() {
+            break;
+        }
+        let bytes = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+        if bytes == b"." || bytes == b".." {
+            continue;
+        }
+        names.push(std::ffi::CString::new(bytes).expect("dirent names contain no NUL"));
+    }
+    unsafe { libc::closedir(stream) };
+    for child in names {
+        remove_tree_at(directory.as_raw_fd(), &child)?;
+    }
+    // SAFETY: the descriptor still points to the same opened directory.
+    if unsafe { libc::unlinkat(parent, name.as_ptr(), libc::AT_REMOVEDIR) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn size_directory(fd: std::os::fd::RawFd, maximum: u64) -> Option<u64> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    let dot = c_name(".").ok()?;
+    let scan_fd = unsafe {
+        libc::openat(
+            fd,
+            dot.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if scan_fd < 0 {
+        return None;
+    }
+    let stream = unsafe { libc::fdopendir(scan_fd) };
+    if stream.is_null() {
+        unsafe { libc::close(scan_fd) };
+        return None;
+    }
+    let mut total = 0_u64;
+    loop {
+        let entry = unsafe { libc::readdir(stream) };
+        if entry.is_null() {
+            break;
+        }
+        let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) };
+        if matches!(name.to_bytes(), b"." | b"..") {
+            continue;
+        }
+        let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
+        if unsafe {
+            libc::fstatat(
+                fd,
+                name.as_ptr(),
+                metadata.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } != 0
+        {
+            unsafe { libc::closedir(stream) };
+            return None;
+        }
+        let metadata = unsafe { metadata.assume_init() };
+        match metadata.st_mode & libc::S_IFMT {
+            libc::S_IFLNK => continue,
+            libc::S_IFDIR => {
+                let raw = unsafe {
+                    libc::openat(
+                        fd,
+                        name.as_ptr(),
+                        libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                    )
+                };
+                if raw < 0 {
+                    unsafe { libc::closedir(stream) };
+                    return None;
+                }
+                let child = unsafe { std::os::fd::OwnedFd::from_raw_fd(raw) };
+                let Some(size) = size_directory(child.as_raw_fd(), maximum.saturating_sub(total))
+                else {
+                    unsafe { libc::closedir(stream) };
+                    return None;
+                };
+                total = total.saturating_add(size);
+            }
+            libc::S_IFREG => total = total.saturating_add(metadata.st_size.max(0) as u64),
+            _ => continue,
+        }
+        if total > maximum {
+            unsafe { libc::closedir(stream) };
+            return Some(total);
+        }
+    }
+    unsafe { libc::closedir(stream) };
+    Some(total)
 }
 #[cfg(unix)]
 fn metadata_device(metadata: &std::fs::Metadata) -> u64 {

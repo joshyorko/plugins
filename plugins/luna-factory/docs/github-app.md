@@ -467,6 +467,8 @@ or a brand new local one) and plan in it, without a separate approval step.
   text alone never authorizes adoption. Symlinks are never followed. Clones are staged inside
   the workspace root, monitored against `max_clone_bytes`, and atomically renamed only after
   rechecking the root identity.
+- Connecting a repository is supported only on Linux. Luna opens and verifies the workspace root once, creates staging through that directory descriptor, runs Git after `fchdir` into the pinned staging descriptor, and publishes with a no-replace rename relative to the pinned root. Replacing the configured root path during token minting cannot redirect clone writes.
+- Every file is hard-capped at `max_clone_bytes`; the total is checked every 100 ms and the clone is stopped when it exceeds the limit, so the total can overshoot by what git writes in one interval. A kernel `RLIMIT_FSIZE` failure is reported as `clone_too_large`.
 - `create_factory_local_repository {name, idempotency_key}` runs `git init` on `main` with
   one empty commit at `<root>/<name>`. No GitHub call.
 - Either way the repository becomes an approved alias (the repository name, or

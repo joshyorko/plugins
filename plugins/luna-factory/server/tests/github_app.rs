@@ -2459,6 +2459,113 @@ async fn connecting_clones_with_a_narrowed_token_and_leaves_no_credential_behind
 }
 
 #[tokio::test]
+async fn replacing_workspace_root_during_token_mint_keeps_clone_in_pinned_root() {
+    let (h, root) = workspace_harness(workspace_world(0), |_, _| {}).await;
+    let moved = h._temp.path().join("workspaces-original");
+    let elsewhere = h._temp.path().join("replacement");
+    std::fs::create_dir(&elsewhere).unwrap();
+    let root_for_hook = root.clone();
+    let moved_for_hook = moved.clone();
+    let elsewhere_for_hook = elsewhere.clone();
+    assert!(
+        h.server
+            .factory
+            .github_reader()
+            .use_clone_hook(std::sync::Arc::new(move || {
+                std::fs::rename(&root_for_hook, &moved_for_hook).unwrap();
+                std::os::unix::fs::symlink(&elsewhere_for_hook, &root_for_hook).unwrap();
+            }))
+    );
+    let root_for_restore = root.clone();
+    let moved_for_restore = moved.clone();
+    assert!(
+        h.server
+            .factory
+            .github_reader()
+            .use_clone_completion_hook(std::sync::Arc::new(move || {
+                std::fs::remove_file(&root_for_restore).unwrap();
+                std::fs::rename(&moved_for_restore, &root_for_restore).unwrap();
+            }))
+    );
+
+    let connected = invoke(
+        &h,
+        "connect_factory_github_repository",
+        json!({"repository":"joshyorko/widget","idempotency_key":"root-swap"}),
+    )
+    .await;
+    assert_eq!(connected["status"], "connected");
+    assert!(root.join("joshyorko__widget/README.md").is_file());
+    assert!(!moved.exists());
+    assert!(!elsewhere.join("joshyorko__widget").exists());
+    assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn clone_file_limit_is_hard_and_failed_clone_cleans_staging() {
+    let mut world = workspace_world(0);
+    world
+        .repositories
+        .push(repository("joshyorko/oversized", 9, None));
+    let (h, root) = workspace_harness(world, |config, _| {
+        config["workspaces"]["max_clone_bytes"] = json!(1_048_576_u64);
+    })
+    .await;
+    let work = h._temp.path().join("work-oversized");
+    std::fs::create_dir(&work).unwrap();
+    git(&work, &["init", "-q", "-b", "main"]);
+    let mut state = 0x6d2b_79f5_u32;
+    let mut large = vec![0_u8; 2 * 1024 * 1024];
+    for byte in &mut large {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        *byte = state as u8;
+    }
+    std::fs::write(work.join("large.bin"), large).unwrap();
+    git(&work, &["add", "large.bin"]);
+    git(
+        &work,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "large fixture",
+        ],
+    );
+    let fixtures = h._temp.path().join("git-fixtures/joshyorko");
+    std::fs::create_dir_all(&fixtures).unwrap();
+    git(
+        h._temp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            work.to_str().unwrap(),
+            fixtures.join("oversized.git").to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(
+        invoke_err(
+            &h,
+            "connect_factory_github_repository",
+            json!({"repository":"joshyorko/oversized","idempotency_key":"too-large"}),
+        )
+        .await,
+        "clone_too_large"
+    );
+    assert_eq!(
+        std::fs::read_dir(&root).unwrap().count(),
+        0,
+        "staging is removed"
+    );
+}
+
+#[tokio::test]
 async fn existing_workspace_paths_conflict_unless_they_are_the_same_repository() {
     let (h, root) = workspace_harness(workspace_world(0), |_, _| {}).await;
     h.world
