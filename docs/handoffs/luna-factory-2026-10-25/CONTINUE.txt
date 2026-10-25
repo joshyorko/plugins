@@ -1,4 +1,10 @@
-Resume the approved Luna Factory engineering and UX work in joshyorko/plugins.
+Finish the approved Luna Factory work in existing PR #91, joshyorko/plugins.
+
+Use ONE agent, ONE branch (luna-factory/qualification-gate), and ONE PR (#91).
+All recovered backend work, current main, and the UX handoff are merged into this
+branch. Do not create new implementation branches, PRs, or parallel agent lanes.
+Push all further work to this same PR. The owner explicitly accepts an unfinished
+plugin checkpoint; do not confuse this handoff with a completed implementation.
 
 Start by fetching origin and reading this handoff's sibling files. Do not restart
 the original three-direction design exercise or repeat the recovery described
@@ -8,18 +14,18 @@ remaining backend security fixes.
 Repository and checkpoints
 
 - Repository: https://github.com/joshyorko/plugins
-- Snapshot branch: checkpoint/luna-factory-handoff-20261025
+- Working branch: luna-factory/qualification-gate. Track existing PR #91.
 - Remote main observed on 2026-10-25:
-  decc2bf6c8a043176a22444d738881b09f3c99e8
-- PR #91, draft, branch luna-factory/qualification-gate:
+  eabf0531c76456ed0b34799bfd8a107fae18fbce
+- PR #91, the single active draft. Fetch its latest head. Original recovery input:
   https://github.com/joshyorko/plugins/pull/91
   7951f40fa68ca6218e3a9fe11387668ce80b0837
-- PR #96, draft, branch luna-factory/github-repos:
+- PR #96, superseded by #91. Its fully merged recovery input:
   https://github.com/joshyorko/plugins/pull/96
   0b8675eb6e14cb83a3fcd29a88c28fb2566656b7
-- Branch luna-factory/ux-slice-1 exists remotely at
-  4664b855869fdad863e80ddb1bddc5e39ce19315. No slice-1 changes were made.
-  Start slice 1 from the latest origin/main after inspecting the branch.
+- UX slice 1 had no changes at the pause. Its starting commit was
+  4664b855869fdad863e80ddb1bddc5e39ce19315, already included through main.
+  Implement all five slices directly on the existing #91 branch.
 
 Read these archived sources
 
@@ -65,9 +71,17 @@ The historical source sessions were:
 
 Backend work remaining
 
-Keep #91 and #96 draft until their findings are fixed, independently reviewed,
-and validated on their exact final heads. Neither checkpoint was rebased onto
-current main. Old green CI and old PR-body validation do not qualify these heads.
+Keep #91 draft until the remaining work is fixed, independently reviewed, and
+validated on its exact final head. Both security checkpoints and current main
+are merged as ancestors of this branch. #96 is superseded, not another work lane.
+Old green CI and old PR-body validation do not qualify this combined head.
+
+A containerized cargo check --locked --all-targets was run after convergence.
+It fails with seven errors. See convergence-cargo-check.txt for exact locations:
+missing UNIX_EPOCH, missing qualification_timestamp, an escaping borrow, and
+unsupported u64 SQLite conversions. bin/check passes with 53 unit tests.
+The owner requested gathering the work first, so these failures are deliberately
+left for you to finish rather than repaired during the convergence turn.
 
 PR #91 addresses six findings:
 1. Revocation while an effectful native write is blocked.
@@ -102,13 +116,12 @@ against the actual combined branch when rebasing; do not copy an obsolete count.
 
 UX work remaining
 
-Use Claude Opus 5.5 for UX implementation and design review. Use Kimi K3 through
-opencode/OpenRouter for the independent screenshot review where available.
-Use gpt-6-luna workers for backend work only. Discover current provider/model IDs
-and options before dispatching. Do not silently substitute Luna for UX work.
-If a requested model is unavailable, report the mismatch.
+Use one finishing agent. Claude Opus 5.5 is the owner-preferred model for the
+remaining UX work and can own this whole continuation. Do not spawn implementation
+workers or new lanes. Historical Luna/backend and Kimi/review dispatch instructions
+in the archived briefs do not override this one-agent request.
 
-Build the five UX slices sequentially, one PR per slice, because they share files:
+Build the five UX slices sequentially as checkpoints within the SAME PR #91:
 1. Tokens, shell, and header.
 2. Plain vocabulary and a test preventing the banned terms from returning.
 3. Home with the composer and repository popover built in.
@@ -125,14 +138,15 @@ Preserve server authority, revision fencing, evidence, and permission boundaries
 For each slice, follow its exact acceptance criteria, regenerate dist and the
 capture manifest, inspect every changed screenshot in light, dark, narrow, and
 mobile layouts, and run the required checks. Source inspection alone is not UX
-acceptance. Show the owner representative screenshots before merging each slice.
+acceptance. Show representative screenshots as the work progresses. Do not open
+separate slice PRs or merge incomplete slices into main.
 
 Execution and authority
 
 Read applicable AGENTS.md first. Map the checkout and keep an execution plan.
 Use ghx for read-only GitHub operations and gh for authorized writes. Register
-every PR worked on with T3 link_pull_request. Use isolated checkouts outside the
-second_brain tree or app-managed worktrees, and never overwrite unrelated work.
+every PR worked on with T3 link_pull_request. Use one checkout of the existing #91 branch outside the
+second_brain tree or an app-managed checkout. Never overwrite unrelated work.
 The main local checkout was clean but behind origin/main during recovery.
 
 Preserve the machine limits in the briefs. Run heavy work with nice -n 10.
@@ -156,6 +170,6 @@ GitHub App permissions, write a real qualification, or start live inference.
 Do not perform credential changes, real qualification writes, or live inference
 without explicit operator authority. Preserve the existing live service and data.
 
-Begin by verifying the remote checkpoint SHAs and inspecting #91's formatting
-failure. Resume the two backend repairs in separate checkouts and UX slice 1 on
-the latest main, with the model assignments and shared build locks above.
+Begin by checking out the latest remote luna-factory/qualification-gate head.
+Read convergence-cargo-check.txt and finish the backend repairs, then the five
+UX slices, on this same branch and PR. Keep the one-agent ownership throughout.

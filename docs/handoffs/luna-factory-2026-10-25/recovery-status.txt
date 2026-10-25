@@ -24,3 +24,8 @@ The handoff snapshot passed bin/check: 53 unit tests and repository validation.
 The archive preserves source bytes. git diff --cached --check reports five
 existing trailing-whitespace lines in the archived UX review, original mockup,
 and captured formatting diagnostic. Those historical bytes were retained.
+
+Convergence update: both recovered PR heads, the handoff snapshot, and main at
+eabf053 are merged into the existing #91 branch. bin/check passes, 53 tests.
+A fresh cargo check --locked --all-targets fails with seven compile errors; see
+convergence-cargo-check.txt. Plugin completion is left to one agent on this PR.
