@@ -33,6 +33,7 @@ Use this skill when the task is about RCC itself rather than a specific RCC-back
 
 - `references/rcc-source-recipes.md`: RCC command map, source tree orientation, holotree/cache, endpoints, remote cache, and fork development recipes.
 - `references/environment-artifacts.md`: v18.19.7 identity, compatibility, publish/acquire/export/exec, archives, leases, lifecycle inspection/repair, GC, and warm reuse.
+- Quick recipes: [RCC health](references/rcc-source-recipes.md#recipe-rcc-health) and [Inspect Environment Artifact](references/environment-artifacts.md#recipe-inspect-environment-artifact).
 - `references/providers-and-trust.md`: named providers, loopback cache server, transport/security rules, detached trust, receipts, and `rccremote` compatibility.
 - `references/build-coordination.md`: actual v18.19.7 coordinate/prewarm CLI and JSON behavior, Linux execution boundary, failure model, and acceptance limitations.
 - `../rcc-robots/references/rcc-command-recipes.md`: robot-facing commands and environment recipes.

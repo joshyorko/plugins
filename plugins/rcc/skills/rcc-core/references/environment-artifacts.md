@@ -17,6 +17,32 @@ Do not conflate:
 - local materialization ID/path; or
 - process-scoped execution lease.
 
+## Recipe: Inspect Environment Artifact
+
+**Intent:** Inspect the distinct provider identity, trust evidence, local materialization, and lifecycle state for a known Environment Artifact.
+
+**Owner:** `$rcc-core`.
+
+**Preflight:** Confirm `rcc version` is v18.19.7 and identify host/container/CI. Set `artifact_digest` to the canonical lowercase `sha256:` plus 64 hex digits and `provider_reference` to an existing profile. Set `inspection_home` to an absolute, isolated, nonproduction RCC home. For production, review supplied metadata/receipts instead of running lifecycle commands against the live home; an empty inspection home cannot establish production state.
+
+**Command:**
+
+```sh
+rcc version
+rcc provider list --json
+rcc provider inspect "$provider_reference" --json
+ROBOCORP_HOME="$inspection_home" RCC_HOLOTREE_MODE=private rcc env lifecycle inspect --artifact "$artifact_digest" --json
+ROBOCORP_HOME="$inspection_home" RCC_HOLOTREE_MODE=private rcc env lifecycle verify --artifact "$artifact_digest" --json
+```
+
+**Success evidence:** Provider commands report configured provider identity; lifecycle commands report local lifecycle state and, when ready, verify the materialization boundary. These commands do not establish cryptographic trust: inspect trust carriers/roots separately using [providers-and-trust.md](providers-and-trust.md).
+
+**Side effects:** Provider list/inspect read configuration without probing the provider network. Lifecycle inspect/verify create local lock directories/files and reconcile state: they can remove stale lease records and provisional crash journals. Run them only in the isolated home. They do not acquire, publish, or delete Artifact content and do not replace trust verification. Redact paths/endpoints before sharing.
+
+**Failure routing:** Provider identity/availability goes to provider guidance; trust evidence goes to [providers-and-trust.md](providers-and-trust.md); local lifecycle/materialization goes to `$rcc-core`; compatibility or task execution goes to `$rcc-robots`.
+
+**Source:** Installed RCC v18.19.7 `rcc provider list --help`, `rcc provider inspect --help`, and `rcc env lifecycle inspect --help`; [Keep The Identities Separate](#keep-the-identities-separate) and [Leases, Recovery, And GC](#leases-recovery-and-gc). Local mutation is verified in v18.19.7 [`Inspect`/`Verify`](https://github.com/joshyorko/rcc/blob/v18.19.7/environmentlifecycle/admin.go) and [`reconcileLockedWithRepair`](https://github.com/joshyorko/rcc/blob/v18.19.7/environmentlifecycle/reconcile.go).
+
 Manifest, Specification, Descriptor, Object Index, and Platform Index JSON is canonical and strict. Duplicate keys, unknown fields, trailing JSON, wrong field order/whitespace, noncanonical digests, inconsistent totals, or incomplete descriptor closure fail closed.
 
 ## Compatibility

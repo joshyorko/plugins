@@ -51,6 +51,30 @@ Check:
 
 For uv-native mode, also verify the exact declared Python/uv versions, that no inherited `UV_*` policy is being assumed, that staged Python symlinks remain within the selected prefix, and that RCC's dependency inventory/strict check completed.
 
+## Recipe: Debug environment
+
+**Intent:** Separate RCC environment resolution from Python startup and task failures.
+
+**Owner:** `$rcc-robots` for project diagnosis; route RCC internals to `$rcc-core`.
+
+**Preflight:** Confirm `rcc version` is v18.19.7; identify host/container/CI and its `ROBOCORP_HOME`; inspect the project's `robot.yaml` and `conda.yaml`.
+
+**Command:**
+
+```sh
+rcc diagnostics --robot robot.yaml --json
+rcc ht vars -r robot.yaml --json
+rcc task script -r robot.yaml --silent -- python -V
+```
+
+**Success evidence:** Run the commands in order and stop at the first failure. Diagnostics report individual checks, `ht vars` resolves the selected environment, then Python reports its version. A missing or invalid environment file identifies a project configuration failure; it is not evidence of a Python task failure. Continue to package/task checks only after these layers pass.
+
+**Side effects:** `ht vars` resolves the environment and can download dependencies, run configured post-install hooks, and write Holotree/cache/log state. Review hooks before resolving. JSON may expose runtime paths, variables, and secrets; redact before sharing.
+
+**Failure routing:** RCC diagnostics or `ht vars` failures route to `$rcc-core`; Python/package/task failures after resolution stay with `$rcc-robots`.
+
+**Source:** Installed RCC v18.19.7 `rcc diagnostics --help` and `rcc ht vars --help`; [Split The Failure](#split-the-failure).
+
 ## Environment Artifact Failures
 
 Start read-only and keep the layers separate:

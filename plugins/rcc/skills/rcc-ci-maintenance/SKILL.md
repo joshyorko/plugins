@@ -34,6 +34,7 @@ Use this skill for RCC-powered CI and repository maintenance robots.
 - `references/room-of-requirement-maintenance.md`: sourced pattern from `joshyorko/room-of-requirement` maintenance robot and GitHub Actions workflow.
 - `references/docdb-workflow-ci.md`: production DocDB/RPA GitHub Actions pattern for queue setup, helper calls, matrix workers, retry/outbox, and artifacts.
 - `references/environment-artifact-ci.md`: v18.19.7 artifact promotion, native runtime, provider/trust, and coordination/prewarm CI evidence.
+- Quick recipe: [CI/cache troubleshooting](references/environment-artifact-ci.md#recipe-cicache-troubleshooting).
 - `../rcc-workitems/references/docdb-rpa-patterns.md`: DocDB queue/outbox/helper details owned by the work-items skill.
 - `../rcc-robots/references/rcc-command-recipes.md`: RCC command and cache background.
 - `../rcc-robots/references/troubleshooting-validation.md`: CI and environment failure triage.

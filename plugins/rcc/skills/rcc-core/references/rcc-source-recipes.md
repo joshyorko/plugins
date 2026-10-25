@@ -65,6 +65,30 @@ rcc env coordinate --help
 
 Read `environment-artifacts.md` before publish/acquire/export/exec or lifecycle mutation, `providers-and-trust.md` before provider/trust/cache-server work, and `build-coordination.md` before using coordination or prewarm. Confirm the exact subcommand help because several machine-contract details differ from broad design documents.
 
+## Recipe: RCC health
+
+**Intent:** Check RCC binary, profile, endpoint, and host health before project debugging.
+
+**Owner:** `$rcc-core`.
+
+**Preflight:** Confirm `rcc version` is v18.19.7; identify whether this runs on the host, in a container, or in CI, and note that context's `ROBOCORP_HOME`.
+
+**Command:**
+
+```sh
+rcc version
+rcc diagnostics --quick --json
+rcc configuration settings --json
+```
+
+**Success evidence:** Version is v18.19.7; diagnostic JSON shows completed checks and settings JSON reports effective configuration. Investigate any failed check before robot-level triage.
+
+**Side effects:** Reads local RCC configuration and may make network probes/write RCC logs. Treat configuration/diagnostic output as sensitive: inspect locally and redact paths, endpoints, and any credentials before sharing.
+
+**Failure routing:** Binary/configuration/endpoint/host failure stays with `$rcc-core`; after health passes, continue with `$rcc-robots` and a project-specific robot diagnostic.
+
+**Source:** Installed RCC v18.19.7 `rcc diagnostics --help` and `rcc configuration settings --help`; [Command Map](#command-map).
+
 Use `--debug`, `--trace`, and `--timeline` only after a normal command has shown the failing layer.
 
 ## Troubleshooting Ladder
