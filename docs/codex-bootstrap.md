@@ -67,9 +67,17 @@ Common options:
 - `--marketplace-name my-plugins` — customize the marketplace entry name.
 - `--install-method archive` — force archive mode even if git is installed.
 - `--skill-mode copy` — copy skills instead of symlinking.
+- `--with-rcc-tldr` — opt in to managed offline `tldr rcc` setup using an existing Tealdeer installation.
+- `--rcc-tldr-mode copy` — opt in with a managed copy instead of preferring a symlink.
 - `--force` — replace conflicting skill entries.
 
 After install, restart Codex and run `/plugins` to confirm the marketplace is visible.
+
+### Optional RCC quick reference
+
+Pass `--with-rcc-tldr` to either the public Linux/macOS entrypoint or the local installer. The helper discovers Tealdeer's configured paths and preserves existing pages and configuration. A canonical RCC page symlink is adopted without replacement; other existing custom pages are left alone. This feature never installs Tealdeer.
+
+The opt-in receipt persists outside the checkout. Normal installer reruns synchronize managed copies without repeating the flag; links into the stable checkout follow its updates. For native marketplace installs, select RCC's Tealdeer setup starter prompt instead. Explicit setup adds one owned user hook to Codex's `hooks.json`, preserving unrelated entries. That session-start hook refreshes opted-in managed snapshot pages from the local cache after upgrades, when hooks are allowed and trusted. See the [daily-use guide](../plugins/rcc/skills/rcc-core/references/tldr/README.md#managed-daily-use) for adoption, hook limitations, manual synchronization, and feature-only uninstall.
 
 ## Uninstall
 

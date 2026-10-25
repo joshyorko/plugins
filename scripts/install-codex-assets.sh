@@ -19,6 +19,7 @@ REF_SPEC="${REF_SPEC:-}"
 RESOLVED_REF_OVERRIDE="${RESOLVED_REF:-}"
 FORCE=0
 SKIP_REPO_SYNC=0
+RCC_TLDR_MODE=""
 MARKETPLACE_STATUS="not attempted"
 
 MANAGED_SKILLS=()
@@ -46,6 +47,8 @@ Options:
   --ref REF                Ref to sync when managing the repo checkout directly
   --resolved-ref REF       Resolved ref metadata to record in install state
   --skip-repo-sync         Skip clone/update logic and install from an existing checkout
+  --with-rcc-tldr          Opt in to the managed RCC Tealdeer page (client must exist)
+  --rcc-tldr-mode MODE     auto (prefer links), link, or copy; also opts in
   --force                  Replace conflicting skill entries
   -h, --help               Show this help message
 
@@ -168,6 +171,14 @@ while [[ $# -gt 0 ]]; do
       SKIP_REPO_SYNC=1
       shift
       ;;
+    --with-rcc-tldr)
+      RCC_TLDR_MODE="${RCC_TLDR_MODE:-auto}"
+      shift
+      ;;
+    --rcc-tldr-mode)
+      RCC_TLDR_MODE="$2"
+      shift 2
+      ;;
     --link)
       SKILL_MODE="link"
       shift
@@ -207,6 +218,11 @@ case "$INSTALL_METHOD" in
     echo "Invalid install method: ${INSTALL_METHOD}" >&2
     exit 1
     ;;
+esac
+
+case "$RCC_TLDR_MODE" in
+  ""|auto|link|copy) ;;
+  *) echo "Invalid RCC Tealdeer mode: ${RCC_TLDR_MODE}" >&2; exit 1 ;;
 esac
 
 REPO_PATH="$(normalize_path "$REPO_PATH")"
@@ -499,6 +515,14 @@ main() {
   register_marketplace
   install_skills
   write_state
+
+  local tldr_helper="${REPO_PATH}/plugins/rcc/skills/rcc-core/scripts/tealdeer.py"
+  if [[ -n "$RCC_TLDR_MODE" ]]; then
+    python3 "$tldr_helper" install --mode "$RCC_TLDR_MODE" --source-kind checkout --codex-home "$CODEX_HOME"
+  elif [[ -f "$tldr_helper" && -f "${XDG_STATE_HOME:-$HOME/.local/state}/agent-plugins/rcc-tealdeer/state.json" ]]; then
+    python3 "$tldr_helper" sync --source-kind checkout ||
+      warn "RCC Tealdeer synchronization skipped; the existing user page was preserved."
+  fi
 
   cat <<EOF
 

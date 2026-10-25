@@ -66,9 +66,11 @@
       "name": "rcc",
       "category": "Developer Tools",
       "claude_category": "development",
-      "description": "RCC v18.19.7 skills for Environment Artifacts, providers, trust, coordination, automation projects, Robot/RPA Framework, work items, Action Server, CI, and optional Dagger MCP.",
+      "description": "RCC v18.19.7 skills for Environment Artifacts, providers, trust, coordination, automation projects, Robot/RPA Framework, work items, Action Server, CI, optional offline Tealdeer quick reference, and optional Dagger MCP.",
       "tags": [
         "rcc",
+        "tealdeer",
+        "tldr",
         "robocorp",
         "robot-framework",
         "robot-tests",
