@@ -1,6 +1,6 @@
 {
   "name": "rcc",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "RCC v18.19.7 skills for Environment Artifacts, providers, trust, coordination, robots, Robot/RPA Framework, work items, Action Server, CI, and optional Dagger MCP.",
   "kind": "standalone"
 }
