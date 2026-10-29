@@ -830,6 +830,43 @@ fn qualifications_listing_persists_an_expiry_observation_in_the_clock_floor() {
 }
 
 #[test]
+fn repeated_revoke_persists_its_observed_clock_floor() {
+    let fixture = fixture("fake_factory.py");
+    let config = support::qualified(fixture.config.clone());
+    let fingerprint = fingerprint(&config);
+    revoke(&config);
+    let observed_at = qualification::now_qualification().unwrap();
+    let connection = rusqlite::Connection::open(&config.database).unwrap();
+    connection
+        .execute(
+            "UPDATE qualification_clock SET high_water=?1 WHERE id=1",
+            [i64::try_from(observed_at.saturating_sub(30)).unwrap()],
+        )
+        .unwrap();
+    drop(connection);
+
+    let repeated = qualification::revoke(
+        &config,
+        &fingerprint,
+        &qualification::test_operator_confirmation(),
+    )
+    .unwrap();
+    assert_eq!(repeated["status"], "revoked");
+    let connection = rusqlite::Connection::open(&config.database).unwrap();
+    let high_water: i64 = connection
+        .query_row(
+            "SELECT high_water FROM qualification_clock WHERE id=1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        u64::try_from(high_water).unwrap() >= observed_at,
+        "idempotent revoke must persist its clock observation"
+    );
+}
+
+#[test]
 fn canary_refuses_missing_grants_and_non_disposable_workspaces_without_native_contact() {
     let fixture = fixture("fake_factory.py");
     let workspace = fixture.dir.path().join("canary");

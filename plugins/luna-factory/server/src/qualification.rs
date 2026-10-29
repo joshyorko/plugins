@@ -1181,9 +1181,9 @@ pub fn revoke(
     let mut connection = open_write(config)?;
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let mut record = load(&tx, fingerprint)?.context("qualification_not_found")?;
+    let now = now_qualification()?;
+    advance_high_water(&tx, now)?;
     if record.revoked_at.is_none() {
-        let now = now_qualification()?;
-        advance_high_water(&tx, now)?;
         record.revoked_at = Some(now);
         tx.execute(
             "UPDATE execution_qualifications SET payload=?2 WHERE fingerprint=?1",
@@ -1191,9 +1191,7 @@ pub fn revoke(
         )?;
     }
     tx.commit()?;
-    let public_now = now_qualification()
-        .ok()
-        .and_then(|now| effective_qualification_time(&connection, now).ok());
+    let public_now = effective_qualification_time(&connection, now).ok();
     Ok(public(fingerprint, &record, Some(config), public_now))
 }
 
