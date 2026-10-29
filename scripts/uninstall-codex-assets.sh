@@ -181,7 +181,7 @@ remove_marketplace() {
 
   remove_legacy_marketplace
 
-  return $removed_cli
+  return 0
 }
 
 remove_legacy_marketplace() {
@@ -300,6 +300,10 @@ remove_state() {
 }
 
 main() {
+  local tldr_helper="${REPO_PATH}/plugins/rcc/skills/rcc-core/scripts/tealdeer.py"
+  if [[ -f "$tldr_helper" && -f "${XDG_STATE_HOME:-$HOME/.local/state}/agent-plugins/rcc-tealdeer/state.json" ]]; then
+    python3 "$tldr_helper" uninstall
+  fi
   remove_marketplace
   remove_skills
   remove_state
