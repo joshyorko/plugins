@@ -77,12 +77,12 @@ describe("source display on the Campaign Map", () => {
     expect(link?.getAttribute("href")).toBe("https://github.com/example-org/actions/issues/102");
     expect(link?.getAttribute("target")).toBe("_blank");
     expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
-    expect(root.querySelector(".graph-inspector .eyebrow")?.textContent).toContain("GitHub #102");
+    expect(root.querySelector(".graph-inspector .drawer-heading p")?.textContent).toContain("GitHub #102");
     // Without display data the provider-only label remains.
     expect(root.querySelector('[data-node-id="issue-104"] .node-ref')).toBeNull();
     controller.selectNode("issue-104"); render();
     expect(root.querySelector(".graph-inspector a.source-link")).toBeNull();
-    expect(root.querySelector(".graph-inspector .eyebrow")?.textContent).toMatch(/GitHub$/);
+    expect(root.querySelector(".graph-inspector .drawer-heading p")?.textContent).toMatch(/GitHub$/);
   });
   it("escapes display data and never treats it as proof", async () => {
     const { controller, root, render } = await campaign();
@@ -97,43 +97,47 @@ describe("source display on the Campaign Map", () => {
   });
 });
 
-describe("receipt attribution in Lanes", () => {
-  it("places attributed receipts on the matching agent lane and keeps the rest on Run receipts", () => {
+describe("activity attribution", () => {
+  it("places attributed events beside the reported agent and keeps unassigned events on the plan", () => {
     const run = fixtureSwarmRun();
     const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
     const root = document.createElement("div");
     root.innerHTML = renderLanes(run, roster(run, null), controller.state, (run.updated_at ?? 0) + 60);
-    const lanes = Array.from(root.querySelectorAll(".lane-list > li"));
-    const ticks = (index: number) => lanes[index]?.querySelectorAll(".tick").length;
-    expect(lanes.map(lane => lane.querySelector("strong")?.textContent)).toEqual(["Run receipts", "Luna", "Worker 1", "Worker 2"]);
-    expect([ticks(0), ticks(1), ticks(2), ticks(3)]).toEqual([1, 2, 2, 0]);
-    expect(lanes[3]?.querySelector(".lane-track.unavailable")?.textContent).toBe("No receipts attributed to this agent");
-    expect(root.textContent).toContain("sits on the agent that recorded it");
+    const events = Array.from(root.querySelectorAll(".activity-event"));
+    expect(events.map(event => event.querySelector("strong")?.textContent)).toContain("Agent 1");
+    expect(events.some(event => event.querySelector("strong")?.textContent === "Plan")).toBe(true);
+    expect(root.querySelectorAll(".activity-agent")).toHaveLength(3);
+    expect(root.textContent).not.toMatch(/receipts?|Factory proof/i);
   });
-  it("keeps receipts naming an unlisted thread unattributed and older servers on the run lane", () => {
+  it("keeps events with unlisted threads separate from listed agents", () => {
     const run = fixtureSwarmRun();
     run.receipts = run.receipts.map(receipt => ({ ...receipt, thread_id: receipt.thread_id ? "not-in-roster" : null }));
     const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
     const root = document.createElement("div");
     root.innerHTML = renderLanes(run, roster(run, null), controller.state);
-    expect(root.querySelector(".run-lane")?.querySelectorAll(".tick").length).toBe(5);
+    expect(root.querySelectorAll(".activity-event strong")).toHaveLength(run.receipts.length);
     const legacy = fixtureSwarmRun();
     legacy.receipts = legacy.receipts.map(({ thread_id: _thread, ...receipt }) => receipt);
     root.innerHTML = renderLanes(legacy, roster(legacy, null), controller.state);
-    expect(root.querySelector(".run-lane")?.querySelectorAll(".tick").length).toBe(5);
-    expect(root.querySelectorAll(".lane-track.unavailable")).toHaveLength(3);
-    expect(root.textContent).toContain("Per-agent timeline not reported by this server");
+    expect(root.querySelectorAll(".activity-event strong")).toHaveLength(legacy.receipts.length);
+    expect(root.querySelectorAll(".activity-agent")).toHaveLength(3);
   });
 });
 
 describe("run timing", () => {
-  it("shows Started from created_at, Created for plans, and nothing when absent", () => {
-    const started = renderRun(fixtureRun({ created_at: 1791136800 })).root.querySelector(".campaign-head .started");
-    expect(started?.textContent).toMatch(/^Started /);
-    expect(started?.querySelector("time")?.getAttribute("datetime")).toBe(new Date(1791136800 * 1000).toISOString());
+  it("moves timestamps into Details", () => {
+    const run = fixtureRun({ created_at: 1791136800, updated_at: 1791137000 });
+    const { root, controller } = renderRun(run);
+    expect(root.querySelector(".campaign-head .started")).toBeNull();
+    controller.setViewMode("details"); renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector(".plan-details")?.textContent).toContain("Started");
+    expect(root.querySelector(".plan-details")?.textContent).toContain("Updated");
+    const plainDetails = root.querySelector(".plan-details")?.cloneNode(true) as HTMLElement;
+    plainDetails.querySelector(".technical-details")?.remove();
+    expect(plainDetails.textContent).not.toContain("Revision");
     const plan = fixturePlanningRun(); plan.created_at = 1791136800;
-    expect(renderRun(plan).root.querySelector(".campaign-head .started")?.textContent).toMatch(/^Created /);
-    expect(renderRun(fixtureRun()).root.querySelector(".campaign-head .started")).toBeNull();
+    const planView = renderRun(plan); planView.controller.setViewMode("details"); renderWorkbench(planView.root, planView.controller.state, null, false);
+    expect(planView.root.querySelector(".plan-details")?.textContent).toContain("Created");
   });
   it("lets the since-tracker see receipt activity reported as activity_at", () => {
     let now = 1_000;
@@ -151,20 +155,19 @@ describe("typed blocker copy", () => {
   it("renders plain language for every kind and nothing for none or planning", () => {
     const copy = fixtureBlockerKinds.map(kind => { const run = fixtureRun(); run.presentation!.blocker_kind = kind; return [kind.kind === "budget_exhausted" ? `budget:${kind.budget}` : kind.kind, blockerCopy(run)]; });
     expect(Object.fromEntries(copy)).toEqual({
-      "budget:time": "Time budget used up", "budget:repair": "Repair budget used up", diagnosis_required: "A diagnosis is needed before another repair",
-      native_approval: "Waiting on an approval in native Codex", effect_outcome_unknown: "An effect's outcome is unknown", liveness_unknown: "Status unknown",
-      planning_only: null, none: null, unknown: "Blocker not categorized by the server",
+      "budget:time": "Time limit reached", "budget:repair": "Retry limit reached", diagnosis_required: "A diagnosis is needed before another repair",
+      native_approval: "Waiting for approval in Codex", effect_outcome_unknown: "Luna can't confirm whether the change happened", liveness_unknown: "Luna can't confirm the earlier run stopped.",
+      planning_only: null, none: null, unknown: "Luna can't check why this work is blocked",
     });
   });
   it("names the blocker in the decision panel and inspector", () => {
-    const run = fixtureRun({ state: "BLOCKED", blocker: "Observed native failure repair budget exhausted.", pending_decision: null });
+    const run = fixtureRun({ state: "BLOCKED", blocker: "Observed failure repair budget exhausted.", pending_decision: null });
     run.presentation!.blocker_kind = { kind: "budget_exhausted", budget: "repair" };
     const { root } = renderRun(run);
-    expect(root.querySelector(".decision-panel .eyebrow")?.textContent).toBe("Repair budget used up");
-    expect(root.querySelector(".decision-panel h2")?.textContent).toBe("Observed native failure repair budget exhausted.");
-    expect(root.querySelector(".graph-inspector .blocker-kind")?.textContent).toBe("Repair budget used up");
+    expect(root.querySelector(".plan-banner h2")?.textContent).toBe("Retry limit reached");
+    expect(root.querySelector(".graph-inspector .blocker-kind")?.textContent).toBe("Retry limit reached");
     run.presentation!.blocker_kind = { kind: "unknown" };
-    expect(renderRun(run).root.querySelector(".decision-panel .eyebrow")?.textContent).toBe("Execution blocker");
+    expect(renderRun(run).root.querySelector(".plan-banner h2")?.textContent).toBe("Luna can't check why this work is blocked");
   });
   it("never changes attention, tier, Needs you or actions", () => {
     const bases = [
@@ -180,8 +183,7 @@ describe("typed blocker copy", () => {
     denied.presentation!.primary_action = { ...denied.presentation!.primary_action, allowed: false };
     bases.push(denied);
     const shape = (root: HTMLElement) => ({
-      panel: root.querySelector(".decision-panel")?.className, needs: root.querySelectorAll(".needs-you, .group-needs").length,
-      controls: Array.from(root.querySelectorAll<HTMLButtonElement>('[data-action="control"]')).map(button => `${button.dataset.kind}:${button.disabled}`),
+      panel: root.querySelector(".plan-banner")?.className, needs: root.querySelectorAll(".needs-you, .group-needs").length,
     });
     for (const base of bases) {
       const expected = { needs: needsOperatorDecision(base), classify: classifyRun(base), tier: runTier(base), view: shape(renderRun(base).root) };

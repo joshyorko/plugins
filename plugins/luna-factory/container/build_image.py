@@ -64,6 +64,7 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/server/src/campaign.rs",
     "plugins/luna-factory/server/src/cas.rs",
     "plugins/luna-factory/server/src/config.rs",
+    "plugins/luna-factory/server/src/control.rs",
     "plugins/luna-factory/server/src/github.rs",
     "plugins/luna-factory/server/src/lib.rs",
     "plugins/luna-factory/server/src/lifecycle.rs",
@@ -80,6 +81,9 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/server/tests/campaign.rs",
     # #75: observed agent timeline.
     "plugins/luna-factory/server/src/timeline.rs",
+    # Workspaces: connect GitHub repositories and create local ones (#67, #76).
+    "plugins/luna-factory/server/src/repositories.rs",
+    "plugins/luna-factory/server/src/workspaces.rs",
     "plugins/luna-factory/server/tests/cas_timeline.rs",
     "plugins/luna-factory/server/tests/http_security.rs",
     "plugins/luna-factory/server/tests/http_integration.rs",
@@ -100,6 +104,7 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/server/Cargo.toml",
     "plugins/luna-factory/tests/fixtures/github/issue-graph-67.json",
     "plugins/luna-factory/tests/test_container_build.py",
+    "plugins/luna-factory/tests/test_stack.py",
     # #76 Option A: opt-in GitHub-only egress proxy (deployment files, not image inputs).
     "plugins/luna-factory/container/compose.github-egress.yaml",
     "plugins/luna-factory/container/egress_proxy.py",
@@ -117,6 +122,23 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/docs/research/plans/79-per-attempt-proof-then-two-workers.md",
     "plugins/luna-factory/docs/research/plans/80-route-policy-then-verified-escalation.md",
     "plugins/luna-factory/docs/research/plans/81-certified-delivery-then-authorized-merge.md",
+    # #71: persisted exact-profile execution qualification.
+    "plugins/luna-factory/docs/execution-qualification.md",
+    "plugins/luna-factory/server/src/native.rs",
+    "plugins/luna-factory/server/src/qualification.rs",
+    "plugins/luna-factory/server/tests/continuation.rs",
+    "plugins/luna-factory/server/tests/decision_recovery.rs",
+    "plugins/luna-factory/server/tests/qualification.rs",
+    "plugins/luna-factory/server/tests/native_daemon.rs",
+    "plugins/luna-factory/server/tests/native_transport.rs",
+    "plugins/luna-factory/server/tests/native_live.rs",
+    "plugins/luna-factory/server/tests/native_protocol.rs",
+    "plugins/luna-factory/server/tests/review_regressions.rs",
+    "plugins/luna-factory/server/tests/support/mod.rs",
+    "plugins/luna-factory/tests/fixtures/native/fake_continuation.py",
+    "plugins/luna-factory/tests/fixtures/native/fake_factory.py",
+    "plugins/luna-factory/tests/fixtures/native/fake_qualification_canary.py",
+    "plugins/luna-factory/tests/fixtures/native/review_runtime.py",
 }
 ALLOWED_RELEASE_PREFIXES = (
     "plugins/luna-factory/container/",
@@ -351,10 +373,12 @@ def source_ui_sha256(source_root: Path) -> str:
 
 
 def validate_release_delta(paths: list[str]) -> None:
+    """Review plugin deltas; other plugins and handoffs never enter this image."""
     unexpected = [
         path
         for path in paths
-        if path not in ALLOWED_RELEASE_DELTA
+        if path.startswith("plugins/luna-factory/")
+        and path not in ALLOWED_RELEASE_DELTA
         and not any(path.startswith(prefix) for prefix in ALLOWED_RELEASE_PREFIXES)
     ]
     if unexpected:
@@ -442,7 +466,9 @@ def build_image(release_dir: Path, source_root: Path, podman: str = "podman") ->
                 "--tag",
                 image,
                 "--build-arg",
-                f"SOURCE_COMMIT={RELEASE_COMMIT}",
+                f"SOURCE_COMMIT={head}",
+                "--build-arg",
+                f"RELEASE_COMMIT={RELEASE_COMMIT}",
                 "--build-arg",
                 f"SOURCE_PATCH_SHA256={patch_hash}",
                 "--build-arg",

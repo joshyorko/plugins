@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { boundedContext, capabilitiesSchema, classifyRun, githubConnectSchema, githubRepositoryListSchema, localCreateSchema, parseFactoryLink, parseRunLink, parseToolResult, planDefaults, repositoryReasonCopy, startRequest } from "../src/domain";
-import { fixtureGithubConnect, fixtureGithubRepositories, fixtureLocalCreate, fixtureRun, fixtureWorkbench } from "./fixtures";
+import { boundedContext, capabilitiesSchema, classifyRun, graphChangeSchema, graphEnvelopeSchema, githubConnectSchema, githubRepositoryListSchema, localCreateSchema, parseFactoryLink, parseRunLink, parseToolResult, planDefaults, repositoryReasonCopy, startRequest } from "../src/domain";
+import { fixtureGithubConnect, fixtureGithubRepositories, fixtureGraph, fixtureLocalCreate, fixtureRun, fixtureWorkbench } from "./fixtures";
 
 describe("the server boundary", () => {
   it("accepts the documented initial workbench and a single run", () => {
@@ -121,7 +121,7 @@ describe("start request", () => {
     expect(startRequest({ ...fields, done_when: "   " }, fixtureWorkbench.capabilities, "k").acceptance).toEqual(["Ship the workbench"]);
   });
   it("asks for a Done when line instead of truncating a long request into a criterion", () => {
-    expect(() => startRequest({ repository: "plugins", objective: "x".repeat(1001) }, fixtureWorkbench.capabilities, "k")).toThrow("Done when");
+    expect(() => startRequest({ repository: "plugins", objective: "x".repeat(1001) }, fixtureWorkbench.capabilities, "k")).toThrow("under 1,000 characters");
     expect(startRequest({ repository: "plugins", objective: "x".repeat(1001), done_when: "It works" }, fixtureWorkbench.capabilities, "k").acceptance).toEqual(["It works"]);
   });
   it("does not turn pasted headings or bullet syntax into non-goals", () => {
@@ -165,5 +165,27 @@ describe("repository tool results", () => {
     expect(capabilitiesSchema.parse(base).workspaces).toBeUndefined();
     expect(capabilitiesSchema.parse({ ...base, workspaces: { connect_github: "yes" } }).workspaces).toBeUndefined();
     expect(capabilitiesSchema.parse({ ...base, workspaces: { connect_github: true, create_local: false } }).workspaces).toEqual({ connect_github: true, create_local: false });
+  });
+});
+
+describe("atomic task update proposal", () => {
+  it("requires title, unique dependencies and a nullable location in one snapshot", () => {
+    const change = { kind: "update_task", node_id: "task-a", title: "Rename task", dependencies: ["task-b"], target_id: null };
+    expect(graphChangeSchema.parse(change)).toEqual(change);
+    expect(graphChangeSchema.parse({ ...change, title: null })).toMatchObject({ title: null });
+    expect(graphChangeSchema.safeParse({ ...change, title: "x".repeat(8000) }).success).toBe(true);
+    expect(graphChangeSchema.safeParse({ ...change, title: "x".repeat(8001) }).success).toBe(false);
+    expect(graphChangeSchema.safeParse({ ...change, dependencies: ["task-b", "task-b"] }).success).toBe(false);
+    expect(graphChangeSchema.safeParse({ ...change, title: "" }).success).toBe(false);
+    expect(graphChangeSchema.safeParse({ kind: "update_task", node_id: "task-a", title: "Rename task", dependencies: ["task-b"] }).success).toBe(false);
+  });
+  it("accepts the optional full editor title beside the bounded display title", () => {
+    const envelope = fixtureGraph();
+    const canonical = "Objective ".repeat(140);
+    envelope.graph.nodes[0]!.title = canonical.slice(0, 1000);
+    envelope.graph.nodes[0]!.editor_title = canonical;
+    expect(graphEnvelopeSchema.parse(envelope).graph.nodes[0]?.editor_title).toBe(canonical);
+    envelope.graph.nodes[0]!.editor_title = "x".repeat(8001);
+    expect(graphEnvelopeSchema.safeParse(envelope).success).toBe(false);
   });
 });

@@ -33,6 +33,10 @@ pub struct Config {
     /// Optional read-only GitHub App. Never serialized or projected to tools.
     #[serde(default, skip_serializing)]
     pub github_app: Option<crate::github::GithubAppConfig>,
+    /// Optional workspace root for connected and created repositories. Both
+    /// flags default to false; tools only ever see the flags, never the path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspaces: Option<crate::workspaces::Workspaces>,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -143,6 +147,9 @@ impl Config {
             "invalid_wall_limit"
         );
         let database = canonical_destination(&self.database)?;
+        if let Some(workspaces) = &self.workspaces {
+            workspaces.validate(&database)?;
+        }
         ensure!(self.discovery_roots.len() <= 8, "too_many_discovery_roots");
         for (alias, repo) in self.repositories.iter().chain(self.discovery_roots.iter()) {
             ensure!(valid_alias(alias), "invalid_repository_alias");
@@ -156,7 +163,7 @@ impl Config {
             );
             ensure!(
                 !database.starts_with(&root),
-                "database_must_be_outside_repositories"
+                crate::qualification::STORE_EXPOSED
             );
             finish_rank(&repo.max_finish)?;
             ensure!(root.parent().is_some(), "filesystem_root_not_allowed");

@@ -32,10 +32,10 @@ describe("authenticated dogfood regressions reproduced in disposable fixtures", 
     const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
     controller.receiveInitial({ structuredContent: run }); controller.setConnected(true);
     renderWorkbench(root, controller.state, null, false);
-    expect(root.querySelector(".decision-panel")).toBeNull();
-    expect(root.querySelector(".delivery-strip")?.closest("details")).not.toBeNull();
+    expect(root.querySelector(".plan-banner")).toBeNull();
+    expect(root.querySelector(".page-primary")?.textContent).toBe("Set up running");
     expect(root.textContent).not.toContain("0 min");
-    expect(root.textContent).toContain("1 planned task");
+    expect(root.textContent).toContain("1 task");
   });
   it("keeps a real server-authorized answer in Needs me", () => {
     const run = fixtureRun({ state: "NEEDS_INPUT", pending_decision: { id: "decision", question: "Choose the approved scope" } });
@@ -63,21 +63,31 @@ describe("authenticated dogfood regressions reproduced in disposable fixtures", 
     await vi.waitFor(() => expect(context).toHaveBeenLastCalledWith({}));
     expect(controller.state.graphStale).toBe(true);
   });
-  it("requires explicit apply confirmation and keeps unqualified execution out of ordinary forms", async () => {
+  it("uses the Apply change button as confirmation and keeps unqualified execution out of ordinary forms", async () => {
     const { controller, call } = await setup();
     controller.state.proposal = { id: "proposal", base_revision: 5, idempotency_key: "key", fingerprint: "hash", actor: "local_operator", subject: "subject", status: "proposed", applied_revision: null, change: { kind: "set_dependencies", node_id: "task-b", dependencies: [] } };
     expect(await controller.applyChange()).toBe(false);
     expect(call).not.toHaveBeenCalled();
+    controller.selectNode("task-b");
     const root = document.createElement("div");
     renderWorkbench(root, controller.state, null, false);
-    expect(root.querySelector("#confirm-graph-change")).not.toBeNull();
-    expect(root.querySelector<HTMLButtonElement>('[data-action="apply-change"]')?.disabled).toBe(true);
+    expect(root.querySelector("#confirm-graph-change")).toBeNull();
+    expect(root.querySelector<HTMLButtonElement>('[data-action="apply-change"]')?.disabled).toBe(false);
     expect(root.querySelector('select[name="target_id"]')?.closest(".planning-editor[hidden]")).not.toBeNull();
     expect(root.querySelector('option[value="codex-cloud"]')).toBeNull();
     controller.state.capabilities = fixtureWorkbench.capabilities;
     renderWorkbench(root, controller.state, "start", false);
     expect(root.querySelector('button[value="start"]')).toBeNull();
     expect(root.querySelector<HTMLButtonElement>('button[value="plan"]')?.textContent).toBe("Plan it");
+  });
+  it("refreshes a stale proposal without applying it", async () => {
+    const { controller, call } = await setup();
+    controller.state.proposal = { id: "stale-proposal", base_revision: 5, idempotency_key: "key", fingerprint: "hash", actor: "local_operator", subject: "subject", status: "proposed", applied_revision: null, change: { kind: "set_dependencies", node_id: "task-b", dependencies: [] } };
+    controller.state.graphStale = true;
+    expect(await controller.applyChange(true)).toBe(false);
+    await vi.waitFor(() => expect(call).toHaveBeenCalledWith("get_factory_graph", { run_id: "dogfood-plan" }));
+    expect(call.mock.calls.some(([tool]) => tool === "apply_factory_change")).toBe(false);
+    expect(controller.state.notice).toBe("This plan changed while you were away. Updated.");
   });
   it("suppresses duplicate clicks and keeps late disconnected results stale", async () => {
     const { controller, call } = await setup();

@@ -34,9 +34,9 @@ export function describeView(controller: WorkbenchController, surface: string) {
     plan: { tasks: tasks.length, waves: layout.waves.length, prerequisites_met: layout.prerequisitesMet.size },
     agents: agents.map(item => ({ label: item.label, role: item.role, liveness: item.liveness, task_id: item.taskId })),
     ...(node ? { task: {
-      task_id: node.id, title: clip(node.title, 300), state: taskToneLabel[taskTone(node.state)], wave: (layout.depth.get(node.id) ?? 0) + 1,
-      waits_on: node.dependencies.map(id => clip(byId.get(id)?.title ?? id, 120)),
-      unblocks: (layout.dependents.get(node.id) ?? []).map(id => clip(byId.get(id)?.title ?? id, 120)),
+      task_id: node.id, title: clip(node.editor_title ?? node.title, 300), state: taskToneLabel[taskTone(node.state)], wave: (layout.depth.get(node.id) ?? 0) + 1,
+      waits_on: node.dependencies.map(id => clip(byId.get(id)?.editor_title ?? byId.get(id)?.title ?? id, 120)),
+      unblocks: (layout.dependents.get(node.id) ?? []).map(id => clip(byId.get(id)?.editor_title ?? byId.get(id)?.title ?? id, 120)),
     } } : {}),
     ...(agent ? { agent: { label: agent.label, role: agent.role, liveness: agent.liveness, task_id: agent.taskId } } : {}),
   };
@@ -87,7 +87,7 @@ export function registerViewTools(app: { registerTool: (name: string, config: Re
   const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
   app.registerTool("luna_read_view", { title: "Read the Luna Factory view", description: "Describe what the Luna Factory view currently shows: the open run, its plan waves, the selected task and agent. Read-only; does not contact the server.", annotations }, handlers.read as never);
   app.registerTool("luna_focus_task", { title: "Focus a task", description: "Select a task in the open Campaign Map by task_id so the user sees it in the inspector. View only; never changes the plan or starts work.", inputSchema: viewToolSchemas.focusTask, annotations }, handlers.focusTask as never);
-  app.registerTool("luna_focus_agent", { title: "Focus an agent", description: "Select a reported agent by its label (for example \"Luna\" or \"Worker 2\") and its task. View only.", inputSchema: viewToolSchemas.focusAgent, annotations }, handlers.focusAgent as never);
+  app.registerTool("luna_focus_agent", { title: "Focus an agent", description: "Select a reported agent by its label (for example \"Luna\" or \"Agent 2\") and its task. View only.", inputSchema: viewToolSchemas.focusAgent, annotations }, handlers.focusAgent as never);
   app.registerTool("luna_show_view", { title: "Switch Map or Lanes", description: "Switch the campaign view between the dependency Map and the agent Lanes. View only.", inputSchema: viewToolSchemas.showView, annotations }, handlers.showView as never);
   app.registerTool("luna_open_run", { title: "Open a run", description: "Open a run from the current list in the Luna Factory view and read its plan. View only.", inputSchema: viewToolSchemas.openRun, annotations }, handlers.openRun as never);
 }

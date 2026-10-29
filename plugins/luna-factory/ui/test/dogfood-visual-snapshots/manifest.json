@@ -1,7 +1,9 @@
 {
   "expected_ui_version": "0.2.1",
   "evidence_kind": "Real browser + MCP Apps AppBridge with synthetic fixtures; not authenticated ChatGPT Desktop acceptance",
-  "ui_source_sha256": "661b8b4d35b318156cdb25c68aefe7da8ec0888cffcce43d34eb17cd4e794338",
+  "capture_set_complete": true,
+  "ui_source_sha256": "c3c5c1b0cc99bc7986ddadf2166ccf0df20e65fa2d9bc42fd77704e6ac81cdfa",
+  "dist_sha256": "55337e0a686a958ecd7e8ce102c96c0b4ce807eb6a5ba6e50eb0af96b7a9b56a",
   "captures": [
     {
       "file": "inline-planning-mobile-light.png",
@@ -15,8 +17,9 @@
       "layout": {
         "width": 320,
         "scrollWidth": 320,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "list_factory_campaigns",
@@ -37,8 +40,9 @@
       "layout": {
         "width": 480,
         "scrollWidth": 480,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
@@ -61,8 +65,9 @@
       "layout": {
         "width": 1200,
         "scrollWidth": 1200,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
@@ -84,8 +89,9 @@
       "layout": {
         "width": 360,
         "scrollWidth": 360,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
@@ -105,8 +111,9 @@
       "layout": {
         "width": 640,
         "scrollWidth": 640,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "list_factory_campaigns",
@@ -127,8 +134,9 @@
       "layout": {
         "width": 320,
         "scrollWidth": 320,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
@@ -150,8 +158,9 @@
       "layout": {
         "width": 1280,
         "scrollWidth": 1280,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
@@ -171,8 +180,9 @@
       "layout": {
         "width": 480,
         "scrollWidth": 480,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "list_factory_campaigns"
@@ -187,13 +197,40 @@
         "surface": "global",
         "scenario": "planning",
         "platform": "mobile",
-        "graph": "1"
+        "graph": "1",
+        "noTask": "1"
       },
       "layout": {
         "width": 360,
         "scrollWidth": 360,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "list_factory_campaigns",
+        "get_factory_graph",
+        "get_factory_backends"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "task-sheet-offline-mobile.png",
+      "width": 360,
+      "height": 720,
+      "params": {
+        "surface": "global",
+        "scenario": "planning",
+        "platform": "mobile",
+        "graph": "1",
+        "node": "task-b"
+      },
+      "layout": {
+        "width": 360,
+        "scrollWidth": 360,
+        "overflowingControls": []
+      },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
@@ -204,19 +241,21 @@
     },
     {
       "file": "global-proposal-review.png",
-      "width": 480,
-      "height": 760,
+      "width": 1280,
+      "height": 900,
       "params": {
         "surface": "global",
-        "scenario": "planning",
+        "mode": "fullscreen",
+        "scenario": "proposal",
         "graph": "1",
         "proposal": "1"
       },
       "layout": {
-        "width": 480,
-        "scrollWidth": 480,
-        "overflowingControls": 0
+        "width": 1280,
+        "scrollWidth": 1280,
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
@@ -238,8 +277,9 @@
       "layout": {
         "width": 480,
         "scrollWidth": 480,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
@@ -262,8 +302,248 @@
       "layout": {
         "width": 1440,
         "scrollWidth": 1440,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [
+        {
+          "rootFontSize": 16,
+          "gaps": [
+            {
+              "column": 85,
+              "previous": "issue-102",
+              "next": "issue-103",
+              "previousBottom": 349.4,
+              "nextTop": 365.4,
+              "gap": 16
+            },
+            {
+              "column": 85,
+              "previous": "issue-103",
+              "next": "issue-104",
+              "previousBottom": 464.8,
+              "nextTop": 477.4,
+              "gap": 12.6
+            },
+            {
+              "column": 333,
+              "previous": "issue-105",
+              "next": "issue-106",
+              "previousBottom": 352.8,
+              "nextTop": 365.4,
+              "gap": 12.6
+            },
+            {
+              "column": 333,
+              "previous": "issue-106",
+              "next": "issue-107",
+              "previousBottom": 461.4,
+              "nextTop": 477.4,
+              "gap": 16
+            },
+            {
+              "column": 333,
+              "previous": "issue-107",
+              "next": "issue-108",
+              "previousBottom": 573.4,
+              "nextTop": 589.4,
+              "gap": 16
+            },
+            {
+              "column": 333,
+              "previous": "issue-108",
+              "next": "issue-113",
+              "previousBottom": 685.4,
+              "nextTop": 701.4,
+              "gap": 16
+            },
+            {
+              "column": 333,
+              "previous": "issue-113",
+              "next": "issue-109",
+              "previousBottom": 797.4,
+              "nextTop": 813.4,
+              "gap": 16
+            },
+            {
+              "column": 581,
+              "previous": "issue-111",
+              "next": "issue-112",
+              "previousBottom": 352.8,
+              "nextTop": 365.4,
+              "gap": 12.6
+            },
+            {
+              "column": 581,
+              "previous": "issue-112",
+              "next": "issue-110",
+              "previousBottom": 461.4,
+              "nextTop": 477.4,
+              "gap": 16
+            }
+          ],
+          "metaWhiteSpaces": [
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap"
+          ],
+          "fullCards": [
+            {
+              "id": "issue-103",
+              "titleHeight": 40,
+              "metaHeight": 17.390625,
+              "prHeight": 16
+            },
+            {
+              "id": "issue-105",
+              "titleHeight": 40,
+              "metaHeight": 17.390625,
+              "prHeight": 16
+            },
+            {
+              "id": "issue-109",
+              "titleHeight": 40,
+              "metaHeight": 17.390625,
+              "prHeight": 16
+            },
+            {
+              "id": "issue-111",
+              "titleHeight": 40,
+              "metaHeight": 17.390625,
+              "prHeight": 16
+            }
+          ]
+        },
+        {
+          "rootFontSize": 20,
+          "gaps": [
+            {
+              "column": 96,
+              "previous": "issue-102",
+              "next": "issue-103",
+              "previousBottom": 409.8,
+              "nextTop": 429.8,
+              "gap": 20
+            },
+            {
+              "column": 96,
+              "previous": "issue-103",
+              "next": "issue-104",
+              "previousBottom": 549.8,
+              "nextTop": 569.8,
+              "gap": 20
+            },
+            {
+              "column": 401,
+              "previous": "issue-105",
+              "next": "issue-106",
+              "previousBottom": 409.8,
+              "nextTop": 429.8,
+              "gap": 20
+            },
+            {
+              "column": 401,
+              "previous": "issue-106",
+              "next": "issue-107",
+              "previousBottom": 549.8,
+              "nextTop": 569.8,
+              "gap": 20
+            },
+            {
+              "column": 401,
+              "previous": "issue-107",
+              "next": "issue-108",
+              "previousBottom": 689.8,
+              "nextTop": 709.8,
+              "gap": 20
+            },
+            {
+              "column": 401,
+              "previous": "issue-108",
+              "next": "issue-113",
+              "previousBottom": 829.8,
+              "nextTop": 849.8,
+              "gap": 20
+            },
+            {
+              "column": 401,
+              "previous": "issue-113",
+              "next": "issue-109",
+              "previousBottom": 969.8,
+              "nextTop": 989.8,
+              "gap": 20
+            },
+            {
+              "column": 706,
+              "previous": "issue-111",
+              "next": "issue-112",
+              "previousBottom": 409.8,
+              "nextTop": 429.8,
+              "gap": 20
+            },
+            {
+              "column": 706,
+              "previous": "issue-112",
+              "next": "issue-110",
+              "previousBottom": 549.8,
+              "nextTop": 569.8,
+              "gap": 20
+            }
+          ],
+          "metaWhiteSpaces": [
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap"
+          ],
+          "fullCards": [
+            {
+              "id": "issue-103",
+              "titleHeight": 50,
+              "metaHeight": 21.75,
+              "prHeight": 20
+            },
+            {
+              "id": "issue-105",
+              "titleHeight": 50,
+              "metaHeight": 21.75,
+              "prHeight": 20
+            },
+            {
+              "id": "issue-109",
+              "titleHeight": 50,
+              "metaHeight": 21.75,
+              "prHeight": 20
+            },
+            {
+              "id": "issue-111",
+              "titleHeight": 50,
+              "metaHeight": 21.75,
+              "prHeight": 20
+            }
+          ]
+        }
+      ],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
@@ -288,8 +568,129 @@
       "layout": {
         "width": 1440,
         "scrollWidth": 1440,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [
+        {
+          "rootFontSize": 16,
+          "gaps": [
+            {
+              "column": 85,
+              "previous": "issue-102",
+              "next": "issue-103",
+              "previousBottom": 349.4,
+              "nextTop": 365.4,
+              "gap": 16
+            },
+            {
+              "column": 85,
+              "previous": "issue-103",
+              "next": "issue-104",
+              "previousBottom": 464.8,
+              "nextTop": 477.4,
+              "gap": 12.6
+            },
+            {
+              "column": 333,
+              "previous": "issue-105",
+              "next": "issue-106",
+              "previousBottom": 352.8,
+              "nextTop": 365.4,
+              "gap": 12.6
+            },
+            {
+              "column": 333,
+              "previous": "issue-106",
+              "next": "issue-107",
+              "previousBottom": 461.4,
+              "nextTop": 477.4,
+              "gap": 16
+            },
+            {
+              "column": 333,
+              "previous": "issue-107",
+              "next": "issue-108",
+              "previousBottom": 573.4,
+              "nextTop": 589.4,
+              "gap": 16
+            },
+            {
+              "column": 333,
+              "previous": "issue-108",
+              "next": "issue-113",
+              "previousBottom": 685.4,
+              "nextTop": 701.4,
+              "gap": 16
+            },
+            {
+              "column": 333,
+              "previous": "issue-113",
+              "next": "issue-109",
+              "previousBottom": 797.4,
+              "nextTop": 813.4,
+              "gap": 16
+            },
+            {
+              "column": 581,
+              "previous": "issue-111",
+              "next": "issue-112",
+              "previousBottom": 352.8,
+              "nextTop": 365.4,
+              "gap": 12.6
+            },
+            {
+              "column": 581,
+              "previous": "issue-112",
+              "next": "issue-110",
+              "previousBottom": 461.4,
+              "nextTop": 477.4,
+              "gap": 16
+            }
+          ],
+          "metaWhiteSpaces": [
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap"
+          ],
+          "fullCards": [
+            {
+              "id": "issue-103",
+              "titleHeight": 40,
+              "metaHeight": 17.390625,
+              "prHeight": 16
+            },
+            {
+              "id": "issue-105",
+              "titleHeight": 40,
+              "metaHeight": 17.390625,
+              "prHeight": 16
+            },
+            {
+              "id": "issue-109",
+              "titleHeight": 40,
+              "metaHeight": 17.390625,
+              "prHeight": 16
+            },
+            {
+              "id": "issue-111",
+              "titleHeight": 40,
+              "metaHeight": 17.390625,
+              "prHeight": 16
+            }
+          ]
+        }
+      ],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
@@ -312,8 +713,9 @@
       "layout": {
         "width": 420,
         "scrollWidth": 420,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
@@ -333,18 +735,19 @@
         "platform": "mobile",
         "scenario": "campaign",
         "graph": "1",
-        "node": "issue-113"
+        "noTask": "1"
       },
       "layout": {
         "width": 390,
         "scrollWidth": 390,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
+        "list_factory_campaigns",
         "get_factory_graph",
         "get_factory_backends",
-        "list_factory_campaigns",
         "read_factory_delivery"
       ],
       "automatic_messages": 0
@@ -363,13 +766,17 @@
       "layout": {
         "width": 1280,
         "scrollWidth": 1280,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
         "get_factory_backends",
-        "list_factory_campaigns"
+        "list_factory_campaigns",
+        "read_factory_agent_timeline",
+        "read_factory_agent_timeline",
+        "read_factory_agent_timeline"
       ],
       "automatic_messages": 0
     },
@@ -388,8 +795,9 @@
       "layout": {
         "width": 1280,
         "scrollWidth": 1280,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
@@ -413,8 +821,30 @@
       "layout": {
         "width": 1280,
         "scrollWidth": 1280,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
+      "read_only_tool_calls": [
+        "refresh_factory",
+        "list_factory_campaigns"
+      ],
+      "automatic_messages": 0
+    },
+    {
+      "file": "home-empty-light.png",
+      "width": 1280,
+      "height": 860,
+      "params": {
+        "surface": "global",
+        "mode": "fullscreen",
+        "scenario": "home-empty"
+      },
+      "layout": {
+        "width": 1280,
+        "scrollWidth": 1280,
+        "overflowingControls": []
+      },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "list_factory_campaigns"
@@ -434,8 +864,9 @@
       "layout": {
         "width": 390,
         "scrollWidth": 390,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "list_factory_campaigns"
@@ -453,8 +884,9 @@
       "layout": {
         "width": 720,
         "scrollWidth": 720,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "list_factory_campaigns",
@@ -478,8 +910,129 @@
       "layout": {
         "width": 1440,
         "scrollWidth": 1440,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [
+        {
+          "rootFontSize": 16,
+          "gaps": [
+            {
+              "column": 85,
+              "previous": "issue-102",
+              "next": "issue-103",
+              "previousBottom": 283.4,
+              "nextTop": 299.4,
+              "gap": 16
+            },
+            {
+              "column": 85,
+              "previous": "issue-103",
+              "next": "issue-104",
+              "previousBottom": 400.8,
+              "nextTop": 411.4,
+              "gap": 10.6
+            },
+            {
+              "column": 333,
+              "previous": "issue-105",
+              "next": "issue-106",
+              "previousBottom": 286.8,
+              "nextTop": 299.4,
+              "gap": 12.6
+            },
+            {
+              "column": 333,
+              "previous": "issue-106",
+              "next": "issue-107",
+              "previousBottom": 395.4,
+              "nextTop": 411.4,
+              "gap": 16
+            },
+            {
+              "column": 333,
+              "previous": "issue-107",
+              "next": "issue-108",
+              "previousBottom": 507.4,
+              "nextTop": 523.4,
+              "gap": 16
+            },
+            {
+              "column": 333,
+              "previous": "issue-108",
+              "next": "issue-113",
+              "previousBottom": 619.4,
+              "nextTop": 635.4,
+              "gap": 16
+            },
+            {
+              "column": 333,
+              "previous": "issue-113",
+              "next": "issue-109",
+              "previousBottom": 731.4,
+              "nextTop": 747.4,
+              "gap": 16
+            },
+            {
+              "column": 581,
+              "previous": "issue-111",
+              "next": "issue-112",
+              "previousBottom": 286.8,
+              "nextTop": 299.4,
+              "gap": 12.6
+            },
+            {
+              "column": 581,
+              "previous": "issue-112",
+              "next": "issue-110",
+              "previousBottom": 395.4,
+              "nextTop": 411.4,
+              "gap": 16
+            }
+          ],
+          "metaWhiteSpaces": [
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap",
+            "nowrap"
+          ],
+          "fullCards": [
+            {
+              "id": "issue-103",
+              "titleHeight": 40,
+              "metaHeight": 17.390625,
+              "prHeight": 16
+            },
+            {
+              "id": "issue-105",
+              "titleHeight": 40,
+              "metaHeight": 17.390625,
+              "prHeight": 16
+            },
+            {
+              "id": "issue-109",
+              "titleHeight": 40,
+              "metaHeight": 17.390625,
+              "prHeight": 16
+            },
+            {
+              "id": "issue-111",
+              "titleHeight": 40,
+              "metaHeight": 17.390625,
+              "prHeight": 16
+            }
+          ]
+        }
+      ],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
@@ -503,8 +1056,9 @@
       "layout": {
         "width": 420,
         "scrollWidth": 420,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
@@ -529,8 +1083,9 @@
       "layout": {
         "width": 1280,
         "scrollWidth": 1280,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
@@ -554,8 +1109,9 @@
       "layout": {
         "width": 420,
         "scrollWidth": 420,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "get_factory_graph",
@@ -576,8 +1132,9 @@
       "layout": {
         "width": 760,
         "scrollWidth": 760,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "list_factory_campaigns",
@@ -598,8 +1155,9 @@
       "layout": {
         "width": 1200,
         "scrollWidth": 1200,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "list_factory_campaigns",
@@ -619,8 +1177,9 @@
       "layout": {
         "width": 360,
         "scrollWidth": 360,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "list_factory_campaigns",
@@ -639,8 +1198,9 @@
       "layout": {
         "width": 760,
         "scrollWidth": 760,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "list_factory_campaigns",
@@ -661,8 +1221,9 @@
       "layout": {
         "width": 360,
         "scrollWidth": 360,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "list_factory_campaigns",
@@ -681,8 +1242,9 @@
       "layout": {
         "width": 760,
         "scrollWidth": 760,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "list_factory_campaigns",
@@ -702,8 +1264,9 @@
       "layout": {
         "width": 360,
         "scrollWidth": 360,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "list_factory_campaigns",
@@ -722,8 +1285,9 @@
       "layout": {
         "width": 760,
         "scrollWidth": 760,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "list_factory_campaigns",
@@ -743,8 +1307,9 @@
       "layout": {
         "width": 480,
         "scrollWidth": 480,
-        "overflowingControls": 0
+        "overflowingControls": []
       },
+      "map_geometry_checks": [],
       "read_only_tool_calls": [
         "refresh_factory",
         "list_factory_campaigns"

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { WorkbenchController, type Bridge } from "../src/controller";
-import { fixtureRun, fixtureWorkbench } from "./fixtures";
+import { fixtureCampaign, fixtureCampaignPlan, fixtureRun, fixtureWorkbench } from "./fixtures";
 
 function deferred() {
   let resolve: (value: unknown) => void = () => undefined;
@@ -17,6 +17,36 @@ function setup(call = vi.fn<Bridge["call"]>()) {
 }
 
 describe("workbench state and MCP lifecycle", () => {
+  it("fences campaign promotion to the current plan revision and preserves fail-closed authority", async () => {
+    const call = vi.fn<Bridge["call"]>().mockRejectedValue(new Error("execution_not_qualified"));
+    const { controller } = setup(call);
+    const plan = fixtureCampaignPlan();
+    const campaign = fixtureCampaign();
+    controller.state.runs = [plan.run];
+    controller.state.selectedId = plan.run.id;
+    controller.state.graph = plan.graph.graph;
+    controller.state.campaigns = [campaign];
+    controller.state.capabilities = { ...fixtureWorkbench.capabilities, execution: { eligible: false, reason: "not_qualified" } };
+
+    expect(await controller.promoteCampaign()).toBe(false);
+    expect(call).not.toHaveBeenCalled();
+    controller.state.capabilities = { ...fixtureWorkbench.capabilities, execution: { eligible: true, reason: "qualified" } };
+
+    expect(await controller.promoteCampaign()).toBe(false);
+    const request = {
+      campaign_id: campaign.id,
+      expected_revision: plan.graph.graph.revision,
+      idempotency_key: expect.any(String),
+    };
+    expect(call).toHaveBeenNthCalledWith(1, "promote_factory_campaign", request);
+    const firstKey = call.mock.calls[0]?.[1].idempotency_key;
+    expect(await controller.promoteCampaign()).toBe(false);
+    expect(call).toHaveBeenNthCalledWith(2, "promote_factory_campaign", { campaign_id: campaign.id, expected_revision: plan.graph.graph.revision, idempotency_key: firstKey });
+    expect(controller.selected?.planning_only).toBe(true);
+    expect(controller.state.graph?.revision).toBe(plan.graph.graph.revision);
+    expect(controller.state.error).not.toContain("execution_not_qualified");
+  });
+
   it("requests a bounded repository without treating a pending request as access", async () => {
     const candidate = { id: "a".repeat(64), name: "sample", root_alias: "tests", max_finish: "local_candidate" };
     const requests: { tool: string; args: Record<string, unknown> }[] = [];

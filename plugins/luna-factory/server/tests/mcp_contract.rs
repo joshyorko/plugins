@@ -19,7 +19,7 @@ fn every_structured_tool_declares_an_object_output_contract() {
 #[test]
 fn graph_catalog_requires_revision_and_is_callable_by_both_audiences() {
     let tools = tool_definitions();
-    assert_eq!(tools.len(), 29);
+    assert_eq!(tools.len(), 32);
     for name in [
         "create_factory_graph",
         "get_factory_graph",
@@ -172,7 +172,7 @@ fn campaign_catalog_is_model_and_app_visible_with_read_only_reads_and_fenced_pro
                 .is_none_or(|v| v.iter().any(|c| c == "model"))
         })
         .count();
-    assert_eq!(models, 20);
+    assert_eq!(models, 23);
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn github_reads_are_read_only_open_world_and_callable_by_both_audiences() {
                 .is_none_or(|v| v.iter().any(|c| c == "model"))
         })
         .count();
-    assert_eq!(model_visible, 20);
+    assert_eq!(model_visible, 23);
     let delivery = tools
         .iter()
         .find(|t| t.name == "read_factory_delivery")
@@ -444,8 +444,8 @@ fn reconciliation_is_callable_in_the_model_filtered_catalog() {
                 .is_none_or(|visibility| visibility.iter().any(|context| context == "model"))
         })
         .collect();
-    // docs/control-wire.md "Tool catalog": 29 tools, 20 model-visible, 9 app-only.
-    assert_eq!(models.len(), 20);
+    // docs/control-wire.md "Tool catalog": 32 tools, 23 model-visible, 9 app-only.
+    assert_eq!(models.len(), 23);
     assert!(
         !models
             .iter()
@@ -530,5 +530,43 @@ fn import_source_display_is_optional_bounded_and_github_only() {
             !validator.is_valid(&request(Some(display.clone()))),
             "{display}"
         );
+    }
+}
+
+#[test]
+fn update_task_schema_requires_a_full_snapshot_and_nullable_target() {
+    let tool = tool_definitions()
+        .into_iter()
+        .find(|tool| tool.name == "propose_factory_change")
+        .unwrap();
+    let schema = serde_json::to_value(tool.input_schema).unwrap();
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let request = json!({
+        "run_id":"run","expected_revision":1,"idempotency_key":"update",
+        "change":{"kind":"update_task","node_id":"objective","title":null,
+            "dependencies":["prerequisite"],"target_id":null}
+    });
+    assert!(validator.is_valid(&request));
+    let mut explicit_title = request.clone();
+    explicit_title["change"]["title"] = json!("New title");
+    assert!(validator.is_valid(&explicit_title));
+    let mut target = request.clone();
+    target["change"]["target_id"] = json!("native-local");
+    assert!(validator.is_valid(&target));
+    let mut objective_limit = request.clone();
+    objective_limit["change"]["title"] = json!("O".repeat(8000));
+    assert!(validator.is_valid(&objective_limit));
+    objective_limit["change"]["title"] = json!("O".repeat(8001));
+    assert!(!validator.is_valid(&objective_limit));
+
+    for field in ["node_id", "title", "dependencies", "target_id"] {
+        let mut missing = request.clone();
+        missing["change"].as_object_mut().unwrap().remove(field);
+        assert!(!validator.is_valid(&missing), "missing {field}");
+    }
+    for wrong in [json!(false), json!(123), json!({})] {
+        let mut invalid = request.clone();
+        invalid["change"]["target_id"] = wrong.clone();
+        assert!(!validator.is_valid(&invalid), "invalid target {wrong}");
     }
 }

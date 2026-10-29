@@ -37,7 +37,14 @@ for line in sys.stdin:
     params = message.get("params", {})
     result = {}
     if method == "initialize":
-        result = {"userAgent": "synthetic-review-fixture"}
+        result = {
+            "userAgent": "synthetic-review-fixture",
+            "serverInfo": {
+                "name": "codex-fixture",
+                "version": "1.0",
+                "buildHash": "fixture-sha256",
+            },
+        }
     elif method == "model/list":
         result = {"data": [{"model": "gpt-6-luna", "supportedReasoningEfforts": [{"reasoningEffort": "high"}]}]}
     elif method == "thread/start":

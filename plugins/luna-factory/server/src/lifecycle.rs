@@ -23,8 +23,9 @@ pub fn terminal_threads(expected: &[String], observed: &[Value]) -> bool {
         })
 }
 
-/// The single source of `capabilities.execution`. Execution is not qualified on any
-/// connection in this version (#71); campaign promotion fails closed on this value.
+/// Static, config-free floor for campaign promotion, which defines no transition and
+/// fails closed. `capabilities.execution` and every native effect path use the persisted
+/// exact-profile grants in `crate::qualification` instead (#71).
 pub fn execution_qualification() -> (bool, &'static str) {
     (
         false,
@@ -342,6 +343,10 @@ pub struct Factory {
     timelines: Arc<crate::timeline::AgentTimelines>,
     /// Opt-in read-only GitHub App reader. Its data is display-only, never proof.
     github: crate::github::SharedReader,
+    /// Serializes workspace connects and creates (clones run outside `mutation`).
+    workspace: Arc<Mutex<()>>,
+    #[cfg(debug_assertions)]
+    workspace_publish_hook: Arc<std::sync::OnceLock<Arc<dyn Fn() -> bool + Send + Sync>>>,
     _lease: Arc<ServiceLease>,
 }
 struct PendingRepositoryForm {
@@ -478,8 +483,26 @@ impl Factory {
                 crate::timeline::FRESH_FOR,
             )),
             github,
+            workspace: Arc::new(Mutex::new(())),
+            #[cfg(debug_assertions)]
+            workspace_publish_hook: Arc::new(std::sync::OnceLock::new()),
             _lease: Arc::new(lease),
         })
+    }
+
+    /// Test-only seam for simulating interruption after atomic publication.
+    #[doc(hidden)]
+    #[cfg(debug_assertions)]
+    pub fn interrupt_connect_after_publish_for_test(
+        &self,
+        hook: Arc<dyn Fn() -> bool + Send + Sync>,
+    ) -> bool {
+        self.workspace_publish_hook.set(hook).is_ok()
+    }
+
+    #[cfg(debug_assertions)]
+    fn should_interrupt_connect_after_publish_for_test(&self) -> bool {
+        self.workspace_publish_hook.get().is_some_and(|hook| hook())
     }
     pub async fn issue_repository_form_state(&self, candidates: &Value) -> Result<String> {
         let values = candidates
@@ -562,7 +585,7 @@ impl Factory {
         let _guard = self.mutation.lock().await;
         let mut store = self.store.lock().await;
         let config =
-            crate::repositories::effective_config(&self.config, &store.repository_registrations()?);
+            crate::repositories::effective_config(&self.config, &store.effective_registrations()?);
         let admission = store.admit_planning(&config, &request)?;
         let run = store.get(&admission.run.id)?;
         Ok(crate::graph::envelope(&run, None))
@@ -576,7 +599,7 @@ impl Factory {
         let _guard = self.mutation.lock().await;
         let mut store = self.store.lock().await;
         let config =
-            crate::repositories::effective_config(&self.config, &store.repository_registrations()?);
+            crate::repositories::effective_config(&self.config, &store.effective_registrations()?);
         request.validate(&config)?;
         // Read-only prechecks give precise reasons before any write; admission repeats both
         // inside its transaction, where they are authoritative.
@@ -711,6 +734,12 @@ impl Factory {
                 );
             }
             crate::graph::GraphChange::SetTarget { target_id, .. } => {
+                crate::backends::validate_preference(&self.effective_config().await?, target_id)?;
+            }
+            crate::graph::GraphChange::UpdateTask {
+                target_id: Some(target_id),
+                ..
+            } => {
                 crate::backends::validate_preference(&self.effective_config().await?, target_id)?;
             }
             _ => {}
@@ -858,7 +887,7 @@ impl Factory {
         {
             let config = crate::repositories::effective_config(
                 &self.config,
-                &store.repository_registrations()?,
+                &store.effective_registrations()?,
             );
             if let Err(error) = Self::validate_graph_repository_config(run, &config) {
                 // History remains visible after revocation or remapping. These are
@@ -1041,12 +1070,18 @@ impl Factory {
     async fn effective_config(&self) -> Result<Config> {
         Ok(crate::repositories::effective_config(
             &self.config,
-            &self.store.lock().await.repository_registrations()?,
+            &self.store.lock().await.effective_registrations()?,
         ))
     }
     pub async fn discover_repositories(&self) -> Result<Value> {
-        let registrations = self.store.lock().await.repository_registrations()?;
-        let config = crate::repositories::effective_config(&self.config, &registrations);
+        let (registrations, effective) = {
+            let store = self.store.lock().await;
+            (
+                store.repository_registrations()?,
+                store.effective_registrations()?,
+            )
+        };
+        let config = crate::repositories::effective_config(&self.config, &effective);
         let candidates = crate::repositories::discover(&self.config)?
             .into_iter()
             .filter(|candidate| {
@@ -1068,14 +1103,26 @@ impl Factory {
         crate::repositories::request(&self.config, &mut *self.store.lock().await, request)
     }
     pub async fn capabilities(&self) -> Result<Value> {
-        let config = self.effective_config().await?;
+        let (config, records) = self.effective_workspace_state().await?;
+        let repositories = config
+            .repositories
+            .iter()
+            .map(|(alias, repo)| {
+                let mut entry = json!({"alias":alias,"max_finish":repo.max_finish});
+                if let Some(provenance) = self.workspace_provenance(&records, alias, &repo.root) {
+                    entry["provenance"] = json!(provenance);
+                }
+                entry
+            })
+            .collect::<Vec<_>>();
         Ok(
             json!({"plugin_version":env!("CARGO_PKG_VERSION"),"mcp_protocol":"2026-07-28","native_transport":self.config.native_transport,
-            "repositories":config.repositories.iter().map(|(alias,repo)|json!({"alias":alias,"max_finish":repo.max_finish})).collect::<Vec<_>>(),
+            "repositories":repositories,
             "repository_onboarding":{"enabled":!self.config.discovery_roots.is_empty(),"approval":"local_operator"},
+            "workspaces":crate::workspaces::capability(&self.config),
             "profiles":self.config.profiles.iter().map(|(alias,profile)|json!({"alias":alias,"effort":profile.effort,"supported":profile.codex_profile.is_none()})).collect::<Vec<_>>(),
             "limits":self.config.limits,"observed_routing":"unverified","status_inference_calls":0,
-            "execution":{"eligible":execution_qualification().0,"reason":execution_qualification().1},
+            "execution":crate::qualification::capability(&self.config),
             "routing_telemetry":{"model":"turn-bound model/rerouted mismatch notifications only","effort":"unavailable","provider":"configuration only; downstream execution and billing unverified"},
             "control_policy":{"wire_schema":1,"sqlite_schema":2,"managed_admission":"structural","native_child_policy":"cooperative_unverified","semantic_acceptance":"owner_judgment","independent_checks":["file_sha256"],"native_output_completeness":"unverified","native_environment":"unverified","delivery_certification":"unsupported"},
             "agent_timeline":{"source":crate::timeline::SOURCE,"enabled":!self.config.cas_timelines.is_empty(),
@@ -1083,6 +1130,459 @@ impl Factory {
             "github":self.github.capability(),
             "live_proof":"Live owner/worker, native ChatGPT and tunnel acceptance must be recorded on the operator runtime."}),
         )
+    }
+    async fn effective_workspace_state(
+        &self,
+    ) -> Result<(Config, Vec<crate::workspaces::WorkspaceRepository>)> {
+        let store = self.store.lock().await;
+        let records = store.workspace_repositories()?;
+        let config =
+            crate::repositories::effective_config(&self.config, &store.effective_registrations()?);
+        Ok((config, records))
+    }
+    /// Provenance of an effective alias, when a workspace record supplied it.
+    fn workspace_provenance(
+        &self,
+        records: &[crate::workspaces::WorkspaceRepository],
+        alias: &str,
+        root: &Path,
+    ) -> Option<crate::workspaces::Provenance> {
+        let workspaces = self.config.workspaces.as_ref()?;
+        records
+            .iter()
+            .find(|r| r.alias == alias && workspaces.root.join(&r.directory) == root)
+            .map(|r| r.provenance)
+    }
+    fn workspace_record_effective(
+        &self,
+        config: &Config,
+        record: &crate::workspaces::WorkspaceRepository,
+    ) -> bool {
+        self.config.workspaces.as_ref().is_some_and(|workspaces| {
+            config
+                .repositories
+                .get(&record.alias)
+                .is_some_and(|repo| repo.root == workspaces.root.join(&record.directory))
+        })
+    }
+    /// The first free alias among `preferred`, checked against the operator
+    /// configuration, the effective set and every recorded registration.
+    async fn free_alias(&self, config: &Config, preferred: &[String]) -> Result<String> {
+        let store = self.store.lock().await;
+        for alias in preferred {
+            if crate::config::valid_alias(alias)
+                && !config.repositories.contains_key(alias)
+                && !self.config.repositories.contains_key(alias)
+                && !store.repository_alias_recorded(alias)?
+            {
+                return Ok(alias.clone());
+            }
+        }
+        bail!("repository_alias_conflict")
+    }
+    /// Finish a reserved workspace record after verifying the published directory.
+    async fn register_workspace(
+        &self,
+        workspaces: &crate::workspaces::Workspaces,
+        mut record: crate::workspaces::WorkspaceRepository,
+    ) -> Result<crate::workspaces::WorkspaceRepository> {
+        let target = workspaces.root.join(&record.directory);
+        workspaces.check_root()?;
+        let expected_origin = record
+            .full_name
+            .as_deref()
+            .map(crate::github::RepoName::parse)
+            .transpose()?
+            .map(|name| crate::github::canonical_remote(&name, self.github.web_host()));
+        crate::workspaces::verify_recorded_repository(
+            &target,
+            &record,
+            expected_origin.as_deref(),
+        )?;
+        record.candidate_id = crate::workspaces::candidate(workspaces, &record.directory)?
+            .context("workspace_repository_unavailable")?
+            .id;
+        record.identity = Self::graph_repository_identity(&target)
+            .map_err(|_| anyhow::anyhow!("repository_identity_unavailable"))?;
+        record.pending = false;
+        let _guard = self.mutation.lock().await;
+        self.store.lock().await.save_workspace_repository(&record)?;
+        Ok(record)
+    }
+    async fn reserve_workspace(
+        &self,
+        record: &crate::workspaces::WorkspaceRepository,
+        repository_key: &str,
+    ) -> Result<()> {
+        let _guard = self.mutation.lock().await;
+        self.store
+            .lock()
+            .await
+            .insert_workspace_repository(record, repository_key)
+    }
+    async fn save_pending_workspace(
+        &self,
+        record: &crate::workspaces::WorkspaceRepository,
+    ) -> Result<()> {
+        let _guard = self.mutation.lock().await;
+        self.store.lock().await.save_workspace_repository(record)
+    }
+    async fn bind_workspace_idempotency(&self, key: &str, repository_key: &str) -> Result<()> {
+        self.store
+            .lock()
+            .await
+            .bind_workspace_idempotency(key, repository_key)
+    }
+    /// Read-only: the installation's repositories, marked connected or connectable.
+    /// Off unless the operator set `workspaces.connect_github`; no request is made then.
+    pub async fn list_github_repositories(
+        &self,
+        args: crate::workspaces::ListGithubRepositories,
+    ) -> Result<Value> {
+        let enabled = self
+            .config
+            .workspaces
+            .as_ref()
+            .is_some_and(|w| w.connect_github);
+        let page = crate::github::list_cursor_page(args.cursor.as_deref())?;
+        if !enabled {
+            return Ok(crate::github::repository_list(
+                self.config.github_app.is_some(),
+                Some("github_connect_not_enabled"),
+            ));
+        }
+        let unconfigured = self.github.unavailable_reason();
+        let reason = unconfigured;
+        if let Some(reason) = reason {
+            return Ok(crate::github::repository_list(
+                unconfigured.is_none(),
+                Some(reason),
+            ));
+        }
+        let (config, records) = self.effective_workspace_state().await?;
+        let mut connected = crate::github::remote_aliases(&config, self.github.web_host());
+        for record in &records {
+            if let Some(full_name) = &record.full_name
+                && self.workspace_record_effective(&config, record)
+            {
+                connected.insert(full_name.clone(), record.alias.clone());
+            }
+        }
+        Ok(self.github.list_repositories(page, &connected).await)
+    }
+    /// Clone one allowlisted GitHub repository into the workspace root and approve
+    /// it as an alias with `github_app_installation` provenance. No push, branch,
+    /// pull request, run, dispatch or execution qualification.
+    pub async fn connect_github_repository(
+        &self,
+        args: crate::workspaces::ConnectGithubRepository,
+    ) -> Result<Value> {
+        use crate::workspaces::{Provenance, Target};
+        let workspaces = self
+            .config
+            .workspaces
+            .as_ref()
+            .filter(|w| w.connect_github)
+            .context("github_connect_not_enabled")?;
+        ensure!(
+            crate::workspaces::valid_idempotency_key(&args.idempotency_key),
+            "invalid_idempotency_key"
+        );
+        let repository = crate::github::RepoName::parse(&args.repository)?;
+        let key = repository.key();
+        if let Some(reason) = self.github.unavailable_reason() {
+            bail!(reason);
+        }
+        ensure!(
+            self.github.allowed(&repository).is_some(),
+            "repository_not_in_github_app_allowlist"
+        );
+        let _workspace = self.workspace.lock().await;
+        workspaces.check_root()?;
+        let (config, records) = self.effective_workspace_state().await?;
+        let repository_key = format!("github:{key}");
+        let mut pending_record = None;
+        if let Some(existing) = records
+            .iter()
+            .find(|r| r.idempotency_key == args.idempotency_key)
+        {
+            ensure!(
+                existing.provenance == Provenance::GithubAppInstallation
+                    && existing.full_name.as_deref() == Some(key.as_str()),
+                "idempotency_conflict"
+            );
+            self.bind_workspace_idempotency(&args.idempotency_key, &repository_key)
+                .await?;
+            if !existing.pending {
+                ensure!(
+                    self.workspace_record_effective(&config, existing),
+                    "workspace_repository_unavailable"
+                );
+                let origin = crate::github::canonical_remote(&repository, self.github.web_host());
+                crate::workspaces::verify_recorded_repository(
+                    &workspaces.root.join(&existing.directory),
+                    existing,
+                    Some(&origin),
+                )?;
+                return Ok(existing.connect_result("connected"));
+            }
+            match crate::workspaces::target_state(&workspaces.root.join(&existing.directory))? {
+                Target::Directory => {
+                    let origin =
+                        crate::github::canonical_remote(&repository, self.github.web_host());
+                    crate::workspaces::verify_recorded_repository(
+                        &workspaces.root.join(&existing.directory),
+                        existing,
+                        Some(&origin),
+                    )?;
+                    let completed = self
+                        .register_workspace(workspaces, existing.clone())
+                        .await?;
+                    return Ok(completed.connect_result("connected"));
+                }
+                Target::Missing => pending_record = Some(existing.clone()),
+                Target::Other => bail!("workspace_path_conflict"),
+            }
+        }
+        if let Some(existing) = records
+            .iter()
+            .find(|r| !r.pending && r.full_name.as_deref() == Some(key.as_str()))
+        {
+            ensure!(
+                self.workspace_record_effective(&config, existing),
+                "workspace_repository_unavailable"
+            );
+            let origin = crate::github::canonical_remote(&repository, self.github.web_host());
+            crate::workspaces::verify_recorded_repository(
+                &workspaces.root.join(&existing.directory),
+                existing,
+                Some(&origin),
+            )?;
+            self.bind_workspace_idempotency(&args.idempotency_key, &repository_key)
+                .await?;
+            return Ok(existing.connect_result("already_connected"));
+        }
+        let web_host = self.github.web_host().to_owned();
+        if pending_record.is_none()
+            && let Some(alias) = crate::github::remote_aliases(&config, &web_host).get(&key)
+        {
+            let identity = Self::graph_repository_identity(&config.repositories[alias].root)
+                .map_err(|_| anyhow::anyhow!("repository_identity_unavailable"))?;
+            self.bind_workspace_idempotency(&args.idempotency_key, &repository_key)
+                .await?;
+            return Ok(
+                json!({"schema_version":1,"status":"already_connected","alias":alias,
+                "repository":{"alias":alias,"identity":identity},"full_name":key,
+                "default_branch":null,"provenance":"github_app"}),
+            );
+        }
+        let directory = crate::workspaces::github_directory(&repository);
+        let target = workspaces.root.join(&directory);
+        let mut record = if let Some(record) = pending_record {
+            record
+        } else {
+            ensure!(
+                matches!(crate::workspaces::target_state(&target)?, Target::Missing),
+                "workspace_path_conflict"
+            );
+            let alias = self
+                .free_alias(
+                    &config,
+                    &[
+                        crate::workspaces::alias_from(&repository.name),
+                        crate::workspaces::alias_from(&format!(
+                            "{}-{}",
+                            repository.owner, repository.name
+                        )),
+                    ],
+                )
+                .await?;
+            let record = crate::workspaces::WorkspaceRepository {
+                id: uuid::Uuid::new_v4().to_string(),
+                idempotency_key: args.idempotency_key.clone(),
+                created_by_luna: true,
+                pending: true,
+                device: None,
+                inode: None,
+                provenance: Provenance::GithubAppInstallation,
+                alias,
+                directory,
+                candidate_id: String::new(),
+                full_name: Some(key),
+                name: None,
+                default_branch: None,
+                identity: String::new(),
+                created_at: crate::store::now(),
+            };
+            self.reserve_workspace(&record, &repository_key).await?;
+            record
+        };
+        workspaces.check_root()?;
+        ensure!(
+            matches!(crate::workspaces::target_state(&target)?, Target::Missing),
+            "workspace_path_conflict"
+        );
+        // Keep this directory descriptor across token minting and clone startup:
+        // a replaced workspace pathname cannot redirect the child's cwd.
+        let pinned_root = workspaces.open_pinned_root()?;
+        let mut staging = pinned_root.staging("connect")?;
+        record.default_branch = match self
+            .github
+            .clone_repository(&repository, &staging, workspaces.max_clone_bytes())
+            .await
+        {
+            Ok(branch) => branch,
+            Err(reason) => bail!(reason),
+        };
+        let staging_path = staging.path();
+        let (device, inode) = crate::workspaces::directory_identity(&staging_path)?;
+        record.device = Some(device);
+        record.inode = Some(inode);
+        let origin = crate::github::canonical_remote(&repository, self.github.web_host());
+        crate::workspaces::verify_recorded_repository(&staging_path, &record, Some(&origin))?;
+        self.save_pending_workspace(&record).await?;
+        workspaces.check_root()?;
+        staging.publish(&record.directory)?;
+        #[cfg(debug_assertions)]
+        if self.should_interrupt_connect_after_publish_for_test() {
+            bail!("workspace_publish_interrupted_for_test");
+        }
+        let record = self.register_workspace(workspaces, record).await?;
+        Ok(record.connect_result("connected"))
+    }
+    /// Greenfield: `git init` plus one empty commit under the workspace root,
+    /// approved as an alias with `local_create` provenance. No GitHub call.
+    pub async fn create_local_repository(
+        &self,
+        args: crate::workspaces::CreateLocalRepository,
+    ) -> Result<Value> {
+        use crate::workspaces::{Provenance, Target};
+        let workspaces = self
+            .config
+            .workspaces
+            .as_ref()
+            .filter(|w| w.create_local)
+            .context("local_create_not_enabled")?;
+        ensure!(
+            crate::workspaces::valid_idempotency_key(&args.idempotency_key),
+            "invalid_idempotency_key"
+        );
+        ensure!(
+            crate::workspaces::valid_local_name(&args.name),
+            "invalid_local_repository_name"
+        );
+        let _workspace = self.workspace.lock().await;
+        workspaces.check_root()?;
+        let (config, records) = self.effective_workspace_state().await?;
+        let repository_key = format!("local:{}", args.name);
+        let mut pending_record = None;
+        if let Some(existing) = records
+            .iter()
+            .find(|r| r.idempotency_key == args.idempotency_key)
+        {
+            ensure!(
+                existing.provenance == Provenance::LocalCreate
+                    && existing.name.as_deref() == Some(args.name.as_str()),
+                "idempotency_conflict"
+            );
+            self.bind_workspace_idempotency(&args.idempotency_key, &repository_key)
+                .await?;
+            if !existing.pending {
+                ensure!(
+                    self.workspace_record_effective(&config, existing),
+                    "workspace_repository_unavailable"
+                );
+                crate::workspaces::verify_recorded_repository(
+                    &workspaces.root.join(&existing.directory),
+                    existing,
+                    None,
+                )?;
+                return Ok(existing.create_result("created"));
+            }
+            match crate::workspaces::target_state(&workspaces.root.join(&existing.directory))? {
+                Target::Directory => {
+                    crate::workspaces::verify_recorded_repository(
+                        &workspaces.root.join(&existing.directory),
+                        existing,
+                        None,
+                    )?;
+                    let completed = self
+                        .register_workspace(workspaces, existing.clone())
+                        .await?;
+                    return Ok(completed.create_result("created"));
+                }
+                Target::Missing => pending_record = Some(existing.clone()),
+                Target::Other => bail!("workspace_path_conflict"),
+            }
+        }
+        if let Some(existing) = records.iter().find(|r| {
+            !r.pending
+                && r.provenance == Provenance::LocalCreate
+                && r.name.as_deref() == Some(args.name.as_str())
+        }) {
+            ensure!(
+                self.workspace_record_effective(&config, existing),
+                "workspace_repository_unavailable"
+            );
+            crate::workspaces::verify_recorded_repository(
+                &workspaces.root.join(&existing.directory),
+                existing,
+                None,
+            )?;
+            self.bind_workspace_idempotency(&args.idempotency_key, &repository_key)
+                .await?;
+            return Ok(existing.create_result("already_exists"));
+        }
+        let target = workspaces.root.join(&args.name);
+        let mut record = if let Some(record) = pending_record {
+            record
+        } else {
+            ensure!(
+                matches!(crate::workspaces::target_state(&target)?, Target::Missing),
+                "workspace_path_conflict"
+            );
+            let alias = self
+                .free_alias(&config, &[crate::workspaces::alias_from(&args.name)])
+                .await?;
+            let record = crate::workspaces::WorkspaceRepository {
+                id: uuid::Uuid::new_v4().to_string(),
+                idempotency_key: args.idempotency_key.clone(),
+                created_by_luna: true,
+                pending: true,
+                device: None,
+                inode: None,
+                provenance: Provenance::LocalCreate,
+                alias,
+                directory: args.name.clone(),
+                candidate_id: String::new(),
+                full_name: None,
+                name: Some(args.name.clone()),
+                default_branch: Some("main".into()),
+                identity: String::new(),
+                created_at: crate::store::now(),
+            };
+            self.reserve_workspace(&record, &repository_key).await?;
+            record
+        };
+        workspaces.check_root()?;
+        ensure!(
+            matches!(crate::workspaces::target_state(&target)?, Target::Missing),
+            "workspace_path_conflict"
+        );
+        let staging = crate::workspaces::StagingGuard::new(crate::workspaces::staging_path(
+            workspaces, "create",
+        ));
+        workspaces.check_root()?;
+        crate::workspaces::init_local(staging.path()).await?;
+        let (device, inode) = crate::workspaces::directory_identity(staging.path())?;
+        record.device = Some(device);
+        record.inode = Some(inode);
+        crate::workspaces::verify_recorded_repository(staging.path(), &record, None)?;
+        self.save_pending_workspace(&record).await?;
+        workspaces.check_root()?;
+        crate::workspaces::publish(staging.path(), &target)?;
+        let record = self.register_workspace(workspaces, record).await?;
+        Ok(record.create_result("created"))
     }
     /// GitHub reader handle (diagnostics for tests; never exposes credentials).
     pub fn github_reader(&self) -> &crate::github::GithubReader {
@@ -1222,6 +1722,24 @@ impl Factory {
             json!({"runs":self.list(100).await?,"selected_run":selected,"capabilities":self.capabilities().await?,"settings":self.settings().await?["values"]}),
         )
     }
+    /// Ordinary-run qualification for this run's exact profile, read through a fresh
+    /// read-only connection so a revocation by another process is honoured.
+    fn require_qualified(&self, run: &Run) -> Result<()> {
+        crate::qualification::require(&self.config, &run.request.profile, run.request.capacity)
+    }
+    /// A synchronous pre-wire qualification guard for one native write.
+    fn qualification_guard(
+        &self,
+        run: &Run,
+        client: &NativeClient,
+    ) -> crate::qualification::DispatchAuthorization {
+        crate::qualification::dispatch_authorization(
+            &self.config,
+            &run.request.profile,
+            run.request.capacity,
+            client.provider_identity(),
+        )
+    }
     async fn connect(&self) -> Result<NativeClient> {
         if self.config.native_transport == "existing_daemon" {
             NativeClient::connect_existing(
@@ -1243,8 +1761,11 @@ impl Factory {
             let mut store = self.store.lock().await;
             let config = crate::repositories::effective_config(
                 &self.config,
-                &store.repository_registrations()?,
+                &store.effective_registrations()?,
             );
+            crate::store::validate_request(&config, &request)?;
+            // Fail closed before any run row, claim, receipt or native process/connection.
+            crate::qualification::require(&self.config, &request.profile, request.capacity)?;
             store.admit(&config, &request)?
         };
         if !admission.created {
@@ -1266,12 +1787,23 @@ impl Factory {
         self.store.lock().await.save(&mut run)?;
         match self.launch(&mut run).await {
             Ok(()) => {}
-            Err(_) => {
-                run.blocker=Some("Native owner start could not be confirmed. Run doctor locally and inspect native Codex; no mutation is replayed automatically.".into());
+            Err(error) => {
+                let denied = crate::qualification::denied_code(&error);
+                run.blocker = Some(match denied {
+                    Some(code) => crate::qualification::blocker(code),
+                    None if crate::native::is_qualification_write_timeout(&error) => {
+                        "qualification_write_timeout".into()
+                    }
+                    None => "Native owner start could not be confirmed. Run doctor locally and inspect native Codex; no mutation is replayed automatically.".into(),
+                });
                 if run.dispatch_phase == "admitted" && run.thread_id.is_none() {
                     run.set_state(crate::control::RunControl::Failed);
-                    run.delta =
-                        "Native preflight failed before any owner start was dispatched.".into();
+                    run.delta = if denied.is_some() {
+                        "Execution qualification was denied before any owner start was dispatched."
+                            .into()
+                    } else {
+                        "Native preflight failed before any owner start was dispatched.".into()
+                    };
                     self.store.lock().await.release_verified(&mut run)?;
                 } else {
                     run.set_state(crate::control::RunControl::Blocked);
@@ -1284,6 +1816,7 @@ impl Factory {
     }
     async fn launch(&self, run: &mut Run) -> Result<()> {
         self.validate_current_authority(run).await?;
+        self.require_qualified(run)?;
         let control = run.control.as_ref().context("control_missing")?;
         crate::control::admit_task(control, &control.tasks["objective"])?;
         ensure!(now() < run.deadline_at, "time_budget_exhausted");
@@ -1298,7 +1831,7 @@ impl Factory {
             <sha2::Sha256 as sha2::Digest>::digest(skill)
         ));
         self.store.lock().await.save(run)?;
-        let dispatch_guard = self.dispatch_guard(run).await?;
+        let dispatch_guard = self.dispatch_guard(run, &client).await?;
         crate::native::validate_luna_route(&client.list_models().await?, effort)?;
         run.dispatch_phase = "thread_start_pending".into();
         let thread_effect = uuid::Uuid::new_v4().to_string();
@@ -1310,14 +1843,30 @@ impl Factory {
             },
         )
         .await?;
-        let started = client
+        let started = match client
             .start_thread_guarded(
                 Path::new(&run.canonical_root),
                 effort,
                 run.request.capacity as usize,
                 &dispatch_guard,
             )
-            .await?;
+            .await
+        {
+            Ok(started) => started,
+            Err(error) => {
+                if crate::qualification::denied_code(&error).is_some() {
+                    // The pre-wire guard refused before any byte: the intent provably did
+                    // not happen, so it settles instead of remaining an unknown effect.
+                    self.control_event(
+                        run,
+                        crate::control::Event::EffectSettled { id: thread_effect },
+                    )
+                    .await?;
+                    run.dispatch_phase = "admitted".into();
+                }
+                return Err(error);
+            }
+        };
         let route = configured_route(&started, effort);
         run.thread_id = Some(
             started["thread"]["id"]
@@ -1340,6 +1889,16 @@ impl Factory {
             .lock()
             .await
             .insert(run.id.clone(), client.clone());
+        if let Err(error) = self.require_qualified(run) {
+            let code = crate::qualification::denied_code(&error)
+                .unwrap_or(crate::qualification::NOT_QUALIFIED);
+            run.set_state(crate::control::RunControl::Blocked);
+            run.blocker = Some(format!(
+                "execution_not_qualified: {code}; the owner thread exists but no turn was dispatched"
+            ));
+            self.store.lock().await.save(run)?;
+            return Ok(());
+        }
         run.dispatch_phase = "turn_start_pending".into();
         run.dispatch_id = Some(uuid::Uuid::new_v4().to_string());
         self.control_event(
@@ -1376,11 +1935,15 @@ impl Factory {
             .await;
         let turn = match result {
             Ok(turn) => turn,
-            Err(_) => {
+            Err(error) => {
                 run.set_state(crate::control::RunControl::Blocked);
-                run.blocker=Some("Native turn acknowledgement was not confirmed. Recover its persisted dispatch before any new inference.".into());
+                run.blocker = Some(match crate::qualification::denied_code(&error) {
+                    Some(code) => format!("execution_not_qualified: {code}; the pre-wire guard refused turn/start and nothing was dispatched"),
+                    None if crate::native::is_qualification_write_timeout(&error) => "qualification_write_timeout".into(),
+                    None => "Native turn acknowledgement was not confirmed. Recover its persisted dispatch before any new inference.".into(),
+                });
                 self.store.lock().await.save(run)?;
-                self.monitor(run.id.clone(), events).await;
+                self.monitor(run.id.clone(), events, client.clone()).await;
                 return Ok(());
             }
         };
@@ -1408,7 +1971,7 @@ impl Factory {
         run.blocker = None;
         run.delta = "Owner is working with the canonical Luna Factory skill.".into();
         self.store.lock().await.save(run)?;
-        self.monitor(run.id.clone(), events).await;
+        self.monitor(run.id.clone(), events, client.clone()).await;
         Ok(())
     }
     fn owner_prompt(&self, run: &Run) -> Result<String> {
@@ -1473,7 +2036,7 @@ impl Factory {
                                 self.store.lock().await.save(&mut run)?;
                             },
                             Ok(true)=>self.block(&run.id,"Native ownership reconciled idle. Resume the same run explicitly within its remaining limits.").await?,
-                            Ok(false)=>{run.set_state(crate::control::RunControl::Running);run.blocker=None;run.delta="Reconnected to existing native execution; no inference was started.".into();self.store.lock().await.save(&mut run)?;self.monitor(run.id.clone(),events).await;},
+                            Ok(false)=>{run.set_state(crate::control::RunControl::Running);run.blocker=None;run.delta="Reconnected to existing native execution; no inference was started.".into();self.store.lock().await.save(&mut run)?;self.monitor(run.id.clone(),events,client.clone()).await;},
                             Err(_)=>self.block(&run.id,"Native ownership could not be reconciled. Repository claim remains held.").await?,
                         }
                     }
@@ -1489,7 +2052,12 @@ impl Factory {
         }
         Ok(())
     }
-    async fn monitor(&self, id: String, mut receiver: broadcast::Receiver<Value>) {
+    async fn monitor(
+        &self,
+        id: String,
+        mut receiver: broadcast::Receiver<Value>,
+        client: NativeClient,
+    ) {
         let factory = self.clone();
         let key = id.clone();
         let mut monitors = self.monitors.lock().await;
@@ -1497,23 +2065,165 @@ impl Factory {
             old.abort();
         }
         let handle = tokio::spawn(async move {
+            let mut qualification_interval =
+                tokio::time::interval(std::time::Duration::from_secs(10));
+            qualification_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut qualification_lost = false;
             loop {
-                match receiver.recv().await {
-                    Ok(event) => match factory.observe(&id, event).await {
-                        Ok(true) => break,
-                        Ok(false) => {}
-                        Err(_) => {
-                            let _=factory.block(&id,"Native event could not be reconciled. Claim retained; the run deadline remains active.").await;
+                tokio::select! {
+                    _ = qualification_interval.tick() => {
+                        if qualification_lost {
+                            if !factory.qualification_revoked(&id, &client).await {
+                                break;
+                            }
+                        } else if factory.qualification_revoked(&id, &client).await {
+                            let _ = factory.stop_for_qualification_revoked(&id, &client, &Value::Null).await;
+                            qualification_lost = true;
                         }
-                    },
-                    Err(_) => {
-                        let _=factory.block(&id,"Native event stream was lost. Ownership is uncertain; the run deadline remains active.").await;
-                        break;
+                    }
+                    received = receiver.recv() => match received {
+                        Ok(event) => {
+                            if qualification_lost {
+                                if !factory.qualification_revoked(&id, &client).await {
+                                    break;
+                                }
+                                if Self::event_indicates_new_work(&event) {
+                                    let _ = factory.stop_for_qualification_revoked(&id, &client, &event).await;
+                                }
+                                continue;
+                            }
+                            if Self::event_indicates_new_work(&event)
+                                && factory.qualification_revoked(&id, &client).await
+                            {
+                                let _ = factory.stop_for_qualification_revoked(&id, &client, &event).await;
+                                qualification_lost = true;
+                                continue;
+                            }
+                            match factory.observe(&id, event).await {
+                                Ok(true) => break,
+                                Ok(false) => {}
+                                Err(_) => {
+                                    let _=factory.block(&id,"Native event could not be reconciled. Claim retained; the run deadline remains active.").await;
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            if !qualification_lost {
+                                let _=factory.block(&id,"Native event stream was lost. Ownership is uncertain; the run deadline remains active.").await;
+                            }
+                            break;
+                        }
                     }
                 }
             }
         });
         monitors.insert(key, handle);
+    }
+
+    fn event_indicates_new_work(event: &Value) -> bool {
+        let method = event["method"].as_str().unwrap_or("");
+        matches!(method, "turn/started" | "thread/started")
+            || (method == "thread/status/changed" && event["params"]["status"]["type"] == "active")
+            || (method == "item/started"
+                && matches!(
+                    event["params"]["item"]["type"].as_str(),
+                    Some(
+                        "userMessage" | "collabAgentToolCall" | "commandExecution" | "agentMessage"
+                    )
+                ))
+    }
+
+    async fn qualification_revoked(&self, id: &str, client: &NativeClient) -> bool {
+        let run = match self.store.lock().await.get(id) {
+            Ok(run) => run,
+            Err(_) => return true,
+        };
+        if run.claim_held && run.blocker.as_deref() == Some("qualification_revoked") {
+            return true;
+        }
+        if run.state != "RUNNING" || run.dispatch_phase != "active" {
+            return false;
+        }
+        crate::qualification::require_with_identity(
+            &self.config,
+            &run.request.profile,
+            run.request.capacity,
+            client.provider_identity().as_ref(),
+        )
+        .is_err()
+    }
+
+    async fn stop_for_qualification_revoked(
+        &self,
+        id: &str,
+        client: &NativeClient,
+        event: &Value,
+    ) -> Result<()> {
+        let _mutation = self.mutation.lock().await;
+        let mut run = self.store.lock().await.get(id)?;
+        let already_revoked =
+            run.state == "BLOCKED" && run.blocker.as_deref() == Some("qualification_revoked");
+        if !run.claim_held
+            || (!already_revoked && (run.state != "RUNNING" || run.dispatch_phase != "active"))
+        {
+            return Ok(());
+        }
+        let owner = run.thread_id.clone().context("owner_identity_unknown")?;
+        let mut threads = std::collections::BTreeSet::from([owner.clone()]);
+        threads.extend(run.owned_threads.iter().cloned());
+        threads.extend(run.active_threads.iter().cloned());
+        if let Some(thread) = event["params"]["threadId"].as_str() {
+            threads.insert(thread.to_owned());
+        }
+        if let Some(receivers) = event["params"]["item"]["receiverThreadIds"].as_array() {
+            threads.extend(
+                receivers
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned),
+            );
+        }
+        // Descendant identities are held locally for interruption only. They are never
+        // added to the run's Luna-owned worker list after qualification has been lost.
+        if let Ok(descendants) = client.descendants(&owner).await {
+            threads.extend(
+                descendants
+                    .iter()
+                    .filter_map(|thread| thread["id"].as_str())
+                    .map(str::to_owned),
+            );
+        }
+        let mut turns = std::collections::BTreeSet::new();
+        if let Some(turn) = run.turn_id.as_deref() {
+            turns.insert((owner.clone(), turn.to_owned()));
+        }
+        if let (Some(thread), Some(turn)) = (
+            event["params"]["threadId"].as_str(),
+            event["params"]["turnId"].as_str(),
+        ) {
+            turns.insert((thread.to_owned(), turn.to_owned()));
+        }
+        let mut interruption_failed = false;
+        for thread in threads {
+            match client.active_turn_ids(&thread).await {
+                Ok(active) => turns.extend(active.into_iter().map(|turn| (thread.clone(), turn))),
+                Err(_) => interruption_failed = true,
+            }
+        }
+        for (thread, turn) in turns {
+            if client.interrupt_turn(&thread, &turn).await.is_err() {
+                interruption_failed = true;
+            }
+        }
+        run.set_state(crate::control::RunControl::Blocked);
+        run.blocker = Some("qualification_revoked".into());
+        run.updated_at = now();
+        run.delta = if interruption_failed {
+            "Execution qualification was lost. Interrupt requests were incomplete; ownership remains held. Newly reported workers were not recorded as Luna-owned work.".into()
+        } else {
+            "Execution qualification was lost. Interrupt requests were sent for active turns; stop completion remains unverified. Newly reported workers were not recorded as Luna-owned work.".into()
+        };
+        self.store.lock().await.save(&mut run)
     }
     async fn block(&self, id: &str, reason: &str) -> Result<()> {
         let mut store = self.store.lock().await;
@@ -1544,6 +2254,12 @@ impl Factory {
                 run.delta = "Native connection closed. The completed decision is preserved; ownership will be reconciled before its answer starts work.".into();
                 run.updated_at = now();
                 store.save(&mut run)?;
+                return Ok(true);
+            }
+            if matches!(
+                run.blocker.as_deref(),
+                Some("qualification_write_timeout" | "qualification_revoked")
+            ) {
                 return Ok(true);
             }
             drop(store);
@@ -1852,6 +2568,16 @@ impl Factory {
         automatic: bool,
     ) -> Result<()> {
         self.validate_current_authority(run).await?;
+        // Before any Dispatch/EffectIntent event or receipt: an unqualified profile
+        // leaves an honest blocker and never an unknown effect.
+        if let Err(error) = self.require_qualified(run) {
+            let code = crate::qualification::denied_code(&error)
+                .unwrap_or(crate::qualification::NOT_QUALIFIED);
+            run.set_state(crate::control::RunControl::Blocked);
+            run.blocker = Some(crate::qualification::blocker(code));
+            self.store.lock().await.save(run)?;
+            return Err(error);
+        }
         if automatic || run.graph_repository_stamp.is_some() {
             self.validate_graph_repository(run).await?;
         }
@@ -1906,7 +2632,8 @@ impl Factory {
         );
         // Retain the stopped evidence snapshot: Dispatch invalidates current
         // proof, but its prerequisites must still be rechecked at the wire.
-        let dispatch_guard = self.dispatch_guard(run).await?;
+        let dispatch_guard = self.dispatch_guard(run, client).await?;
+        self.require_qualified(run)?;
         let old_attempt = run.dispatch_id.clone().unwrap_or_default();
         let thread = run.thread_id.clone().context("owner_identity_unknown")?;
         run.observed_model = None;
@@ -1958,9 +2685,13 @@ impl Factory {
             .await;
         let turn = match result {
             Ok(turn) => turn,
-            Err(_) => {
+            Err(error) => {
                 run.set_state(crate::control::RunControl::Blocked);
-                run.blocker=Some("Continuation outcome is uncertain. Reconcile the same owner; no inference will be replayed automatically.".into());
+                run.blocker = Some(match crate::qualification::denied_code(&error) {
+                    Some(code) => format!("execution_not_qualified: {code}; the pre-wire guard refused turn/start and nothing was dispatched"),
+                    None if crate::native::is_qualification_write_timeout(&error) => "qualification_write_timeout".into(),
+                    None => "Continuation outcome is uncertain. Reconcile the same owner; no inference will be replayed automatically.".into(),
+                });
                 self.store.lock().await.save(run)?;
                 return Ok(());
             }
@@ -2013,6 +2744,7 @@ impl Factory {
             "continuation_route_unverified"
         );
         self.validate_current_authority(run).await?;
+        self.require_qualified(run)?;
         self.validate_graph_repository(run).await?;
         ensure!(
             run.claim_held && run.observed_claim == crate::store::ObservedClaim::Owned,
@@ -2311,7 +3043,10 @@ impl Factory {
             {
                 let mut persisted = self.store.lock().await.get(id)?;
                 persisted.set_state(crate::control::RunControl::Blocked);
-                persisted.blocker = Some(safe_summary(&error.to_string(), 256));
+                persisted.blocker = Some(match crate::qualification::denied_code(&error) {
+                    Some(code) => crate::qualification::blocker(code),
+                    None => safe_summary(&error.to_string(), 256),
+                });
                 self.store.lock().await.save(&mut persisted)?;
             }
             return Ok(());
@@ -2590,18 +3325,21 @@ impl Factory {
     async fn dispatch_guard(
         &self,
         run: &Run,
-    ) -> Result<impl Fn() -> Result<()> + Send + Sync + 'static> {
+        client: &NativeClient,
+    ) -> Result<crate::qualification::DispatchAuthorization> {
         let config = self.effective_config().await?;
-        let run = run.clone();
-        Ok(move || {
-            Self::validate_current_authority_config(&run, &config)?;
-            ensure!(now() < run.deadline_at, "time_budget_exhausted");
-            let root = Path::new(&run.canonical_root);
+        let dispatch_run = run.clone();
+        let profile = run.request.profile.clone();
+        let capacity = run.request.capacity;
+        let before_qualification = move || {
+            Self::validate_current_authority_config(&dispatch_run, &config)?;
+            ensure!(now() < dispatch_run.deadline_at, "time_budget_exhausted");
+            let root = Path::new(&dispatch_run.canonical_root);
             ensure!(
-                repository_subject(root)? == run.current_subject,
+                repository_subject(root)? == dispatch_run.current_subject,
                 "dispatch_source_changed"
             );
-            let mut control = run.control.clone().context("control_missing")?;
+            let mut control = dispatch_run.control.clone().context("control_missing")?;
             ensure!(
                 !crate::evidence::revalidate_files(&mut control, root)?,
                 "dispatch_evidence_changed"
@@ -2611,11 +3349,16 @@ impl Factory {
             {
                 crate::evidence::revalidate_failures(&control, &diagnosis.check_refs, root)?;
             }
-            // Filesystem validation can take time too; expiry never authorizes
-            // a new packet even when every identity and predicate still matches.
-            ensure!(now() < run.deadline_at, "time_budget_exhausted");
+            ensure!(now() < dispatch_run.deadline_at, "time_budget_exhausted");
             Ok(())
-        })
+        };
+        Ok(crate::qualification::dispatch_authorization_with(
+            &self.config,
+            &profile,
+            capacity,
+            client.provider_identity(),
+            before_qualification,
+        ))
     }
     pub async fn steer(&self, id: &str, expected_turn: &str, message: &str) -> Result<Value> {
         self.steer_at_revision(id, expected_turn, message, None)
@@ -2631,6 +3374,7 @@ impl Factory {
         let _guard = self.mutation.lock().await;
         let mut run = self.store.lock().await.get(id)?;
         self.validate_current_authority(&run).await?;
+        self.require_qualified(&run)?;
         ensure!(
             run.state == "RUNNING" && run.turn_id.as_deref() == Some(expected_turn),
             "stale_turn_or_not_running"
@@ -2645,6 +3389,7 @@ impl Factory {
         let text = format!(
             "In-scope operator correction. The original objective, acceptance, authority, sandbox and budgets remain binding; do not widen them.\n{message}"
         );
+        self.require_qualified(&run)?;
         let effect = uuid::Uuid::new_v4().to_string();
         self.control_event(
             &mut run,
@@ -2654,16 +3399,31 @@ impl Factory {
             },
         )
         .await?;
+        let qualification_guard = self.qualification_guard(&run, &client);
         if let Err(error) = client
-            .steer_turn(
+            .steer_turn_guarded(
                 run.thread_id.as_deref().context("owner_missing")?,
                 expected_turn,
                 &text,
+                &qualification_guard,
             )
             .await
         {
+            if crate::qualification::denied_code(&error).is_some() {
+                // Refused before any byte: the steer provably did not happen.
+                self.control_event(
+                    &mut run,
+                    crate::control::Event::EffectSettled { id: effect },
+                )
+                .await?;
+                return Err(error);
+            }
             run.set_state(crate::control::RunControl::Blocked);
-            run.blocker = Some("effect_outcome_unknown".into());
+            run.blocker = Some(if crate::native::is_qualification_write_timeout(&error) {
+                "qualification_write_timeout".into()
+            } else {
+                "effect_outcome_unknown".into()
+            });
             self.store.lock().await.save(&mut run)?;
             return Err(error);
         }
@@ -2710,7 +3470,8 @@ impl Factory {
             run.blocker = None;
             run.delta = "Recovered the existing native turn. No inference was started.".into();
             self.store.lock().await.save(run)?;
-            self.monitor(run.id.clone(), client.subscribe()).await;
+            self.monitor(run.id.clone(), client.subscribe(), client.clone())
+                .await;
         } else {
             self.store.lock().await.save(run)?;
             self.finish_turn_locked(&run.id, &turn, FinishOrigin::RecoveryReadOnly)
@@ -2762,6 +3523,8 @@ impl Factory {
         let guard = self.mutation.lock().await;
         let mut run = self.store.lock().await.get(id)?;
         self.validate_current_authority(&run).await?;
+        // Before any native connection, recovery read, claim or event.
+        self.require_qualified(&run)?;
         let answer_fingerprint = message.map(|message| {
             format!(
                 "{:x}",
@@ -2926,6 +3689,7 @@ impl Factory {
         }
         crate::control::admit_task(control, &candidate)?;
         let thread = run.thread_id.clone().context("owner_identity_unknown")?;
+        self.require_qualified(&run)?;
         let resume_effect = uuid::Uuid::new_v4().to_string();
         self.control_event(
             &mut run,
@@ -2935,7 +3699,32 @@ impl Factory {
             },
         )
         .await?;
-        let response = client.resume_thread(&thread).await?;
+        let qualification_guard = self.qualification_guard(&run, &client);
+        let response = match client
+            .resume_thread_guarded(&thread, &qualification_guard)
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                if crate::qualification::denied_code(&error).is_some() {
+                    // Refused before any byte: the resume provably did not happen.
+                    self.control_event(
+                        &mut run,
+                        crate::control::Event::EffectSettled { id: resume_effect },
+                    )
+                    .await?;
+                } else {
+                    run.set_state(crate::control::RunControl::Blocked);
+                    run.blocker = Some(if crate::native::is_qualification_write_timeout(&error) {
+                        "qualification_write_timeout".into()
+                    } else {
+                        "effect_outcome_unknown".into()
+                    });
+                    self.store.lock().await.save(&mut run)?;
+                }
+                return Err(error);
+            }
+        };
         ensure!(
             response["thread"]["id"].as_str() == Some(thread.as_str()),
             "resume_changed_owner_identity"
@@ -2974,7 +3763,7 @@ impl Factory {
                 false,
             )
             .await;
-        self.monitor(id.into(), events).await;
+        self.monitor(id.into(), events, client.clone()).await;
         result?;
         drop(guard);
         self.get(id).await

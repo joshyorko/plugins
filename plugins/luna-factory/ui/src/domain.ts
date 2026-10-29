@@ -164,12 +164,24 @@ const sourceDisplaySchema = z.object({
 });
 const graphSourceSchema = z.object({ provider: nodeId, repository_id: nodeId, item_id: nodeId, revision: nodeId, display: sourceDisplaySchema.optional().catch(undefined) });
 export type GraphSource = z.infer<typeof graphSourceSchema>;
-const graphNodeSchema = controlSchema.shape.tasks.element.extend({ id: nodeId, dependencies: z.array(nodeId).max(128), source: graphSourceSchema.nullable(), target_preference: nodeId.nullable() });
+const graphNodeSchema = controlSchema.shape.tasks.element.extend({ id: nodeId, dependencies: z.array(nodeId).max(128), source: graphSourceSchema.nullable(), target_preference: nodeId.nullable(), editor_title: z.string().min(1).max(8000).nullable().optional() });
 export const graphChangeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("update_task"), node_id: nodeId, title: z.string().min(1).max(8000).nullable(), dependencies: z.array(nodeId).max(128).refine(items => new Set(items).size === items.length, "Dependencies must be unique"), target_id: nodeId.nullable() }),
   z.object({ kind: z.literal("set_target"), node_id: nodeId, target_id: nodeId }),
   z.object({ kind: z.literal("set_dependencies"), node_id: nodeId, dependencies: z.array(nodeId).max(128) }),
   z.object({ kind: z.literal("import_candidates"), nodes: z.array(z.object({ id: nodeId, title: z.string().min(1).max(4000), criterion_ids: z.array(nodeId).min(1).max(32), dependencies: z.array(nodeId).max(128), source: graphSourceSchema })).min(1).max(32) }),
 ]);
+/** Textareas normalize line endings; preserve the server's exact title when no edit was made. */
+export function preserveCanonicalTaskTitle(entered: string, canonical: string): string {
+  const lines = (value: string) => value.replace(/\r\n?/g, "\n");
+  return lines(entered) === lines(canonical) ? canonical : entered;
+}
+/** Null means keep the server's exact title; empty means an invalid attempt to clear a known title. */
+export function taskTitleUpdate(entered: string, canonical: string | null): string | null {
+  if (canonical === null) return entered.trim() ? entered : null;
+  if (preserveCanonicalTaskTitle(entered, canonical) === canonical) return null;
+  return entered.trim() ? entered : "";
+}
 const proposalSchema = z.object({ id: nodeId, idempotency_key: nodeId, fingerprint: z.string().max(256), actor: z.literal("local_operator"), base_revision: revision, subject: text, change: graphChangeSchema, status: z.enum(["proposed", "applied"]), applied_revision: revision.nullable() });
 export const graphEnvelopeSchema = z.object({
   graph: z.object({ run_id: runId, revision, repository: z.object({ alias: z.string().max(64), identity: z.string().max(256), base_head: text, subject: text }), planning_only: z.boolean(), nodes: z.array(graphNodeSchema).max(128), criteria: controlSchema.shape.criteria, attempts: controlSchema.shape.attempts, claim: presentationSchema.shape.claim, changes: z.array(proposalSchema).max(256) }),
@@ -396,9 +408,9 @@ export function boundedContext(run: RunView) {
     blocker: bound(run.blocker, 600), finish: run.finish,
   };
 }
-export const finishLabels = { local_candidate: "Local candidate", push: "Push branch", pr: "Create PR" } satisfies Record<RunView["finish"], string>;
+export const finishLabels = { local_candidate: "Changes ready locally", push: "Push a branch", pr: "Open a pull request" } satisfies Record<RunView["finish"], string>;
 /** Plan form wording for the same finish options. */
-export const planFinishLabels = { local_candidate: "Keep the changes on this machine", push: "Push a branch", pr: "Open a pull request" } satisfies Record<RunView["finish"], string>;
+export const planFinishLabels = { local_candidate: "Keep changes local", push: "Push a branch", pr: "Open a pull request" } satisfies Record<RunView["finish"], string>;
 const finishRank = { local_candidate: 0, push: 1, pr: 2 } satisfies Record<RunView["finish"], number>;
 export function allowedFinishes(max: RunView["finish"]): RunView["finish"][] {
   return finishSchema.options.filter(finish => finishRank[finish] <= finishRank[max]);
@@ -428,11 +440,11 @@ const filled = (value: string | undefined): string | undefined => value?.trim() 
  * The plan form's request. "Done when" is one optional line; when empty the request itself is the
  * single criterion. Anything left out of More options takes `planDefaults`.
  */
-export function startRequest(fields: Record<string, string>, capabilities: Capabilities, key: string) {
-  const defaults = planDefaults(capabilities);
+export function startRequest(fields: Record<string, string>, capabilities: Capabilities, key: string, settings: Settings = {}) {
+  const defaults = { ...planDefaults(capabilities), ...settings };
   const objective = fields.objective?.trim() ?? "";
   const doneWhen = filled(fields.done_when);
-  if (!doneWhen && objective.length > 1000) throw new Error("That's a long request. Add a short \"Done when\" line under More options.");
+  if (!doneWhen && objective.length > 1000) throw new Error("Keep your request under 1,000 characters.");
   const minutes = filled(fields.wall_minutes);
   const result = startSchema.safeParse({
     repository: fields.repository ?? "", objective,

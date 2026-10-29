@@ -21,8 +21,8 @@ export interface ViewState {
   discovery: RepositoryDiscovery | null; discovering: boolean;
   graph: FactoryGraph | null; graphLoading: boolean; graphStale: boolean; selectedNodeId: string | null;
   proposal: GraphEnvelope["proposal"]; backends: BackendCatalog | null;
-  /** View-only selection shared by Map, Lanes and the inspector. Never mutates the plan. */
-  viewMode: "map" | "lanes"; selectedAgent: string | null;
+  /** View-only selection. It never mutates the plan. */
+  viewMode: "map" | "lanes" | "details"; selectedAgent: string | null;
   /** Last valid `list_factory_campaigns` read; null when the server has not provided one. */
   campaigns: CampaignView[] | null; campaignsStale: boolean;
   /** Records the last valid read skipped as unreadable. Counted only; never rendered as campaigns. */
@@ -64,6 +64,7 @@ export class WorkbenchController {
   private deliveryReadAt: number | null = null;
   private githubVersion = 0;
   private readonly repositoryKeys = new Map<string, string>();
+  private readonly promotionKeys = new Map<string, string>();
   /** New-repo names created for a plan that has not been saved yet, so a plan retry skips the create. */
   private readonly createdRepositories = new Map<string, string>();
   constructor(private readonly bridge: Bridge, private readonly changed: () => void) {}
@@ -237,7 +238,7 @@ export class WorkbenchController {
         this.syncContext();
         return false;
       }
-      this.state.notice = tool === "cancel_factory_run" ? "Stop outcome received. The state and ownership below are the server's observed result." : tool === "resume_factory_run" ? "Resume outcome received. This run keeps its history and remaining limits." : tool === "steer_factory_run" ? "Correction delivered to the current owner turn." : tool === "reconcile_factory_run" ? "Existing work was reconciled. Current proof and ownership are shown below." : "Run admitted. Follow its progress here.";
+      this.state.notice = tool === "cancel_factory_run" ? "Stop result received. Luna is checking whether any agents are still running." : tool === "resume_factory_run" ? "Run resumed. Its history and remaining limits stay in place." : tool === "steer_factory_run" ? "Reply sent to Luna's current turn." : tool === "reconcile_factory_run" ? "Luna checked running work. See the current plan state." : "Run started. Progress will appear here.";
       this.syncContext();
       return true;
     } catch (error) {
@@ -278,6 +279,56 @@ export class WorkbenchController {
       return true;
     } catch (error) { this.state.error = errorMessage(error); return false; }
     finally { this.state.pending = null; this.changed(); }
+  }
+  async promoteCampaign(): Promise<boolean> {
+    const run = this.selected;
+    const campaign = this.state.campaigns?.find(item => item.planning_run_id === run?.id);
+    const graph = this.state.graph;
+    if (!this.state.connected || this.state.pending || this.state.capabilities?.execution?.eligible !== true) return false;
+    if (!run?.planning_only || !run.control || !campaign || !graph || graph.run_id !== campaign.planning_run_id || !graph.planning_only || run.control.revision !== graph.revision || graph.revision !== campaign.planning.revision || this.state.graphStale || this.state.graphLoading) {
+      this.state.error = "Refresh this plan before starting it.";
+      this.changed();
+      return false;
+    }
+    const key = this.promotionKeys.get(campaign.id) ?? crypto.randomUUID();
+    this.promotionKeys.set(campaign.id, key);
+    this.state.pending = { tool: "promote_factory_campaign", runId: run.id };
+    this.state.error = null; this.state.notice = null; this.changed();
+    let promotedRunId: string | null = null;
+    try {
+      const result = structuredResult(await this.bridge.call("promote_factory_campaign", {
+        campaign_id: campaign.id,
+        expected_revision: graph.revision,
+        idempotency_key: key,
+      }));
+      const returned = result !== null && typeof result === "object" && "campaign" in result
+        ? campaignListSchema.safeParse({ campaigns: [result.campaign], skipped: [] })
+        : null;
+      if (!returned?.success) throw new Error("Luna returned an unexpected plan update. Refresh before retrying.");
+      const updated = returned.data.campaigns[0];
+      if (!updated || updated.planning.revision !== graph.revision || updated.run_ids.length <= campaign.run_ids.length) throw new Error("Luna did not report a new run for this plan.");
+      promotedRunId = updated.run_ids.at(-1) ?? null;
+      this.state.campaigns = this.state.campaigns?.map(item => item.id === updated.id ? updated : item) ?? [updated];
+      this.promotionKeys.delete(campaign.id);
+      this.state.notice = "Run started. Luna will report progress as it happens.";
+      return true;
+    } catch (error) {
+      const message = errorMessage(error);
+      this.state.error = /execution_not_qualified|qualification|eligible/i.test(message)
+        ? "Running isn't available on this connection yet. Luna's server must confirm it is ready."
+        : /stale|revision/i.test(message)
+          ? "This plan changed while you were away. Refresh to see the latest version."
+          : message;
+      return false;
+    } finally {
+      this.state.pending = null;
+      this.changed();
+      if (promotedRunId) {
+        await this.refresh();
+        await this.select(promotedRunId, false);
+        await this.loadGraph();
+      }
+    }
   }
   async createGraph(args: Record<string, unknown>): Promise<boolean> {
     if (!this.state.connected || this.state.pending) return false;
@@ -366,17 +417,17 @@ export class WorkbenchController {
       if (this.contextRestoreEpoch === epoch) { this.contextRestoreEpoch = null; this.syncContext(); }
     }
   }
-  selectNode(id: string, explicit = true): void {
-    if (!this.state.graph?.nodes.some(node => node.id === id)) return;
+  selectNode(id: string | null, explicit = true): void {
+    if (id !== null && !this.state.graph?.nodes.some(node => node.id === id)) return;
     if (explicit) { ++this.selectionEpoch; this.contextRestoreEpoch = null; this.bridge.selectContext?.(); this.lastContext = ""; }
     // A different task ends an agent selection so the shared context never mixes two subjects.
-    if (this.state.selectedAgent && roster(this.selected, this.state.graph).find(agent => agent.thread === this.state.selectedAgent)?.taskId !== id) this.state.selectedAgent = null;
+    if (id === null || this.state.selectedAgent && roster(this.selected, this.state.graph).find(agent => agent.thread === this.state.selectedAgent)?.taskId !== id) this.state.selectedAgent = null;
     this.state.selectedNodeId = id; this.changed(); this.syncContext();
   }
-  setViewMode(mode: "map" | "lanes"): void {
+  setViewMode(mode: "map" | "lanes" | "details"): void {
     if (this.state.viewMode === mode) return;
     this.state.viewMode = mode; this.changed();
-    void this.loadTimelines();
+    if (mode === "lanes") void this.loadTimelines();
   }
   /**
    * App-only reads of what Codex observed for each rostered agent, while Lanes is visible.
@@ -433,16 +484,12 @@ export class WorkbenchController {
     const next = envelope.proposal ?? [...graph.changes].reverse().find(change => change.status === "proposed" && change.base_revision + 1 === graph.revision) ?? null;
     // A dismissed "Plan updated" note stays dismissed when later reads return the same applied change.
     this.state.proposal = next?.status === "applied" && this.dismissedChanges.has(next.id) ? null : next;
-    if (!graph.nodes.some(node => node.id === this.state.selectedNodeId)) this.state.selectedNodeId = graph.nodes[0]?.id ?? null;
+    if (this.state.selectedNodeId !== null && !graph.nodes.some(node => node.id === this.state.selectedNodeId)) this.state.selectedNodeId = null;
   }
   async proposeChange(input: GraphChange): Promise<boolean> {
     const graph = this.state.graph;
     if (!this.state.connected || !graph || this.state.pending || this.state.graphLoading || this.state.graphStale) return false;
     if (!graph.planning_only && (graph.claim.held || graph.claim.status !== "released")) return false;
-    // The server has no "clear target" change, and an empty ID would fail its node-ID bound.
-    if (input.kind === "set_target" && !input.target_id) {
-      this.reportNotice("Choose a planning target first. A saved planning note can't be cleared from here."); return false;
-    }
     const change = graphChangeSchema.parse(input);
     if (change.kind !== "import_candidates" && !graph.nodes.some(node => node.id === change.node_id)) return false;
     const recovered = this.state.proposal;
@@ -452,7 +499,10 @@ export class WorkbenchController {
     if (unchangedGraphChange(graph, change)) {
       this.reportNotice("No plan change: the selected values are already current."); return false;
     }
-    if (change.kind === "set_target" && !this.state.backends?.targets.some(target => target.id === change.target_id && target.operator_enabled && target.planning_eligible && target.qualification !== "unsupported")) {
+    const targetId = change.kind === "update_task" ? change.target_id : change.kind === "set_target" ? change.target_id : undefined;
+    const currentTarget = change.kind === "update_task" ? graph.nodes.find(node => node.id === change.node_id)?.target_preference : undefined;
+    const targetChanged = change.kind === "set_target" || change.kind === "update_task" && targetId !== currentTarget;
+    if (targetId && targetChanged && !this.state.backends?.targets.some(target => target.id === targetId && target.operator_enabled && target.planning_eligible && target.qualification !== "unsupported")) {
       this.reportError("This execution target cannot be selected for planning."); return false;
     }
     const fingerprint = JSON.stringify({ run_id: graph.run_id, revision: graph.revision, change });
@@ -465,8 +515,17 @@ export class WorkbenchController {
     this.dismissedChanges.add(this.state.proposal.id);
     this.state.proposal = null; this.changed();
   }
+  dismissProposal(): void {
+    if (this.state.proposal?.status !== "proposed") return;
+    this.state.proposal = null; this.changed();
+  }
   async applyChange(confirmed = false): Promise<boolean> {
     const { graph, proposal } = this.state;
+    if (confirmed && this.state.connected && graph && proposal?.status === "proposed" && (proposal.base_revision + 1 !== graph.revision || this.state.graphStale) && !this.state.pending && !this.state.graphLoading) {
+      this.reportNotice("This plan changed while you were away. Updated.");
+      void this.loadGraph();
+      return false;
+    }
     if (!confirmed || !this.state.connected || !graph || !proposal || proposal.status !== "proposed" || proposal.base_revision + 1 !== graph.revision || this.state.graphStale || this.state.pending || this.state.graphLoading) return false;
     if (!graph.planning_only && (graph.claim.held || graph.claim.status !== "released")) return false;
     if (unchangedGraphChange(graph, proposal.change)) { this.reportNotice("This saved proposal is unchanged. Its history is retained; nothing was applied."); return false; }
@@ -679,7 +738,8 @@ export class WorkbenchController {
     const graph = this.state.graph;
     const task = taskId ? graph?.nodes.find(node => node.id === taskId && node.id === this.state.selectedNodeId) : undefined;
     if (taskId && (!task || graph?.run_id !== run.id || graph.revision !== run.control?.revision)) throw new Error("The selected task is stale. Refresh the run and graph before sending context.");
-    return buildFollowUpPrompt(run, kind, task, task ? graph?.revision : undefined);
+    const fullTask = task ? { ...task, title: task.editor_title ?? task.title } : undefined;
+    return buildFollowUpPrompt(run, kind, fullTask, task ? graph?.revision : undefined);
   }
 }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message.slice(0, 800) : "The request could not be completed"; }
@@ -687,6 +747,9 @@ function unchangedGraphChange(graph: FactoryGraph, change: GraphChange): boolean
   if (change.kind === "import_candidates") return false;
   const node = graph.nodes.find(item => item.id === change.node_id);
   if (!node) return false;
+  if (change.kind === "update_task") return (change.title === null || node.editor_title !== null && change.title === (node.editor_title ?? node.title))
+    && change.dependencies.length === node.dependencies.length && new Set(change.dependencies).size === change.dependencies.length && change.dependencies.every(id => node.dependencies.includes(id))
+    && change.target_id === node.target_preference;
   return change.kind === "set_dependencies"
     ? change.dependencies.length === node.dependencies.length && new Set(change.dependencies).size === change.dependencies.length && change.dependencies.every(id => node.dependencies.includes(id))
     : change.target_id === node.target_preference;

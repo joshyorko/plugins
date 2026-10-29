@@ -5,6 +5,7 @@ pub mod http;
 pub mod lifecycle;
 pub mod mcp;
 pub mod native;
+pub mod qualification;
 pub mod repositories;
 pub mod store;
 
@@ -24,3 +25,4 @@ pub mod cas;
 pub mod cas_boundary;
 pub mod continuation;
 pub mod timeline;
+pub mod workspaces;

@@ -6,6 +6,8 @@ Use `$luna-factory` directly in Codex when you want the skill alone. Starting a 
 
 This is a local/private application package. Build and protocol tests do not establish that the live Codex, ChatGPT, or private tunnel acceptance gates have passed. See [package and operator boundaries](docs/package.md) for the gate checklist.
 
+Ordinary execution requires a persisted, operator-recorded [execution qualification](docs/execution-qualification.md) for the exact profile; without one, every native effect path refuses with a stable typed reason.
+
 The stacked implementation's [integration-readiness report](docs/integration-readiness.md) separates code-merge gates from live acceptance. [Bounded CAS inspection](docs/cas-verification.md) is available for explicitly configured loopback targets; CAS execution remains disabled pending protocol, identity, entitlement and cessation qualification.
 
 Luna's optional, read-only [GitHub App](docs/github-app.md) adds source-bound issue-graph intake and GitHub-reported PR and check telemetry. It's off by default, and its data is never Factory proof.
@@ -88,15 +90,20 @@ The checked-in MCP maps connect to `http://127.0.0.1:8787/mcp`. Keep the listene
 
 ## Add repositories from the workbench
 
-Open **Plan work**, type what you want done, and pick a repo from the chip under the
+Open Home, type what you want done, and pick a repo from the chip under the
 box. When the server offers it, the same menu lists your GitHub repos with **Connect**
 and has **+ New repo…**, which is created when you press **Plan it**. Optional
-trusted `discovery_roots` in the private operator config offer a bounded local
-catalog under **More options** › **Add from an operator folder**.
-The app requests an opaque candidate, alias and finish cap; only a local operator
-approval can register access. See the [repository onboarding guide](docs/repository-onboarding.md)
-for configuration, approval commands and revocation. Safe settings cannot add
-repositories. No GitHub connector, clone service or arbitrary remote path is used.
+trusted `discovery_roots` in the private operator config support local operator
+onboarding through the CLI. See the [repository onboarding guide](docs/repository-onboarding.md)
+for configuration, approval commands and revocation. GitHub connection and new
+repository creation require their explicit workspace flags. Safe settings cannot
+grant repository access or accept arbitrary remote paths.
+
+The composer accepts requests up to 1,000 characters. **Options** contains only
+**When it's done** and **Leave alone**. Model, capacity, time and retry defaults
+live in Settings. A task's **Save changes** creates one reviewable proposal for
+its title, dependencies and preferred location; **Apply change** applies it at
+the current server revision. Planning never starts execution.
 
 The packaged plugin includes square crescent branding in `assets/logo.png` and
 standard self-contained MCP server icons. Custom hosts may require a discovery

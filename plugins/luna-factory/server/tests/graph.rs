@@ -2,7 +2,7 @@ use luna_factoryd::{
     config::Config,
     store::{StartRequest, Store},
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use tempfile::TempDir;
 
 fn setup() -> (TempDir, Config, StartRequest) {
@@ -49,7 +49,7 @@ fn setup() -> (TempDir, Config, StartRequest) {
 }
 
 use luna_factoryd::{
-    graph::{ApplyChange, ProposeChange},
+    graph::{ApplyChange, GraphChange, ProposeChange},
     lifecycle::Factory,
 };
 
@@ -59,6 +59,48 @@ fn proposal(run: &serde_json::Value, key: &str, change: serde_json::Value) -> Pr
 fn node(graph: &serde_json::Value, id: &str, dependencies: Vec<&str>) -> serde_json::Value {
     json!({"id":id,"title":"Candidate work","criterion_ids":["A1"],"dependencies":dependencies,
        "source":{"provider":"local","repository_id":graph["graph"]["repository"]["identity"],"item_id":id,"revision":"v1"}})
+}
+
+#[test]
+fn update_task_requires_explicit_nullable_title_and_target_fields() {
+    let update = json!({"kind":"update_task","node_id":"objective","title":null,
+        "dependencies":[],"target_id":null});
+    assert_eq!(
+        serde_json::from_value::<GraphChange>(update).unwrap(),
+        GraphChange::UpdateTask {
+            node_id: "objective".into(),
+            title: None,
+            dependencies: vec![],
+            target_id: None,
+        }
+    );
+    assert!(
+        serde_json::from_value::<GraphChange>(json!({
+            "kind":"update_task","node_id":"objective","title":"Title","dependencies":[]
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<GraphChange>(json!({
+            "kind":"update_task","node_id":"objective","dependencies":[],"target_id":null
+        }))
+        .is_err()
+    );
+    let explicit: GraphChange = serde_json::from_value(json!({
+        "kind":"update_task","node_id":"objective","title":"Title",
+        "dependencies":[],"target_id":null
+    }))
+    .unwrap();
+    assert!(matches!(
+        explicit,
+        GraphChange::UpdateTask { title: Some(_), .. }
+    ));
+    assert!(
+        serde_json::from_value::<GraphChange>(json!({
+            "kind":"update_task","node_id":"objective","dependencies":[],"target_id":null
+        }))
+        .is_err()
+    );
 }
 
 #[tokio::test]
@@ -192,6 +234,579 @@ async fn planning_roundtrip_replay_conflicts_and_no_execution() {
     assert_eq!(
         restarted.graph(id).await.unwrap()["graph"],
         applied["graph"]
+    );
+}
+
+#[tokio::test]
+async fn update_task_applies_title_dependencies_and_target_in_one_replayable_revision() {
+    let (_temp, config, request) = setup();
+    let factory = Factory::new(config.clone()).unwrap();
+    let graph = factory.create_graph(request).await.unwrap();
+    let run_id = graph["graph"]["run_id"].as_str().unwrap();
+    let imported = factory
+        .propose_graph_change(proposal(
+            &graph,
+            "import-prerequisite",
+            json!({"kind":"import_candidates","nodes":[node(&graph,"prerequisite",vec![])]}),
+        ))
+        .await
+        .unwrap();
+    let import_apply = ApplyChange {
+        run_id: run_id.into(),
+        change_id: imported["proposal"]["id"].as_str().unwrap().into(),
+        expected_revision: imported["graph"]["revision"].as_u64().unwrap(),
+    };
+    let imported = factory.apply_graph_change(import_apply).await.unwrap();
+    let update = proposal(
+        &imported,
+        "update-objective",
+        json!({"kind":"update_task","node_id":"objective","title":"Review prerequisite work",
+            "dependencies":["prerequisite"],"target_id":"native-local"}),
+    );
+    let proposed = factory.propose_graph_change(update.clone()).await.unwrap();
+    let revision = proposed["graph"]["revision"].as_u64().unwrap();
+    let apply = ApplyChange {
+        run_id: run_id.into(),
+        change_id: proposed["proposal"]["id"].as_str().unwrap().into(),
+        expected_revision: revision,
+    };
+    let applied = factory.apply_graph_change(apply.clone()).await.unwrap();
+
+    assert_eq!(applied["graph"]["revision"], revision + 1);
+    let objective = applied["graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == "objective")
+        .unwrap();
+    assert_eq!(objective["title"], "Review prerequisite work");
+    assert_eq!(objective["dependencies"], json!(["prerequisite"]));
+    assert_eq!(objective["target_preference"], "native-local");
+    assert_eq!(applied["graph"]["attempts"], json!([]));
+    assert_eq!(applied["graph"]["claim"]["held"], false);
+    assert_eq!(
+        factory.propose_graph_change(update).await.unwrap(),
+        applied,
+        "idempotent proposal replay must return the same full snapshot"
+    );
+    assert_eq!(
+        factory.apply_graph_change(apply.clone()).await.unwrap(),
+        applied
+    );
+    drop(factory);
+    let reopened = Factory::new(config.clone()).unwrap();
+    assert_eq!(reopened.apply_graph_change(apply).await.unwrap(), applied);
+    drop(reopened);
+    let stored = Store::open(&config).unwrap().get(run_id).unwrap();
+    let control = stored.control.unwrap();
+    assert_eq!(control.tasks["objective"].title, "Review prerequisite work");
+    assert_eq!(
+        control.tasks["objective"].dependencies,
+        vec!["prerequisite"]
+    );
+    assert_eq!(control.target_preferences["objective"], "native-local");
+    assert!(control.attempts.is_empty() && !stored.claim_held && stored.thread_id.is_none());
+}
+
+#[tokio::test]
+async fn update_task_rejects_cycle_and_invalid_target_without_changing_any_graph_field() {
+    let (_temp, config, request) = setup();
+    let factory = Factory::new(config.clone()).unwrap();
+    let graph = factory.create_graph(request).await.unwrap();
+    let run_id = graph["graph"]["run_id"].as_str().unwrap();
+    let imported = factory
+        .propose_graph_change(proposal(
+            &graph,
+            "import-prerequisite",
+            json!({"kind":"import_candidates","nodes":[node(&graph,"prerequisite",vec!["objective"])]}),
+        ))
+        .await
+        .unwrap();
+    let imported = factory
+        .apply_graph_change(ApplyChange {
+            run_id: run_id.into(),
+            change_id: imported["proposal"]["id"].as_str().unwrap().into(),
+            expected_revision: imported["graph"]["revision"].as_u64().unwrap(),
+        })
+        .await
+        .unwrap();
+    let baseline = factory
+        .propose_graph_change(proposal(
+            &imported,
+            "baseline-update",
+            json!({"kind":"update_task","node_id":"objective","title":"Baseline title",
+                "dependencies":[],"target_id":"native-local"}),
+        ))
+        .await
+        .unwrap();
+    let baseline = factory
+        .apply_graph_change(ApplyChange {
+            run_id: run_id.into(),
+            change_id: baseline["proposal"]["id"].as_str().unwrap().into(),
+            expected_revision: baseline["graph"]["revision"].as_u64().unwrap(),
+        })
+        .await
+        .unwrap();
+    let long_child_title = factory
+        .propose_graph_change(proposal(
+            &baseline,
+            "over-limit-child-title",
+            json!({"kind":"update_task","node_id":"prerequisite","title":"C".repeat(4001),
+                "dependencies":["objective"],"target_id":null}),
+        ))
+        .await
+        .unwrap_err();
+    assert!(
+        long_child_title
+            .to_string()
+            .contains("invalid_graph_task_title"),
+        "{long_child_title:#}"
+    );
+
+    let mut control = Store::open(&config)
+        .unwrap()
+        .get(run_id)
+        .unwrap()
+        .control
+        .unwrap();
+    let control_before = serde_json::to_value(&control).unwrap();
+    let cycle_change: GraphChange = serde_json::from_value(json!({
+        "kind":"update_task","node_id":"objective","title":"Must not apply",
+        "dependencies":["prerequisite"],"target_id":null
+    }))
+    .unwrap();
+    assert!(
+        luna_factoryd::graph::apply_change(&mut control, &cycle_change)
+            .unwrap_err()
+            .to_string()
+            .contains("dependency_cycle")
+    );
+    assert_eq!(serde_json::to_value(&control).unwrap(), control_before);
+
+    let cycle = factory
+        .propose_graph_change(proposal(
+            &baseline,
+            "cycle-update",
+            json!({"kind":"update_task","node_id":"objective","title":"Must not apply",
+                "dependencies":["prerequisite"],"target_id":null}),
+        ))
+        .await
+        .unwrap_err();
+    assert!(cycle.to_string().contains("dependency_cycle"), "{cycle:#}");
+    let invalid_target = factory
+        .propose_graph_change(proposal(
+            &baseline,
+            "invalid-target-update",
+            json!({"kind":"update_task","node_id":"objective","title":"Must not apply",
+                "dependencies":[],"target_id":"codex-cloud"}),
+        ))
+        .await
+        .unwrap_err();
+    assert!(
+        invalid_target
+            .to_string()
+            .contains("backend_adapter_not_qualified"),
+        "{invalid_target:#}"
+    );
+
+    assert_eq!(
+        factory.graph(run_id).await.unwrap()["graph"],
+        baseline["graph"]
+    );
+    let stored = Store::open(&config).unwrap().get(run_id).unwrap();
+    assert_eq!(stored.control.as_ref().unwrap().graph_changes.len(), 2);
+    assert_eq!(
+        stored.control.as_ref().unwrap().tasks["objective"].title,
+        "Baseline title"
+    );
+    assert!(
+        stored.control.as_ref().unwrap().tasks["objective"]
+            .dependencies
+            .is_empty()
+    );
+    assert_eq!(
+        stored.control.as_ref().unwrap().target_preferences["objective"],
+        "native-local"
+    );
+}
+
+#[tokio::test]
+async fn update_task_stale_apply_keeps_the_proposed_snapshot_unapplied() {
+    let (_temp, config, request) = setup();
+    let factory = Factory::new(config.clone()).unwrap();
+    let graph = factory.create_graph(request).await.unwrap();
+    let run_id = graph["graph"]["run_id"].as_str().unwrap();
+    let imported = factory
+        .propose_graph_change(proposal(
+            &graph,
+            "import-prerequisite",
+            json!({"kind":"import_candidates","nodes":[node(&graph,"prerequisite",vec![])]}),
+        ))
+        .await
+        .unwrap();
+    let graph = factory
+        .apply_graph_change(ApplyChange {
+            run_id: run_id.into(),
+            change_id: imported["proposal"]["id"].as_str().unwrap().into(),
+            expected_revision: imported["graph"]["revision"].as_u64().unwrap(),
+        })
+        .await
+        .unwrap();
+    let update = factory
+        .propose_graph_change(proposal(
+            &graph,
+            "full-update",
+            json!({"kind":"update_task","node_id":"objective","title":"Updated title",
+                "dependencies":["prerequisite"],"target_id":"native-local"}),
+        ))
+        .await
+        .unwrap();
+    let intervening = factory
+        .propose_graph_change(proposal(
+            &update,
+            "intervening-note",
+            json!({"kind":"set_target","node_id":"prerequisite","target_id":"native-local"}),
+        ))
+        .await
+        .unwrap();
+    let apply_error = factory
+        .apply_graph_change(ApplyChange {
+            run_id: run_id.into(),
+            change_id: update["proposal"]["id"].as_str().unwrap().into(),
+            expected_revision: intervening["graph"]["revision"].as_u64().unwrap(),
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        apply_error.to_string().contains("stale_graph_proposal"),
+        "{apply_error:#}"
+    );
+    let unchanged = factory.graph(run_id).await.unwrap();
+    assert_eq!(unchanged["graph"], intervening["graph"]);
+    let stored = Store::open(&config).unwrap().get(run_id).unwrap();
+    assert_eq!(
+        stored.control.as_ref().unwrap().tasks["objective"].title,
+        "Bounded objective"
+    );
+    assert!(
+        stored.control.as_ref().unwrap().tasks["objective"]
+            .dependencies
+            .is_empty()
+    );
+    assert!(
+        !stored
+            .control
+            .as_ref()
+            .unwrap()
+            .target_preferences
+            .contains_key("objective")
+    );
+}
+
+#[tokio::test]
+async fn update_task_null_target_clears_the_planning_preference() {
+    let (_temp, config, request) = setup();
+    let factory = Factory::new(config).unwrap();
+    let graph = factory.create_graph(request).await.unwrap();
+    let run_id = graph["graph"]["run_id"].as_str().unwrap();
+    let target = factory
+        .propose_graph_change(proposal(
+            &graph,
+            "set-target",
+            json!({"kind":"set_target","node_id":"objective","target_id":"native-local"}),
+        ))
+        .await
+        .unwrap();
+    let target = factory
+        .apply_graph_change(ApplyChange {
+            run_id: run_id.into(),
+            change_id: target["proposal"]["id"].as_str().unwrap().into(),
+            expected_revision: target["graph"]["revision"].as_u64().unwrap(),
+        })
+        .await
+        .unwrap();
+    let clear = factory
+        .propose_graph_change(proposal(
+            &target,
+            "clear-target",
+            json!({"kind":"update_task","node_id":"objective","title":null,
+                "dependencies":[],"target_id":null}),
+        ))
+        .await
+        .unwrap();
+    let cleared = factory
+        .apply_graph_change(ApplyChange {
+            run_id: run_id.into(),
+            change_id: clear["proposal"]["id"].as_str().unwrap().into(),
+            expected_revision: clear["graph"]["revision"].as_u64().unwrap(),
+        })
+        .await
+        .unwrap();
+    let objective = cleared["graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == "objective")
+        .unwrap();
+    assert!(objective["target_preference"].is_null());
+}
+
+#[tokio::test]
+async fn null_title_preserves_an_explicit_replacement() {
+    let (_temp, config, request) = setup();
+    let factory = Factory::new(config.clone()).unwrap();
+    let graph = factory.create_graph(request).await.unwrap();
+    let run_id = graph["graph"]["run_id"].as_str().unwrap();
+    let replacement = factory
+        .propose_graph_change(proposal(
+            &graph,
+            "replace-title",
+            json!({"kind":"update_task","node_id":"objective","title":"Explicit replacement",
+                "dependencies":[],"target_id":null}),
+        ))
+        .await
+        .unwrap();
+    let replacement = factory
+        .apply_graph_change(ApplyChange {
+            run_id: run_id.into(),
+            change_id: replacement["proposal"]["id"].as_str().unwrap().into(),
+            expected_revision: replacement["graph"]["revision"].as_u64().unwrap(),
+        })
+        .await
+        .unwrap();
+    let keep_title = factory
+        .propose_graph_change(proposal(
+            &replacement,
+            "keep-title-change-target",
+            json!({"kind":"update_task","node_id":"objective","title":null,
+                "dependencies":[],"target_id":"native-local"}),
+        ))
+        .await
+        .unwrap();
+    let kept = factory
+        .apply_graph_change(ApplyChange {
+            run_id: run_id.into(),
+            change_id: keep_title["proposal"]["id"].as_str().unwrap().into(),
+            expected_revision: keep_title["graph"]["revision"].as_u64().unwrap(),
+        })
+        .await
+        .unwrap();
+    let objective = kept["graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == "objective")
+        .unwrap();
+    assert_eq!(objective["title"], "Explicit replacement");
+    let stored = Store::open(&config).unwrap().get(run_id).unwrap();
+    assert_eq!(
+        stored.control.as_ref().unwrap().tasks["objective"].title,
+        "Explicit replacement"
+    );
+}
+
+#[tokio::test]
+async fn long_objective_editor_title_survives_a_combined_dependency_edit() {
+    let (_temp, config, mut request) = setup();
+    request.objective = format!("{}\n{}", "O".repeat(4000), "P".repeat(3999));
+    assert_eq!(request.objective.len(), 8000);
+    let factory = Factory::new(config.clone()).unwrap();
+    let graph = factory.create_graph(request.clone()).await.unwrap();
+    let run_id = graph["graph"]["run_id"].as_str().unwrap();
+    let objective = graph["graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == "objective")
+        .unwrap();
+    assert_eq!(
+        objective["title"].as_str().unwrap().encode_utf16().count(),
+        1000
+    );
+    assert_eq!(objective["editor_title"], request.objective);
+
+    let imported = factory
+        .propose_graph_change(proposal(
+            &graph,
+            "import-prerequisite",
+            json!({"kind":"import_candidates","nodes":[node(&graph,"prerequisite",vec![])]}),
+        ))
+        .await
+        .unwrap();
+    let graph = factory
+        .apply_graph_change(ApplyChange {
+            run_id: run_id.into(),
+            change_id: imported["proposal"]["id"].as_str().unwrap().into(),
+            expected_revision: imported["graph"]["revision"].as_u64().unwrap(),
+        })
+        .await
+        .unwrap();
+    let editor_title = graph["graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == "objective")
+        .unwrap()["editor_title"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(editor_title, request.objective);
+    let proposed = factory
+        .propose_graph_change(proposal(
+            &graph,
+            "preserve-long-title",
+            json!({"kind":"update_task","node_id":"objective","title":null,
+                "dependencies":["prerequisite"],"target_id":null}),
+        ))
+        .await
+        .unwrap();
+    let applied = factory
+        .apply_graph_change(ApplyChange {
+            run_id: run_id.into(),
+            change_id: proposed["proposal"]["id"].as_str().unwrap().into(),
+            expected_revision: proposed["graph"]["revision"].as_u64().unwrap(),
+        })
+        .await
+        .unwrap();
+    let objective = applied["graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == "objective")
+        .unwrap();
+    assert_eq!(
+        objective["title"].as_str().unwrap().encode_utf16().count(),
+        1000
+    );
+    assert_eq!(objective["editor_title"], request.objective);
+    assert_eq!(objective["dependencies"], json!(["prerequisite"]));
+    let raw = Store::open(&config).unwrap().get(run_id).unwrap();
+    assert_eq!(raw.request.objective, request.objective);
+    assert!(raw.control.as_ref().unwrap().attempts.is_empty());
+
+    let over_limit = format!("{}X", request.objective);
+    let before = factory.graph(run_id).await.unwrap();
+    assert!(
+        factory
+            .propose_graph_change(proposal(
+                &before,
+                "over-limit-objective-title",
+                json!({"kind":"update_task","node_id":"objective","title":over_limit,
+                "dependencies":["prerequisite"],"target_id":null}),
+            ))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("invalid_graph_task_title")
+    );
+    assert_eq!(factory.graph(run_id).await.unwrap(), before);
+}
+
+#[tokio::test]
+async fn withheld_secret_marker_title_stays_private_and_title_null_preserves_it() {
+    let (_temp, config, mut request) = setup();
+    request.objective = "Keep this private sk-test-marker".into();
+    let factory = Factory::new(config.clone()).unwrap();
+    let graph = factory.create_graph(request.clone()).await.unwrap();
+    let run_id = graph["graph"]["run_id"].as_str().unwrap();
+    let objective = graph["graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == "objective")
+        .unwrap();
+    assert_eq!(objective["editor_title"], Value::Null);
+    assert!(!graph.to_string().contains("sk-test-marker"));
+
+    let imported = factory
+        .propose_graph_change(proposal(
+            &graph,
+            "import-prerequisite",
+            json!({"kind":"import_candidates","nodes":[node(&graph,"prerequisite",vec![])]}),
+        ))
+        .await
+        .unwrap();
+    let graph = factory
+        .apply_graph_change(ApplyChange {
+            run_id: run_id.into(),
+            change_id: imported["proposal"]["id"].as_str().unwrap().into(),
+            expected_revision: imported["graph"]["revision"].as_u64().unwrap(),
+        })
+        .await
+        .unwrap();
+    let proposal = factory
+        .propose_graph_change(proposal(
+            &graph,
+            "preserve-withheld-title",
+            json!({"kind":"update_task","node_id":"objective","title":null,
+                "dependencies":["prerequisite"],"target_id":null}),
+        ))
+        .await
+        .unwrap();
+    assert!(proposal.to_string().contains("\"title\":null"));
+    assert!(!proposal.to_string().contains("sk-test-marker"));
+    let applied = factory
+        .apply_graph_change(ApplyChange {
+            run_id: run_id.into(),
+            change_id: proposal["proposal"]["id"].as_str().unwrap().into(),
+            expected_revision: proposal["graph"]["revision"].as_u64().unwrap(),
+        })
+        .await
+        .unwrap();
+    assert!(!applied.to_string().contains("sk-test-marker"));
+    assert_eq!(
+        Store::open(&config)
+            .unwrap()
+            .get(run_id)
+            .unwrap()
+            .request
+            .objective,
+        request.objective
+    );
+}
+
+#[tokio::test]
+async fn control_filtered_title_stays_private_and_title_null_preserves_it() {
+    let (_temp, config, mut request) = setup();
+    request.objective = "First line\u{0001}second line".into();
+    let factory = Factory::new(config.clone()).unwrap();
+    let graph = factory.create_graph(request.clone()).await.unwrap();
+    let run_id = graph["graph"]["run_id"].as_str().unwrap();
+    let objective = graph["graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == "objective")
+        .unwrap();
+    assert_eq!(objective["editor_title"], Value::Null);
+    assert!(!graph.to_string().contains('\u{0001}'));
+
+    let proposed = factory
+        .propose_graph_change(proposal(
+            &graph,
+            "keep-control-filtered-title",
+            json!({"kind":"update_task","node_id":"objective","title":null,
+                "dependencies":[],"target_id":"native-local"}),
+        ))
+        .await
+        .unwrap();
+    let applied = factory
+        .apply_graph_change(ApplyChange {
+            run_id: run_id.into(),
+            change_id: proposed["proposal"]["id"].as_str().unwrap().into(),
+            expected_revision: proposed["graph"]["revision"].as_u64().unwrap(),
+        })
+        .await
+        .unwrap();
+    assert!(!applied.to_string().contains('\u{0001}'));
+    assert_eq!(
+        Store::open(&config)
+            .unwrap()
+            .get(run_id)
+            .unwrap()
+            .request
+            .objective,
+        request.objective
     );
 }
 
@@ -382,6 +997,58 @@ async fn planning_does_not_touch_an_existing_unknown_claim() {
         serde_json::to_value(existing).unwrap(),
         serde_json::to_value(unchanged).unwrap()
     );
+    assert!(
+        factory
+            .propose_graph_change(proposal(
+                &graph,
+                "unknown-update",
+                json!({"kind":"update_task","node_id":"objective","title":"Denied",
+                "dependencies":[],"target_id":null}),
+            ))
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn update_task_is_rejected_while_an_owner_is_active() {
+    use luna_factoryd::control::{RunControl, Settlement};
+
+    let (_temp, config, request) = setup();
+    let factory = Factory::new(config.clone()).unwrap();
+    let mut store = Store::open(&config).unwrap();
+    let mut run = store.admit(&config, &request).unwrap().run;
+    run.thread_id = Some("owner".into());
+    run.turn_id = Some("turn".into());
+    run.dispatch_phase = "active".into();
+    run.control.as_mut().unwrap().settlement = Settlement::Live;
+    run.control.as_mut().unwrap().owner_liveness = Settlement::Live;
+    run.set_state(RunControl::Running);
+    store.save(&mut run).unwrap();
+    let before = store.get(&run.id).unwrap();
+    let error = factory
+        .propose_graph_change(ProposeChange {
+            run_id: run.id.clone(),
+            expected_revision: before.control.as_ref().unwrap().revision,
+            idempotency_key: "active-update".into(),
+            change: serde_json::from_value(json!({
+                "kind":"update_task","node_id":"objective","title":"Must not apply",
+                "dependencies":[],"target_id":null
+            }))
+            .unwrap(),
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("graph_execution_or_ownership_unresolved"),
+        "{error:#}"
+    );
+    assert_eq!(
+        serde_json::to_value(store.get(&run.id).unwrap()).unwrap(),
+        serde_json::to_value(before).unwrap()
+    );
 }
 
 #[tokio::test]
@@ -501,6 +1168,17 @@ async fn unknown_execution_is_read_only_and_existing_attempts_survive_planning_e
             .await
             .is_err()
     );
+    assert!(
+        factory
+            .propose_graph_change(proposal(
+                &graph,
+                "unknown-update",
+                json!({"kind":"update_task","node_id":"objective","title":"Denied",
+                "dependencies":[],"target_id":null}),
+            ))
+            .await
+            .is_err()
+    );
     store
         .apply_event(
             &mut run,
@@ -567,6 +1245,17 @@ async fn unknown_execution_is_read_only_and_existing_attempts_survive_planning_e
                 &applied,
                 "attempt-edit",
                 json!({"kind":"set_dependencies","node_id":"objective","dependencies":["one"]})
+            ))
+            .await
+            .is_err()
+    );
+    assert!(
+        factory
+            .propose_graph_change(proposal(
+                &applied,
+                "attempt-update",
+                json!({"kind":"update_task","node_id":"objective","title":"Denied",
+                "dependencies":["one"],"target_id":null}),
             ))
             .await
             .is_err()

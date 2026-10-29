@@ -73,7 +73,7 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
     const catalog = await rpc("tools/list", {}) as { tools: { name: string; _meta?: { ui?: { visibility?: string[] } } }[] };
     const modelTools = new Set(catalog.tools.filter(t => t._meta?.ui?.visibility?.includes("model") ?? true).map(t => t.name));
     for (const name of ["create_factory_graph", "get_factory_graph", "propose_factory_change", "apply_factory_change", "get_factory_backends", "create_factory_campaign", "list_factory_campaigns", "get_factory_campaign", "promote_factory_campaign"]) expect(modelTools.has(name)).toBe(true);
-    expect(catalog.tools).toHaveLength(29); expect(modelTools.size).toBe(20);
+    expect(catalog.tools).toHaveLength(32); expect(modelTools.size).toBe(23);
     const call = async (name: string, args: Record<string, unknown>) => {
       calls.push(name);
       return CallToolResultSchema.parse(await rpc("tools/call", { name, arguments: args }));
@@ -159,7 +159,9 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
     expect(controller.selected?.created_at).toEqual(expect.any(Number));
     expect(controller.selected?.activity_at).toBeGreaterThanOrEqual(controller.selected?.updated_at ?? Infinity);
     expect(controller.selected?.presentation?.blocker_kind).toEqual({ kind: "planning_only" });
-    expect(root.querySelector(".campaign-head .started")?.textContent).toMatch(/^Created /);
+    controller.setViewMode("details");
+    expect(root.querySelector(".plan-details")?.textContent).toContain("Created ");
+    controller.setViewMode("map");
     const before = controller.state.graph?.revision;
     expect(await controller.proposeChange({ kind: "set_target", node_id: "issue-61", target_id: "native-local" }), controller.state.error ?? "proposal").toBe(true);
     expect(await controller.applyChange(true), controller.state.error ?? "apply").toBe(true);
@@ -177,7 +179,7 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
     // The applied preference is announced by title and target label; the target ID stays in the editor's option value.
     const label = controller.state.backends?.targets.find(target => target.id === "native-local")?.label ?? "";
     expect(label).not.toBe("");
-    expect(root.querySelector(".plan-updated")?.textContent).toContain(`prefers ${label}.`);
+    expect(root.querySelector(".plan-updated")?.textContent).toContain("prefers Codex.");
     expect(root.querySelector('#target_id option[value="native-local"]')).not.toBeNull();
     // The reverse direction uses the identical server command boundary and journal.
     const modelChange = graphEnvelopeSchema.parse(await model("propose_factory_change", {
@@ -193,6 +195,18 @@ it.skipIf(process.env.LUNA_GRAPH_E2E !== "1")("operates an issue graph through m
     expect(controller.state.graph).toEqual(fromModel);
     expect(controller.state.graph?.nodes.find(node => node.id === "issue-61")?.dependencies).toEqual(["objective"]);
     expect(controller.selected?.control?.revision).toBe(fromModel.revision);
+    // One atomic workbench proposal preserves the canonical long title while changing both planning fields.
+    controller.selectNode("long-ascii-title");
+    const proposedBefore = calls.filter(name => name === "propose_factory_change").length;
+    const appliedBefore = calls.filter(name => name === "apply_factory_change").length;
+    expect(await controller.proposeChange({ kind: "update_task", node_id: "long-ascii-title", title: null, dependencies: ["objective"], target_id: "native-local" }), controller.state.error ?? "combined proposal").toBe(true);
+    expect(await controller.applyChange(true), controller.state.error ?? "combined apply").toBe(true);
+    expect(calls.filter(name => name === "propose_factory_change")).toHaveLength(proposedBefore + 1);
+    expect(calls.filter(name => name === "apply_factory_change")).toHaveLength(appliedBefore + 1);
+    fromModel = graphEnvelopeSchema.parse(await model("get_factory_graph", { run_id: runId })).graph;
+    expect(fromModel.nodes.find(node => node.id === "long-ascii-title")).toMatchObject({ title: "a".repeat(1000), editor_title: "a".repeat(2000), dependencies: ["objective"], target_preference: "native-local" });
+    expect(controller.state.graph).toEqual(fromModel);
+    controller.selectNode("issue-61");
     await vi.waitFor(() => expect(contexts.at(-1)).toMatchObject({ node_id: "issue-61", graph_revision: fromModel.revision }));
     expect(messages).toEqual([]);
     await bridge.sendFollowUp(controller.currentFollowUpPrompt("choose", "issue-61"));

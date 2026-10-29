@@ -90,6 +90,16 @@ pub struct CandidateNode {
     pub dependencies: Vec<String>,
     pub source: SourceBinding,
 }
+
+fn required_nullable_string<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GraphChange {
@@ -103,6 +113,14 @@ pub enum GraphChange {
     SetTarget {
         node_id: String,
         target_id: String,
+    },
+    UpdateTask {
+        node_id: String,
+        #[serde(deserialize_with = "required_nullable_string")]
+        title: Option<String>,
+        dependencies: Vec<String>,
+        #[serde(deserialize_with = "required_nullable_string")]
+        target_id: Option<String>,
     },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,6 +196,29 @@ fn editable(control: &Control, id: &str) -> Result<()> {
     );
     Ok(())
 }
+fn validate_task_snapshot(
+    node_id: &str,
+    title: Option<&str>,
+    dependencies: &[String],
+    target_id: Option<&str>,
+) -> Result<()> {
+    let title_limit = if node_id == "objective" { 8000 } else { 4000 };
+    if let Some(title) = title {
+        ensure!(
+            !title.trim().is_empty() && title.len() <= title_limit,
+            "invalid_graph_task_title"
+        );
+    }
+    ensure!(
+        dependencies.len() <= 128
+            && dependencies.iter().collect::<BTreeSet<_>>().len() == dependencies.len(),
+        "invalid_graph_dependencies"
+    );
+    if let Some(target_id) = target_id {
+        ensure!(bounded_id(target_id), "invalid_target_preference");
+    }
+    Ok(())
+}
 fn validate_dependencies(control: &Control) -> Result<()> {
     fn visit<'a>(
         id: &'a str,
@@ -210,6 +251,13 @@ fn validate_dependencies(control: &Control) -> Result<()> {
     Ok(())
 }
 pub fn apply_change(control: &mut Control, change: &GraphChange) -> Result<()> {
+    let mut candidate = control.clone();
+    apply_change_inner(&mut candidate, change)?;
+    *control = candidate;
+    Ok(())
+}
+
+fn apply_change_inner(control: &mut Control, change: &GraphChange) -> Result<()> {
     match change {
         GraphChange::ImportCandidates { nodes } => {
             ensure!(
@@ -279,6 +327,38 @@ pub fn apply_change(control: &mut Control, change: &GraphChange) -> Result<()> {
                 .target_preferences
                 .insert(node_id.clone(), target_id.clone());
         }
+        GraphChange::UpdateTask {
+            node_id,
+            title,
+            dependencies,
+            target_id,
+        } => {
+            editable(control, node_id)?;
+            validate_task_snapshot(
+                node_id,
+                title.as_deref(),
+                dependencies,
+                target_id.as_deref(),
+            )?;
+            let task = control
+                .tasks
+                .get_mut(node_id)
+                .context("graph_node_missing")?;
+            if let Some(title) = title {
+                task.title = title.clone();
+            }
+            task.dependencies = dependencies.clone();
+            match target_id {
+                Some(target_id) => {
+                    control
+                        .target_preferences
+                        .insert(node_id.clone(), target_id.clone());
+                }
+                None => {
+                    control.target_preferences.remove(node_id);
+                }
+            }
+        }
     }
     validate_dependencies(control)?;
     Ok(())
@@ -303,6 +383,29 @@ pub fn ensure_meaningful(control: &Control, change: &GraphChange) -> Result<()> 
             editable(control, node_id)?;
             ensure!(
                 control.target_preferences.get(node_id) != Some(target_id),
+                "graph_change_noop"
+            );
+        }
+        GraphChange::UpdateTask {
+            node_id,
+            title,
+            dependencies,
+            target_id,
+        } => {
+            editable(control, node_id)?;
+            validate_task_snapshot(
+                node_id,
+                title.as_deref(),
+                dependencies,
+                target_id.as_deref(),
+            )?;
+            let task = &control.tasks[node_id];
+            let requested_dependencies: BTreeSet<_> = dependencies.iter().collect();
+            let current_dependencies: BTreeSet<_> = task.dependencies.iter().collect();
+            ensure!(
+                title.as_ref().is_some_and(|title| title != &task.title)
+                    || requested_dependencies != current_dependencies
+                    || control.target_preferences.get(node_id) != target_id.as_ref(),
                 "graph_change_noop"
             );
         }
@@ -378,12 +481,70 @@ pub fn guard(run: &Run) -> Result<()> {
     }
     Ok(())
 }
+
+const GRAPH_TITLE_DISPLAY_MAX: usize = 1000;
+
+fn projected_task_title<'a>(run: &'a Run, control: &'a Control, id: &str) -> &'a str {
+    if id != "objective" {
+        return control.tasks[id].title.as_str();
+    }
+    control
+        .graph_changes
+        .values()
+        .filter_map(|proposal| match &proposal.change {
+            GraphChange::UpdateTask {
+                node_id,
+                title: Some(title),
+                ..
+            } if node_id == id && proposal.status == "applied" => Some((
+                proposal.applied_revision.unwrap_or_default(),
+                title.as_str(),
+            )),
+            _ => None,
+        })
+        .max_by_key(|(revision, _)| *revision)
+        .map(|(_, title)| title)
+        .unwrap_or(run.request.objective.as_str())
+}
+
+fn truncate_utf16(text: &str, max_units: usize) -> String {
+    let mut units = 0;
+    text.chars()
+        .take_while(|character| {
+            units += character.len_utf16();
+            units <= max_units
+        })
+        .collect()
+}
+
+fn graph_display_title(title: &str) -> String {
+    truncate_utf16(
+        &crate::lifecycle::safe_summary(title, GRAPH_TITLE_DISPLAY_MAX),
+        GRAPH_TITLE_DISPLAY_MAX,
+    )
+}
+
 pub fn envelope(run: &Run, proposal: Option<&Proposal>) -> Value {
     let control = run.control.as_ref().expect("decoded_control");
     let public = crate::presentation::public_control(run, control);
     let mut nodes = public["tasks"].as_array().unwrap().clone();
     for node in &mut nodes {
         let id = node["id"].as_str().unwrap().to_owned();
+        let canonical_title = projected_task_title(run, control, &id);
+        let display_title = graph_display_title(canonical_title);
+        node["title"] = json!(display_title);
+        if canonical_title != display_title {
+            let editor_limit = if id == "objective" { 8000 } else { 4000 };
+            let safe_editor_title = truncate_utf16(
+                &crate::lifecycle::safe_summary(canonical_title, editor_limit),
+                editor_limit,
+            );
+            node["editor_title"] = if safe_editor_title == canonical_title {
+                json!(canonical_title)
+            } else {
+                Value::Null
+            };
+        }
         node["source"] = json!(control.graph_sources.get(&id));
         node["target_preference"] = json!(control.target_preferences.get(&id));
     }

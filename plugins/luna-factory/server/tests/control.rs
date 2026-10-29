@@ -4,6 +4,29 @@ use luna_factoryd::control::{Control, Event, EventEnvelope, TaskState, reduce};
 fn initial() -> Control {
     Control::new("subject-1", &["Mandatory result".into()], 3, 600).unwrap()
 }
+
+#[test]
+fn objective_title_allows_8000_while_child_task_titles_keep_the_4000_bound() {
+    let mut control = initial();
+    control.tasks.get_mut("objective").unwrap().title = "O".repeat(8000);
+    control.validate().unwrap();
+
+    let mut child = control.tasks["objective"].clone();
+    child.id = "child".into();
+    child.title = "C".repeat(4001);
+    control.tasks.insert(child.id.clone(), child);
+    assert!(
+        control
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("invalid_control_task")
+    );
+
+    control.tasks.get_mut("child").unwrap().title = "C".repeat(4000);
+    control.validate().unwrap();
+}
+
 #[test]
 fn revisions_dispatch_generations_and_return_do_not_certify_completion() {
     let control = initial();

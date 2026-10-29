@@ -1,117 +1,72 @@
-// Flight Recorder lanes. Only server-recorded or server-reported timestamps are placed on the time axis.
-// Agent ticks are "Observed in Codex": display data only, never proof, attention or plan state.
-import { MAX_TIMELINE_AGENTS, type ViewState } from "./controller";
-import type { AgentTimeline, RunView } from "./domain";
+// Activity is a display of server-recorded events and Codex observations. It never changes plan state.
+import type { RunView } from "./domain";
+import type { ViewState } from "./controller";
 import { livenessLabel, type Agent } from "./agents";
 import { coordinatorToken, workerToken } from "./lunar";
-import { activityAt, clock } from "./narrative";
+import { clock } from "./narrative";
 
 const esc = (value: string | number): string => String(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-const kindLabel = (kind: string) => kind.replaceAll("_", " ");
 type Receipt = RunView["receipts"][number];
-const observedLabel: Record<AgentTimeline["events"][number]["kind"], string> = {
-  assigned: "Assigned", command: "Command", file_change: "File change", commit: "Commit", pr_opened: "PR opened",
-  check_result: "Check result", subagent_spawned: "Helper spawned", message: "Message", waiting: "Waiting", error: "Error",
-};
-export const OBSERVED = "Observed in Codex";
+type ActivityItem = { at: number; actor: string; summary: string };
 
-/**
- * The listed agent whose thread the server recorded on this receipt, if any. A receipt without a
- * thread, or naming a thread outside the current roster, stays unattributed. Nothing is inferred.
- */
+/** The listed agent named by a server-recorded event, if the server supplied its thread. */
 export function receiptAgent(receipt: Receipt, agents: Agent[]): Agent | undefined {
   return receipt.thread_id ? agents.find(agent => agent.thread === receipt.thread_id) : undefined;
 }
-/** True when this server reports receipt attribution at all (older servers omit the field). */
-export function reportsAttribution(run: RunView): boolean {
-  return run.receipts.some(receipt => receipt.thread_id !== undefined);
-}
-
-/** The observed timeline for an agent, or the reason the server gave for not having one. */
-function observation(run: RunView, agent: Agent, index: number, state: ViewState): { timeline: AgentTimeline } | { reason: string } {
-  const capability = state.capabilities?.agent_timeline;
-  if (!capability) return { reason: reportsAttribution(run) ? "No receipts attributed to this agent" : "Per-agent timeline not reported by this server" };
-  if (!capability.enabled) return { reason: capability.detail };
-  if (index >= MAX_TIMELINE_AGENTS) return { reason: `Not observed: only the first ${MAX_TIMELINE_AGENTS} agents are read.` };
-  const view = state.timelineRunId === run.id ? state.timelines[agent.thread] : undefined;
-  if (!view) return { reason: "Reading what Codex observed…" };
-  if (view.status === "error") return { reason: "Codex observation could not be read for this agent." };
-  if (view.status === "unavailable") return { reason: view.detail ?? "Codex observation is unavailable for this agent." };
-  return { timeline: view };
-}
 
 export function renderLanes(run: RunView, agents: Agent[], state: ViewState, now = Date.now() / 1000): string {
-  const receipts = [...run.receipts].sort((a, b) => a.created_at - b.created_at);
-  if (!receipts.length && !agents.length) {
-    return `<section class="lanes empty" aria-label="Agent lanes"><h3>No activity recorded yet</h3><p>${run.planning_only ? "No work has been recorded for this plan yet." : "This run has no retained receipts and no reported agents."}</p></section>`;
-  }
-  // Same order as the controller's roster, so the read bound matches what is shown.
-  const observations = agents.map((agent, index) => ({ agent, observed: observation(run, agent, index, state) }));
-  const observedTimes = observations.flatMap(({ observed }) => "timeline" in observed ? observed.timeline.events.map(event => event.at) : []);
-  const times = [...receipts.map(receipt => receipt.created_at), ...observedTimes];
-  const start = times.length ? Math.min(...times) : activityAt(run) ?? now;
-  const latest = Math.max(activityAt(run) ?? 0, ...times);
-  // Only extend the axis to "now" while the record is recent; an old record ends at its last event.
-  const live = now - latest < 6 * 3600;
-  const end = live ? Math.max(now, latest) : latest;
-  const span = Math.max(60, end - start);
-  const at = (seconds: number) => `${(((seconds - start) / span) * 100).toFixed(2)}%`;
-  const tick = (receipt: Receipt) => `<span class="tick kind-${esc(receipt.kind)}" style="--at:${at(receipt.created_at)}" title="${esc(`${clock(receipt.created_at)} · ${kindLabel(receipt.kind)}`)}"><span class="sr-only">${esc(clock(receipt.created_at))} ${esc(kindLabel(receipt.kind))}</span></span>`;
-  const observedTick = (event: AgentTimeline["events"][number]) => `<span class="tick observed obs-${esc(event.kind)}" style="--at:${at(event.at)}" title="${esc(`${clock(event.at)} · ${observedLabel[event.kind]} · ${event.summary} · ${OBSERVED}`)}"><span class="sr-only">${esc(clock(event.at))} ${esc(observedLabel[event.kind])}: ${esc(event.summary)}</span></span>`;
-  const owner = new Map<string, Receipt[]>();
-  const unattributed: Receipt[] = [];
-  for (const receipt of receipts) {
-    const agent = receiptAgent(receipt, agents);
-    if (agent) owner.set(agent.thread, [...(owner.get(agent.thread) ?? []), receipt]);
-    else unattributed.push(receipt);
-  }
-  const attribution = reportsAttribution(run);
-  const ticks = unattributed.map(tick).join("");
-  // Only a server that reports the timeline capability has an observation reason worth showing beside receipts.
-  const observable = state.capabilities?.agent_timeline !== undefined;
-  const nowLine = live ? '<span class="now-line" style="--at:100%"></span>' : "";
-  const agentRows = observations.map(({ agent, observed }) => {
-    const selected = state.selectedAgent === agent.thread;
-    const own = owner.get(agent.thread) ?? [];
-    // Factory receipts recorded on this thread and ticks observed in Codex share the lane; neither infers the other.
-    const track = "timeline" in observed
-      ? `<div class="lane-track observed" aria-label="${esc(`${OBSERVED}: ${observed.timeline.events.length} events for ${agent.label}`)}">${own.map(tick).join("")}${observed.timeline.events.map(observedTick).join("") || (own.length ? "" : '<span class="track-note">No timed activity on the latest page</span>')}${nowLine}</div>`
-      : own.length
-        ? `<div class="lane-track"${observable ? ` title="${esc(observed.reason)}"` : ""}>${own.map(tick).join("")}${nowLine}${observable ? `<span class="sr-only">${esc(observed.reason)}</span>` : ""}</div>`
-        : `<div class="lane-track unavailable"><span>${esc(observed.reason)}</span></div>`;
-    return `<li class="lane${selected ? " selected" : ""}"><button type="button" class="lane-label" id="lane-${esc(agent.ordinal)}" data-action="select-agent" data-thread-id="${esc(agent.thread)}" aria-pressed="${selected}">${agent.role === "coordinator" ? coordinatorToken(agent.liveness, 22) : workerToken(agent.ordinal, agent.liveness, 22)}<span><strong>${esc(agent.label)}</strong><small>${esc(livenessLabel[agent.liveness])}${own.length ? ` · ${own.length} ${own.length === 1 ? "receipt" : "receipts"}` : ""}</small></span></button>${track}</li>`;
-  }).join("");
-  const chosen = observations.find(({ agent }) => agent.thread === state.selectedAgent);
-  const observing = state.capabilities?.agent_timeline?.enabled === true;
-  const notes = [
-    attribution ? "Each receipt sits on the agent that recorded it; the rest stay under Run receipts." : "",
-    observing ? "Ticks observed in Codex are not Factory proof and never change the plan." : "",
-  ].filter(Boolean);
-  return `<section class="lanes" aria-label="Agent lanes">
-    ${observing ? `<p class="lanes-legend small muted" aria-hidden="true"><span class="legend-receipt"></span>Factory receipt<span class="legend-observed"></span>${OBSERVED}</p>` : ""}
-    <div class="lanes-axis" aria-hidden="true"><span>${esc(clock(start, now))}</span><span>${live ? "now " : "last event "}${esc(clock(end, now))}</span></div>
-    <ol class="lane-list">
-      <li class="lane run-lane"><div class="lane-label static"><span class="run-dot" aria-hidden="true"></span><span><strong>Run receipts</strong><small>Not tied to an agent</small></span></div><div class="lane-track">${ticks || `<span class="track-note">${receipts.length ? "Every receipt is on an agent lane" : "No receipts yet"}</span>`}${nowLine}</div></li>
-      ${agentRows}
-    </ol>
-    ${chosen && "timeline" in chosen.observed ? renderObserved(chosen.agent, chosen.observed.timeline, agents, now) : ""}
-    ${receipts.length ? `<ol class="lane-events" aria-label="Recorded events, newest first">${[...receipts].reverse().map(receipt => { const agent = receiptAgent(receipt, agents); return `<li><time datetime="${new Date(receipt.created_at * 1000).toISOString()}">${esc(clock(receipt.created_at, now))}</time><strong>${esc(kindLabel(receipt.kind))}${agent ? ` <small class="lane-agent">${esc(agent.label)}</small>` : ""}</strong><span>${esc(receipt.summary)}</span></li>`; }).join("")}</ol>` : ""}
-    <p class="lanes-note small muted">Latest ${receipts.length} ${receipts.length === 1 ? "receipt" : "receipts"}. ${notes.length ? notes.join(" ") : "Agent lanes fill in once the server says which agent recorded each receipt."}</p>
-  </section>`;
+  const tasks = state.graph?.run_id === run.id ? state.graph.nodes : run.control?.tasks ?? [];
+  const taskTitles = new Map(tasks.map(task => [task.id, task.title]));
+  const timelines = agents.map(agent => {
+    const view = state.timelineRunId === run.id ? state.timelines[agent.thread] : undefined;
+    return { agent, events: view?.status === "observed" ? view.events : [] };
+  });
+  const agentRows = agents.length ? `<section class="activity-agents" aria-labelledby="activity-agents-title"><h2 id="activity-agents-title">Agents</h2><ul>${timelines.map(({ agent, events }) => {
+    const receipts = run.receipts.filter(receipt => receiptAgent(receipt, agents) === agent).map(receipt => receipt.created_at);
+    const latest = Math.max(...events.map(event => event.at), ...receipts);
+    const task = agent.taskId ? taskTitles.get(agent.taskId) : undefined;
+    const role = agent.role === "coordinator" ? "Lead" : `Agent ${agent.ordinal}`;
+    const activity = task ? `Working on ${task}` : agent.role === "coordinator" ? "Leading this plan" : "No task reported";
+    return `<li class="activity-agent"><button type="button" data-action="select-agent" data-thread-id="${esc(agent.thread)}" aria-pressed="${state.selectedAgent === agent.thread}">${agent.role === "coordinator" ? coordinatorToken(agent.liveness, 24) : workerToken(agent.ordinal, agent.liveness, 24)}<span><strong>${esc(agent.label)}</strong><small>${role} · ${esc(livenessLabel[agent.liveness])}</small></span><span class="activity-agent-task">${esc(activity)}</span><time>${Number.isFinite(latest) ? esc(relative(latest, now)) : "No recent event"}</time></button></li>`;
+  }).join("")}</ul></section>` : "";
+  const events: ActivityItem[] = run.receipts.map(receipt => ({ at: receipt.created_at, actor: receipt.thread_id ? receiptAgent(receipt, agents)?.label ?? "Agent" : "Plan", summary: plainSummary(receipt.summary) }));
+  for (const { agent, events: observed } of timelines) for (const event of observed) events.push({ at: event.at, actor: agent.label, summary: plainSummary(event.summary) });
+  events.sort((a, b) => b.at - a.at);
+  const feed = events.length ? `<ol class="activity-feed" aria-label="Recent activity">${events.map(event => `<li class="activity-event"><time datetime="${new Date(event.at * 1000).toISOString()}">${esc(clock(event.at, now))}</time><div><strong>${esc(event.actor)}</strong><span>${esc(event.summary)}</span></div></li>`).join("")}</ol>` : '<p class="activity-empty">No recent activity has been reported.</p>';
+  const observedEvents = timelines.flatMap(({ agent, events: items }) => items.map(event => ({ agent, event }))).sort((a, b) => b.event.at - a.event.at);
+  const timeline = observedEvents.length ? `<details class="activity-timeline"><summary>Timeline</summary><ol>${observedEvents.map(({ agent, event }) => `<li><time datetime="${new Date(event.at * 1000).toISOString()}">${esc(clock(event.at, now))}</time><strong>${esc(agent.label)}</strong><span>${esc(plainSummary(event.summary))}</span></li>`).join("")}</ol></details>` : "";
+  return `<section class="activity-view" aria-label="Activity">${agentRows}<section class="activity-history"><h2>Recent activity</h2>${feed}</section>${timeline}</section>`;
 }
 
-/** The selected agent's observed events, newest first, with helpers it was seen spawning. */
-function renderObserved(agent: Agent, timeline: AgentTimeline, agents: Agent[], now: number): string {
-  const events = [...timeline.events].reverse().slice(0, 20);
-  const spawned = timeline.children.filter(child => child.parent_thread === agent.thread).map(child => child.receiver_thread);
-  const listed = agents.filter(item => spawned.includes(item.thread)).map(item => item.label);
-  const unlisted = spawned.length - listed.length;
-  const helpers = spawned.length ? `<p class="small muted">Spawned in Codex: ${esc([...listed, ...(unlisted ? [`${unlisted} unlisted helper${unlisted === 1 ? "" : "s"}`] : [])].join(", "))}</p>` : "";
-  const freshness = timeline.freshness ? ` Read ${esc(clock(timeline.freshness.observed_at, now))}.` : "";
-  return `<section class="observed-events" aria-label="${esc(`${OBSERVED} for ${agent.label}`)}">
-    <h4>${OBSERVED} · ${esc(agent.label)}</h4>
-    ${events.length ? `<ol class="lane-events">${events.map(event => `<li><time datetime="${new Date(event.at * 1000).toISOString()}">${esc(clock(event.at, now))}</time><strong>${esc(observedLabel[event.kind])}</strong><span>${esc(event.summary)}</span></li>`).join("")}</ol>` : '<p class="small muted">No timed activity on the latest page.</p>'}
-    ${helpers}
-    <p class="small muted">Not Factory proof.${freshness}</p>
-  </section>`;
+function relative(at: number, now: number): string {
+  const seconds = Math.max(0, Math.round(now - at));
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  if (seconds < 48 * 3600) return `${Math.round(seconds / 3600)}h`;
+  return new Date(at * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+export function plainSummary(value: string): string {
+  return value.replace(/native child thread/gi, "Codex task")
+    .replace(/native child/gi, "Codex task")
+    .replace(/native Codex/gi, "Codex")
+    .replace(/\bnative\b/gi, "Codex")
+    .replace(/owner turn/gi, "Luna's turn")
+    .replace(/\bowner\b/gi, "Luna")
+    .replace(/candidate subject/gi, "current plan")
+    .replace(/\bcandidate\b/gi, "planned task")
+    .replace(/\bcampaigns?\b/gi, match => match.toLowerCase().endsWith("s") ? "plans" : "plan")
+    .replace(/\bwaves?\b/gi, match => match.toLowerCase().endsWith("s") ? "steps" : "step")
+    .replace(/\bcriteria\b|\bcriterion\b/gi, "check")
+    .replace(/\badmission\b/gi, "approval")
+    .replace(/\brevision\b/gi, "version")
+    .replace(/\bsubject\b/gi, "plan")
+    .replace(/\breceipts?\b/gi, "activity")
+    .replace(/\bliveness\b/gi, "status")
+    .replace(/\binference\b/gi, "guess")
+    .replace(/\baction boundary\b/gi, "click")
+    .replace(/\bsafe action\b/gi, "next step")
+    .replace(/\bclaim held\b/gi, "work remains paused")
+    .replace(/supplied,? not verified/gi, "linked by you")
+    .replace(/plan navigation/gi, "plan menu");
 }

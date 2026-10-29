@@ -13,6 +13,10 @@ What it adds:
 - **`read_factory_delivery {run_id}`.** Reads PR, check-run, review and diff data for graph nodes
   that have GitHub sources. Model and app.
 - **`capabilities.github`.** `{configured, reason}` only.
+- **Workspaces (opt-in).** `list_factory_github_repositories`,
+  `connect_factory_github_repository` and `create_factory_local_repository` let the user
+  pick a repository the installation can see, or start a new local one. See
+  [Workspaces](#workspaces-connect-or-create-a-repository).
 
 What it never does:
 
@@ -40,7 +44,8 @@ What it never does:
 ## Permissions and least privilege
 
 App **5266798** (Client ID `Iv23lipLrpN81zpCD7kA`) is registered with these repository
-permissions, all read-only. Webhooks are off.
+permissions, all read-only. Webhooks are off. **Contents: read** is new: the owner adds it
+in the app's settings so Luna can clone a repository the user connects.
 
 | Permission | Level | Why Luna needs it | Requested by |
 | --- | --- | --- | --- |
@@ -49,6 +54,7 @@ permissions, all read-only. Webhooks are off.
 | Pull requests | read | Closing pull requests, state, draft, head SHA, review decision, diff stats | delivery |
 | Checks | read | Check runs on the PR head commit | delivery |
 | Commit statuses | read | Combined status and status contexts | delivery |
+| Contents | read | Shallow clone of one repository the user connects. Requested only by `connect_factory_github_repository` | connect |
 | Actions | read | Registered, but **Luna never requests it**. Check runs cover CI state, and workflow logs aren't read. You may remove it from the app. | none |
 
 Defense in depth, enforced in code and tested against a loopback fake GitHub:
@@ -60,13 +66,17 @@ Defense in depth, enforced in code and tested against a loopback fake GitHub:
      naming the same `owner/repo` on GitHub. The remote is read with `git config` from the
      approved root.
 2. **Read-only installation.** `GET /repos/{owner}/{repo}/installation` must return an installation
-   whose permissions are all `read`. Otherwise: `github_app_not_read_only`.
+   whose permissions are all `read`. `contents: read` passes; any `write` fails with
+   `github_app_not_read_only`.
 3. **Pinned installation.** If you set `github_app.installation_id`, the installation that covers the
    repository must match it. Otherwise: `github_installation_mismatch`.
-4. **Narrowed tokens.** Every `POST /app/installations/{id}/access_tokens` body is
+4. **Narrowed tokens.** Every repository token body is
    `{"repositories":["<name>"],"permissions":{...read scopes for this call...}}`. The response must
    grant exactly that one repository and no permission beyond those requested, all `read`.
-   Otherwise the token is discarded: `github_token_scope_mismatch`.
+   Otherwise the token is discarded: `github_token_scope_mismatch`. The clone token requests
+   `{"contents":"read"}` only (GitHub may add `metadata: read`). The one unnarrowed token is
+   the repository listing's: `{"permissions":{"metadata":"read"}}`, because it must enumerate
+   the installation. It can read repository names and descriptions, nothing else.
 5. **Tokens live in memory only.** They're cached per repository and scope, and refreshed five
    minutes before they expire. They're never persisted, serialized or logged.
 6. **The app JWT is RS256.** `iat` is set 60 seconds in the past, `exp` is 9 minutes ahead (10
@@ -115,7 +125,9 @@ widen what Luna reads.
      port, which exists for the recorded-fixture test server.
    - `installation_id` is optional. When it's unset, the installation is resolved at runtime with
      the app JWT.
-   - `allowed_repositories` takes 1 to 32 entries of `owner/repo`, compared case-insensitively.
+   - `allowed_repositories` takes 1 to 32 entries of `owner/repo` or `owner/*`, compared
+     case-insensitively. `owner/*` admits every repository of that owner the installation can
+     see, for example `"joshyorko/*"`.
    - Unknown fields are rejected. `container/operator.example.json` deliberately doesn't include
      this block. JSON has no comments, and adding it would enable the integration by default.
 5. **Approve the local repository in Luna** as usual: an operator `repositories` entry or an
@@ -338,8 +350,8 @@ The result also carries `proof: "none"` and `merge_capability: "none"`.
 
   The workbench computes the age from the server's read time.
 - **Possible gap.** If GitHub requires `contents: read` for commit rollups through GraphQL,
-  rollups come back empty and the node is marked `partial`. Luna deliberately doesn't request
-  `contents`. The live check below shows which case applies.
+  rollups come back empty and the node is marked `partial`. Delivery reads deliberately don't
+  request `contents`; only the clone token does. The live check below shows which case applies.
 
 ## Bounds
 
@@ -369,6 +381,10 @@ The result also carries `proof: "none"` and `merge_capability: "none"`.
 | `rate_limited` | Wait until `retry_at` |
 | `github_app_not_installed`, `github_installation_mismatch`, `github_app_not_read_only`, `github_token_scope_mismatch` | Installation or permission problem. Fix it in the app settings |
 | `github_authentication_failed`, `github_permission_denied`, `github_not_found`, `github_gone`, `github_redirect_refused`, `github_service_unavailable`, `github_invalid_response`, `github_response_too_large` | Request-level failure |
+| `github_connect_not_enabled`, `local_create_not_enabled` | The operator flag is off. Nothing was done |
+| `github_contents_permission_missing`, `github_installation_ambiguous` | Add Contents: read to the app, or pin `installation_id` when the app has more than one installation |
+| `workspace_path_conflict`, `repository_alias_conflict`, `idempotency_conflict`, `workspace_repository_unavailable` | Something else already holds the path or alias, or the key was reused for another input. Nothing was changed |
+| `github_clone_failed`, `github_clone_timeout`, `clone_too_large`, `github_clone_credential_persisted`, `local_repository_create_failed` | Clone or init failed. The staging directory is removed on error, timeout, panic, or cancellation |
 | `parent_issue_unavailable`, `parent_is_pull_request`, `parent_issue_moved`, `issue_unavailable`, `source_repository_mismatch`, `source_not_an_issue`, `unrecognized_github_item_id`, `no_github_sources`, `polling_budget_deferred` | Item-level outcome |
 
 The UI maps these to plain sentences and never shows the raw code.
@@ -384,6 +400,12 @@ The UI maps these to plain sentences and never shows the raw code.
     and idempotent re-import, rate limiting, the unconfigured, unreachable, unsafe-key, mismatch
     and write-permission states, redaction, and the contract that GitHub "success" never changes
     criteria, presentation result, actions or attention.
+  - Workspaces: installation listing and pagination, connected marking, `owner/*` allowlists,
+    typed disabled reasons, `contents: read` gating, clones from a local bare repository (a
+    debug-build, loopback-only stand-in for GitHub's git endpoint) with a clean remote and no
+    credential in `.git/config` or any output, path conflicts and adoption, replay, greenfield
+    creation, approval and revocation by flag, and that nothing creates a run or claim. A unit
+    test pins that the clone token is never on `git`'s argv.
 - Opt-in live check, run by the integrator. It's read-only, uses a disposable in-process server
   and prints only counts and statuses:
   ```sh
@@ -394,6 +416,69 @@ The UI maps these to plain sentences and never shows the raw code.
   It needs network access to `api.github.com` from where it runs, which means a host shell. It
   never prints the key, the JWT or tokens.
 
+## Workspaces: connect or create a repository
+
+Off by default. It lets the user open Luna, pick a repository (one the GitHub App can see,
+or a brand new local one) and plan in it, without a separate approval step.
+
+**Owner actions.**
+
+1. In the app's settings, add the repository permission **Contents: read**, then accept the
+   updated permissions on the installation. Nobody else changes the app or its key.
+2. Set `workspaces` in `operator.json`. The root must be an existing, absolute, canonical
+   directory outside the state directory, and the service user must be able to write it.
+   ```json
+   "workspaces": {
+     "root": "/var/lib/luna-workspaces",
+     "connect_github": true,
+     "create_local": true,
+     "max_clone_bytes": 2147483648
+   }
+   ```
+   Both flags default to `false`. Turning a flag on is the operator's approval for
+   repositories connected or created that way; turning it off withdraws that approval
+   (the directories stay on disk). `max_clone_bytes` is optional, defaults to 2 GiB,
+   and accepts values from 1 MiB through 64 GiB. `capabilities.workspaces` reports only
+   the two flags.
+3. Optionally widen `github_app.allowed_repositories` to `"joshyorko/*"`.
+4. Restart the service.
+
+**What happens.**
+
+- `list_factory_github_repositories {cursor?}` reads `GET /installation/repositories`
+  (100 per page, at most 20 pages, cursor `page:<n>`) with the metadata-only token and marks
+  each entry `connected_alias` (an approved alias's remote names it), `connectable`
+  (allowlisted, the installation has `contents: read`, not yet connected) or
+  `blocked_reason`. The installation is the pinned `installation_id`, or the app's only
+  installation (`github_installation_ambiguous` otherwise).
+- `connect_factory_github_repository {repository, idempotency_key}`:
+  - checks the flag, the allowlist and the read-only installation before cloning;
+  - mints a token narrowed to that repository with `contents: read`;
+  - runs `git clone --depth 1 --single-branch --no-tags` of the default branch into a
+    staging directory, then renames it to `<root>/<owner>__<repo>` (lowercase).
+  The token reaches `git` only through `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`
+  as an `http.extraHeader`: never on argv, never in `.git/config`, never in a log, error or
+  tool result. `git` runs with no system or global config, no prompts, no hooks, redirects
+  off and only `https` allowed. Afterwards `origin` is `https://github.com/owner/repo.git`
+  and `.git/config` is checked to hold no credential. An existing directory at the target is
+  refused (`workspace_path_conflict`) unless SQLite records that Luna created that exact
+  directory. Recorded directories are checked for unchanged device/inode, the expected plain
+  HTTPS origin, safe local Git config, and hooks containing only sample files. Matching origin
+  text alone never authorizes adoption. Symlinks are never followed. Clones are staged inside
+  the workspace root, monitored against `max_clone_bytes`, and atomically renamed only after
+  rechecking the root identity.
+- Connecting a repository is supported only on Linux. Luna opens and verifies the workspace root once, creates staging through that directory descriptor, runs Git after `fchdir` into the pinned staging descriptor, and publishes with a no-replace rename relative to the pinned root. Replacing the configured root path during token minting cannot redirect clone writes.
+- Every file is hard-capped at `max_clone_bytes`; the total is checked every 100 ms and the clone is stopped when it exceeds the limit, so the total can overshoot by what git writes in one interval. A kernel `RLIMIT_FSIZE` failure is reported as `clone_too_large`.
+- `create_factory_local_repository {name, idempotency_key}` runs `git init` on `main` with
+  one empty commit at `<root>/<name>`. No GitHub call.
+- Either way the repository becomes an approved alias (the repository name, or
+  `owner-repo` when that is taken) with `max_finish: local_candidate` and provenance
+  `github_app_installation` or `local_create`, recorded in the ledger's
+  `workspace_repositories` table. It shows up at once in `capabilities.repositories`, the
+  workbench and every tool that takes an approved repository.
+- Nothing is pushed, branched or opened on GitHub. Nothing starts a run, takes a claim,
+  dispatches native work or qualifies execution (#71).
+
 ## Not supported in this slice
 
 - Webhooks.
@@ -403,4 +488,4 @@ The UI maps these to plain sentences and never shows the raw code.
 - Required-check configuration.
 - The "protected-path hits" idea from #76's scope: there is no protected-path policy source to
   check against yet.
-- Any write.
+- Any write to GitHub.

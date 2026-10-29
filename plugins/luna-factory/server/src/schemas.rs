@@ -145,12 +145,16 @@ fn definitions() -> Map<String, Value> {
     })));
     defs.insert("capabilities".into(),object(json!({
         "plugin_version":string(),"mcp_protocol":string(),"native_transport":enumeration(&["stdio","existing_daemon"]),
-        "repositories":{"type":"array","items":object(json!({"alias":text(64),"max_finish":finish()}))},
+        "repositories":{"type":"array","items":optional(object(json!({"alias":text(64),"max_finish":finish(),
+            "provenance":enumeration(&["github_app_installation","local_create"])})),&["provenance"])},
         "repository_onboarding":object(json!({"enabled":boolean(),"approval":{"const":"local_operator"}})),
+        "workspaces":object(json!({"connect_github":boolean(),"create_local":boolean()})),
         "profiles":{"type":"array","items":object(json!({"alias":text(64),"effort":string(),"supported":boolean()}))},
         "limits":object(json!({"capacity":{"type":"integer","minimum":1,"maximum":8},"repair_attempts":{"type":"integer","minimum":0,"maximum":10},"wall_seconds":{"type":"integer","minimum":30,"maximum":86400}})),
         "observed_routing":{"const":"unverified"},"status_inference_calls":{"const":0},
-        "execution":object(json!({"eligible":{"const":false},"reason":string()})),
+        // Persisted exact-profile qualification (#71); path-free, operator-recorded only.
+        "execution":object(json!({"eligible":boolean(),"reason":text(256),
+            "profiles":array(object(json!({"alias":text(64),"status":enumeration(&["qualified","denied"]),"reason":text(256),"max_capacity":nullable(json!({"type":"integer","minimum":1,"maximum":8}))})),64)})),
         "routing_telemetry":object(json!({"model":string(),"effort":string(),"provider":string()})),
         "control_policy":object(json!({"wire_schema":{"const":1},"sqlite_schema":{"const":2},"managed_admission":string(),"native_child_policy":string(),"semantic_acceptance":string(),"independent_checks":array(string(),32),"native_output_completeness":string(),"native_environment":string(),"delivery_certification":string()})),
         "agent_timeline":object(json!({"source":{"const":"codex-action-server"},"enabled":boolean(),"detail":text(300)})),
@@ -182,10 +186,15 @@ fn definitions() -> Map<String, Value> {
     defs.insert("change".into(),json!({"oneOf":[
         object(json!({"kind":{"const":"import_candidates"},"nodes":array(reference("graph_candidate"),32)})),
         object(json!({"kind":{"const":"set_dependencies"},"node_id":id(),"dependencies":array(id(),128)})),
-        object(json!({"kind":{"const":"set_target"},"node_id":id(),"target_id":id()}))
+        object(json!({"kind":{"const":"set_target"},"node_id":id(),"target_id":id()})),
+        object(json!({"kind":{"const":"update_task"},"node_id":id(),"title":nullable(text(8000)),
+            "dependencies":array(id(),128),"target_id":nullable(id())}))
     ]}));
     defs.insert("proposal".into(),object(json!({"id":id(),"idempotency_key":id(),"fingerprint":{"type":"string","pattern":"^[a-f0-9]{64}$"},"actor":{"const":"local_operator"},"base_revision":count(),"subject":id(),"change":reference("change"),"status":enumeration(&["proposed","applied"]),"applied_revision":nullable(count())})));
-    defs.insert("graph_node".into(),json!({"allOf":[reference("task"),object(json!({"source":nullable(reference("source")),"target_preference":nullable(id())}))]}));
+    defs.insert("graph_node".into(),json!({"allOf":[reference("task"),optional(
+        object(json!({"source":nullable(reference("source")),"target_preference":nullable(id()),"editor_title":nullable(text(8000))})),
+        &["editor_title"]
+    )]}));
     defs.insert("graph".into(),object(json!({
         "run_id":id(),"revision":count(),"repository":object(json!({"alias":text(64),"identity":{"type":"string","pattern":"^[a-f0-9]{64}$"},"base_head":string(),"subject":id()})),
         "planning_only":boolean(),"nodes":array(reference("graph_node"),128),"criteria":array(reference("criterion"),32),"attempts":array(reference("attempt"),256),"claim":reference("claim"),"changes":array(reference("proposal"),128)
@@ -241,6 +250,12 @@ fn definitions() -> Map<String, Value> {
         "pull_requests":array(reference("github_pull_request"),5),"pull_requests_total":count(),"pull_requests_truncated":boolean(),
         "cross_repository_pull_requests":count(),"partial":boolean()
     })),&["cross_repository_pull_requests","partial"]));
+    defs.insert(
+        "workspace_repository".into(),
+        object(json!({
+            "alias":text(64),"identity":{"type":"string","pattern":"^[a-f0-9]{64}$"}
+        })),
+    );
     defs.insert(
         "operation".into(),
         object(json!({"advertised":boolean(),"enabled":boolean(),"qualified":boolean()})),
@@ -338,6 +353,27 @@ pub fn output_schema(tool_name: &str) -> Value {
             "provenance":{"const":"github_app"},"proof":{"const":"none"},"merge_capability":{"const":"none"},"available":boolean(),"complete":boolean(),
             "reason":nullable(text(128)),"retry_at":nullable(count()),"min_interval_seconds":{"const":60},
             "observed_at":count(),"nodes":array(reference("github_delivery_node"),128)
+        })),
+        "list_factory_github_repositories" => object(json!({
+            "schema_version":{"const":1},"reported_by":{"const":"github"},"provenance":{"const":"github_app"},
+            "configured":boolean(),"available":boolean(),"reason":nullable(text(128)),
+            "repositories":array(object(json!({
+                "full_name":{"type":"string","maxLength":140,"pattern":"^[a-z0-9-]{1,39}/[a-z0-9._-]{1,100}$"},
+                "private":boolean(),"default_branch":nullable(text(255)),
+                "description":nullable(text(crate::github::MAX_DESCRIPTION_CHARS)),
+                "connected_alias":nullable(text(64)),"connectable":boolean(),"blocked_reason":nullable(text(128))
+            })),100),
+            "next_cursor":nullable(text(512)),"observed_at":count()
+        })),
+        "connect_factory_github_repository" => object(json!({
+            "schema_version":{"const":1},"status":enumeration(&["connected","already_connected"]),
+            "alias":text(64),"repository":reference("workspace_repository"),
+            "full_name":{"type":"string","maxLength":140,"pattern":"^[a-z0-9-]{1,39}/[a-z0-9._-]{1,100}$"},
+            "default_branch":nullable(text(255)),"provenance":{"const":"github_app"}
+        })),
+        "create_factory_local_repository" => object(json!({
+            "schema_version":{"const":1},"status":enumeration(&["created","already_exists"]),
+            "alias":text(64),"repository":reference("workspace_repository")
         })),
         _ => panic!("missing output schema for {tool_name}"),
     };

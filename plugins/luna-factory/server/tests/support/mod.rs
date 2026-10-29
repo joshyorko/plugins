@@ -118,3 +118,75 @@ async fn bridge(stream: tokio::net::UnixStream, binary: &std::path::Path) {
     let _ = scenario.kill().await;
     let _ = scenario.wait().await;
 }
+
+/// Synthetic, test-only evidence for one exact profile. Never live proof.
+pub fn passed_evidence(fingerprint: &str) -> serde_json::Value {
+    serde_json::json!({
+        "fixture":"synthetic test grant; not live qualification proof",
+        "profile_fingerprint":fingerprint,
+        "qualification_run":{"harness":luna_factoryd::qualification::HARNESS,"outcome":"passed",
+            "started_at":1,"finished_at":2,"checks":[{"id":"fixture","passed":true}],
+            "cessation":{"verified":true,
+                "scope":luna_factoryd::qualification::CANARY_CESSATION_SCOPE,
+                "process_tree":"unverified"}}
+    })
+}
+
+/// Record a synthetic ordinary grant for every recordable configured profile in this
+/// test's temporary database. Apply only where a test legitimately executes.
+pub fn qualified(config: Config) -> Config {
+    qualified_with(config, luna_factoryd::qualification::Scope::Ordinary, 8)
+}
+pub fn qualified_with(
+    config: Config,
+    scope: luna_factoryd::qualification::Scope,
+    max_capacity: u32,
+) -> Config {
+    use luna_factoryd::qualification::{
+        ExecutionProfile, NativeServerIdentity, RecordRequest, record, test_operator_confirmation,
+    };
+    let base = config
+        .database
+        .parent()
+        .and_then(|state| state.parent())
+        .expect("test database lives under a temporary directory")
+        .to_path_buf();
+    let aliases = config
+        .profiles
+        .iter()
+        .filter(|(_, profile)| profile.codex_profile.is_none())
+        .map(|(alias, _)| alias.clone())
+        .collect::<Vec<_>>();
+    let provider_identity =
+        (config.native_transport == "existing_daemon").then(|| NativeServerIdentity {
+            name: "codex-fixture".into(),
+            version: "1.0".into(),
+            build_hash: Some("fixture-sha256".into()),
+            binary_hash: None,
+        });
+    for alias in aliases {
+        let Ok(profile) = ExecutionProfile::from_config(&config, &alias) else {
+            continue;
+        };
+        let evidence = base.join(format!("qualification-evidence-{alias}.json"));
+        std::fs::write(
+            &evidence,
+            passed_evidence(&profile.fingerprint()).to_string(),
+        )
+        .unwrap();
+        record(
+            &config,
+            RecordRequest {
+                alias: &alias,
+                evidence: &evidence,
+                scope,
+                max_capacity,
+                expires_in_days: None,
+                provider_identity: provider_identity.clone(),
+            },
+            &test_operator_confirmation(),
+        )
+        .expect("synthetic test qualification records");
+    }
+    config
+}

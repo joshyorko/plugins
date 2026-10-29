@@ -14,7 +14,7 @@ The image uses Rust 1.99.0 and Python 3.13 Trixie images pinned by digest. Both 
 
 ## Build the image
 
-Run these commands from a clean `joshyorko/plugins` checkout at the reviewed OCI branch head, which must descend from the pinned release commit. The builder rejects dirty checkouts and unreviewed changes outside this OCI patch. Its build fingerprint covers every Cargo manifest, compiled Rust source file, logo, Containerfile, and health probe consumed by the build. Rootless Podman and its Compose provider must be installed.
+Run these commands from a clean `joshyorko/plugins` checkout at the reviewed OCI branch head, which must descend from the pinned release commit. The builder rejects dirty checkouts and unreviewed Luna Factory source changes. Changes to other plugins and repository handoffs never enter the image and do not need image-source approval. Its build fingerprint covers every Cargo manifest, compiled Rust source file, logo, Containerfile, and health probe consumed by the build. Rootless Podman and its Compose provider must be installed.
 
 Set `RELEASE_DIR` to the private directory containing the released archive, its provenance JSON, and the published `SHA256SUMS` file. The build helper checks the public checksum asset, archive, provenance, internal package checksums, binary version, binary hash, UI hash, skill hash, and source commit before it invokes Podman.
 
@@ -41,6 +41,9 @@ The helper rejects a different release commit or artifact. It extracts only regu
 
 The OCI binary and workbench are derivative builds, so their hashes differ from the official release components. `image-build.json` records both UI hashes, the source UI input hash, complete build-input hash, clean build HEAD, and immutable image reference. The private Compose `.env` is initialized with that digest reference, not a mutable tag. Keep the record outside the repository.
 
+The image's `org.opencontainers.image.revision` label identifies the actual build
+HEAD; `io.luna-factory.base-release` records the pinned release ancestor.
+
 Compose container names are scoped to the project. For a parallel preview, use a new private deployment root and a unique `--project-name` such as `luna-factory-v021-preview`; pass the same project name to every `config`, `up`, `stop`, and `down` command. This keeps the preview separate from the existing `luna-factory-oci-v021` service.
 
 Check the image ID and the private paths before starting the service.
@@ -54,6 +57,21 @@ stat -c '%a %n' "$DEPLOY_ROOT" "$DEPLOY_ROOT/config" "$DEPLOY_ROOT/config/operat
 The setup helper refuses an existing deployment directory or a port that is already bound on loopback. It creates separate mode-0700 config and state directories, a mode-0600 operator file, and a private Compose `.env` file. The operator config has no repository roots, no CAS targets, and a nonexistent Codex binary path. Do not add credentials to this canary config.
 
 ## Start the isolated canary
+
+After private setup, run one command from the repository root on the Linux host:
+
+```sh
+python3 plugins/luna-factory/container/stack.py --root "$DEPLOY_ROOT" --project-name luna-factory-preview up
+```
+
+Use the same root and project name with `status` to inspect it or `down` to stop
+and remove its containers. `down` retains the bind-mounted config and state.
+Pass `--github-egress` on every action when using the GitHub-only override.
+Use repeated `--file /absolute/path/to/override.yaml` arguments for private
+transport or repository mounts, and preserve the same overrides on every action.
+The helper validates the Compose configuration before starting, waits for health,
+and propagates failures. It does not build images, configure credentials, change
+qualification, start Codex, or set up a tunnel.
 
 Verify that the selected port is free before starting the container.
 
@@ -71,9 +89,31 @@ podman compose \
 
 An empty `ss` result means no process is listening on port 18788. If the port is in use, choose another free port and create a new private deployment directory.
 
-The service runs as UID and GID 65532. Rootless `keep-id` maps that identity to the invoking user for the two bind mounts. Podman drops all capabilities, enables `no-new-privileges`, makes the image filesystem read-only, limits memory, CPU, and PIDs, and retries process failures at most three times. The MCP health check reports initialization health; Podman's Compose provider does not restart a still-running container solely because that health check fails.
+The service runs as UID and GID 65532. Rootless `keep-id` maps that identity to the invoking user for the two bind mounts. Podman drops all capabilities, enables `no-new-privileges`, makes the image filesystem read-only, and limits memory, CPU, and PIDs. Its `unless-stopped` policy restarts the container after process failure until explicitly stopped. The MCP health check reports initialization health; Podman's Compose provider does not restart a still-running container solely because that health check fails.
 
 The initialize-only health probe performs no tool call or inference, but the pinned `rmcp` server may retain an initialize session until its timeout. Compose controls restart after process failure while the container engine is running; an unhealthy status alone does not trigger restart. Compose also does not create a boot-time user service; start this deployment explicitly after reboot or add a separately reviewed user Quadlet/systemd unit. The host's independent 18787 service remains outside this Compose project.
+
+### Connect an existing host Codex daemon
+
+The default image is planning-only. Starting it does not connect the host's Codex
+daemon or adopt workers from a native-skill session. For an explicitly approved
+native integration, use a private override and a separate operator config with
+`native_transport: "existing_daemon"`, an absolute `native_socket` path inside the
+container, and `codex_binary` pointing to a read-only bind of the exact host
+Codex executable. Discover the current socket with `codex app-server daemon
+version` on the host. Resolve any socket symlink before choosing its mount;
+mounting the symlink's directory alone can leave its target unavailable.
+
+Mount only the required socket directory and executable. A read-only socket bind
+still grants access to the authenticated Codex protocol. Do not mount the whole
+Codex home or copy credentials. Qualification remains required for native effects;
+an initialization/catalog probe proves connection only. Never replace or restart
+the host daemon as part of restarting Luna Factory.
+
+After verifying the MCP endpoint, enable the client's matching server entry and
+reload MCP connections. Codex 0.165.0 exposes `config/mcpServer/reload`; reconnecting
+does not transfer an existing native-skill run into Factory ownership. Begin a
+separate runtime-managed run only after operator qualification and authority.
 
 The host publishes only `127.0.0.1:18788`. The config mount is read-only. The state mount holds `runs.sqlite`, `runs.sqlite-wal`, and `runs.sqlite-shm` across container recreation. The private network has no external route.
 

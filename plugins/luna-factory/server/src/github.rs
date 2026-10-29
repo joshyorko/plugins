@@ -107,20 +107,61 @@ impl GithubAppConfig {
             "invalid_github_allowed_repositories"
         );
         let mut seen = BTreeSet::new();
-        for repository in &self.allowed_repositories {
-            let name = RepoName::parse(repository)?;
+        for entry in &self.allowed_repositories {
             ensure!(
-                seen.insert(name.key()),
+                seen.insert(AllowEntry::parse(entry)?.key()),
                 "duplicate_github_allowed_repository"
             );
         }
         Ok(())
     }
+    /// An exact `owner/repo` entry keeps its configured spelling; an `owner/*`
+    /// entry admits any repository of that owner the installation can see.
     fn allowed(&self, repository: &RepoName) -> Option<RepoName> {
-        self.allowed_repositories
+        let entries: Vec<AllowEntry> = self
+            .allowed_repositories
             .iter()
-            .filter_map(|r| RepoName::parse(r).ok())
-            .find(|r| r.key() == repository.key())
+            .filter_map(|r| AllowEntry::parse(r).ok())
+            .collect();
+        entries
+            .iter()
+            .find_map(|entry| match entry {
+                AllowEntry::Repository(name) if name.key() == repository.key() => {
+                    Some(name.clone())
+                }
+                _ => None,
+            })
+            .or_else(|| {
+                entries.iter().find_map(|entry| match entry {
+                    AllowEntry::Owner(owner) if owner.eq_ignore_ascii_case(&repository.owner) => {
+                        Some(repository.clone())
+                    }
+                    _ => None,
+                })
+            })
+    }
+}
+
+/// One `github_app.allowed_repositories` entry: `owner/repo` or `owner/*`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AllowEntry {
+    Repository(RepoName),
+    Owner(String),
+}
+impl AllowEntry {
+    fn parse(value: &str) -> Result<Self> {
+        if let Some(owner) = value.strip_suffix("/*") {
+            // Reuse the owner rules of a full name with a placeholder repository.
+            let name = RepoName::parse(&format!("{owner}/x"))?;
+            return Ok(Self::Owner(name.owner));
+        }
+        Ok(Self::Repository(RepoName::parse(value)?))
+    }
+    fn key(&self) -> String {
+        match self {
+            Self::Repository(name) => name.key(),
+            Self::Owner(owner) => format!("{}/*", owner.to_ascii_lowercase()),
+        }
     }
 }
 
@@ -294,27 +335,48 @@ impl Failure {
 }
 type Outcome<T> = std::result::Result<T, Failure>;
 
-/// Read scopes requested for each installation token. Tokens are always narrowed
-/// to one repository and to these read-only permissions.
+/// Read scopes requested for each installation token. Repository tokens are
+/// always narrowed to one repository and to these read-only permissions. The
+/// listing token is the one exception: it must enumerate the installation, so it
+/// is not narrowed to a repository and carries `metadata: read` only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Scope {
     Intake,
     Delivery,
+    /// Clone one connected repository: `contents: read` only.
+    Contents,
+    /// `GET /installation/repositories`: `metadata: read` only.
+    List,
 }
 impl Scope {
+    /// Permissions requested in the token body, all `read`.
     fn permissions(self) -> &'static [&'static str] {
         match self {
             Self::Intake => &["issues", "metadata"],
             Self::Delivery => &["checks", "issues", "metadata", "pull_requests", "statuses"],
+            Self::Contents => &["contents"],
+            Self::List => &["metadata"],
         }
     }
-    fn body(self, repository: &RepoName) -> Value {
+    /// Permissions a minted token may report. GitHub always adds `metadata: read`.
+    fn accepted(self) -> &'static [&'static str] {
+        match self {
+            Self::Contents => &["contents", "metadata"],
+            _ => self.permissions(),
+        }
+    }
+    fn body(self, repository: Option<&RepoName>) -> Value {
         let permissions: serde_json::Map<String, Value> = self
             .permissions()
             .iter()
             .map(|p| ((*p).to_owned(), json!("read")))
             .collect();
-        json!({"repositories":[repository.name],"permissions":permissions})
+        match repository {
+            Some(repository) => {
+                json!({"repositories":[repository.name],"permissions":permissions})
+            }
+            None => json!({"permissions":permissions}),
+        }
     }
 }
 
@@ -502,6 +564,21 @@ fn bounded_prefix(value: &str, limit: usize) -> &str {
     }
     &value[..end]
 }
+/// A conservative branch name: what GitHub default branches use in practice, with
+/// nothing git could read as an option, a range or a path escape.
+pub fn valid_branch(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 255
+        && !value.starts_with(['-', '/', '.'])
+        && !value.ends_with(['/', '.'])
+        && !value.ends_with(".lock")
+        && !value.contains("..")
+        && !value.contains("//")
+        && !value.contains("@{")
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'/'))
+}
 fn valid_node_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
@@ -579,7 +656,18 @@ struct CachedToken {
     token: Secret,
     repository_id: u64,
     repository_node_id: String,
+    /// The granted repository's default branch, when GitHub reported a safe name.
+    default_branch: Option<String>,
+    /// The installation behind this token was granted `contents: read`.
+    contents_read: bool,
     refresh_after: u64,
+}
+/// What Luna needs to know about an installation after the read-only check.
+#[derive(Debug, Clone, Copy)]
+struct Installation {
+    id: u64,
+    /// The installation was granted `contents: read` (needed to connect a repository).
+    contents_read: bool,
 }
 #[derive(Clone)]
 struct CachedDelivery {
@@ -592,7 +680,7 @@ struct CachedDelivery {
 }
 #[derive(Default)]
 struct State {
-    installations: HashMap<String, (u64, Instant)>,
+    installations: HashMap<String, (Installation, Instant)>,
     tokens: HashMap<(String, Scope), CachedToken>,
     rate_limited_until: Option<u64>,
     delivery: HashMap<String, CachedDelivery>,
@@ -605,6 +693,12 @@ pub struct GithubReader {
     http: Option<reqwest::Client>,
     state: Mutex<State>,
     requests: std::sync::atomic::AtomicU64,
+    /// Debug-build fixture only: clone from `<dir>/<owner>/<repo>.git` instead of GitHub.
+    clone_source: std::sync::OnceLock<PathBuf>,
+    /// Debug-build race seam invoked after token minting and before Git starts.
+    clone_hook: std::sync::OnceLock<Arc<dyn Fn() + Send + Sync>>,
+    /// Debug-build seam invoked once Git has finished touching the staging tree.
+    clone_complete_hook: std::sync::OnceLock<Arc<dyn Fn() + Send + Sync>>,
 }
 impl fmt::Debug for GithubReader {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -704,6 +798,9 @@ impl GithubReader {
             http,
             state: Mutex::new(State::default()),
             requests: std::sync::atomic::AtomicU64::new(0),
+            clone_source: std::sync::OnceLock::new(),
+            clone_hook: std::sync::OnceLock::new(),
+            clone_complete_hook: std::sync::OnceLock::new(),
         }
     }
     /// Network requests attempted by this reader (diagnostic counter for tests).
@@ -718,12 +815,16 @@ impl GithubReader {
     pub fn allowed(&self, repository: &RepoName) -> Option<RepoName> {
         self.config.as_ref()?.allowed(repository)
     }
+    /// Exact allowlist entries. `owner/*` entries name no single repository.
     pub fn allowed_repositories(&self) -> Vec<RepoName> {
         self.config.as_ref().map_or_else(Vec::new, |config| {
             config
                 .allowed_repositories
                 .iter()
-                .filter_map(|r| RepoName::parse(r).ok())
+                .filter_map(|r| match AllowEntry::parse(r) {
+                    Ok(AllowEntry::Repository(name)) => Some(name),
+                    _ => None,
+                })
                 .collect()
         })
     }
@@ -880,33 +981,19 @@ impl GithubReader {
             .ok_or(Failure::Unavailable("github_app_not_configured"))
     }
 
-    async fn installation(
-        &self,
-        budget: &mut CallBudget,
-        repository: &RepoName,
-        jwt: &Secret,
-    ) -> Outcome<u64> {
-        if let Some((id, at)) = self
-            .state
+    async fn cached_installation(&self, key: &str) -> Option<Installation> {
+        self.state
             .lock()
             .await
             .installations
-            .get(&repository.key())
+            .get(key)
             .copied()
-            && at.elapsed() < INSTALLATION_TTL
-        {
-            return Ok(id);
-        }
+            .filter(|(_, at)| at.elapsed() < INSTALLATION_TTL)
+            .map(|(installation, _)| installation)
+    }
+    /// The pinned-installation and read-only checks shared by every lookup.
+    fn checked_installation(&self, body: &Value) -> Outcome<Installation> {
         let config = self.config()?;
-        let url = self.base()?.endpoint(&format!(
-            "/repos/{}/{}/installation",
-            repository.owner, repository.name
-        ))?;
-        let reply = self.send(budget, Method::GET, url, jwt, None).await?;
-        if reply.status == StatusCode::NOT_FOUND {
-            return Err(Failure::Unavailable("github_app_not_installed"));
-        }
-        let body = reply.ok()?.body;
         let id = body["id"]
             .as_u64()
             .filter(|id| *id > 0)
@@ -918,19 +1005,92 @@ impl GithubReader {
             return Err(Failure::Unavailable("github_installation_mismatch"));
         }
         // Defense in depth: refuse an installation that was granted any write scope.
-        if let Some(permissions) = body["permissions"].as_object()
+        // `contents: read` is a read scope and passes.
+        let permissions = body["permissions"].as_object();
+        if let Some(permissions) = permissions
             && permissions
                 .values()
                 .any(|level| level.as_str() != Some("read"))
         {
             return Err(Failure::Unavailable("github_app_not_read_only"));
         }
+        Ok(Installation {
+            id,
+            contents_read: permissions
+                .and_then(|p| p.get("contents"))
+                .and_then(Value::as_str)
+                == Some("read"),
+        })
+    }
+    async fn installation(
+        &self,
+        budget: &mut CallBudget,
+        repository: &RepoName,
+        jwt: &Secret,
+    ) -> Outcome<Installation> {
+        if let Some(installation) = self.cached_installation(&repository.key()).await {
+            return Ok(installation);
+        }
+        let url = self.base()?.endpoint(&format!(
+            "/repos/{}/{}/installation",
+            repository.owner, repository.name
+        ))?;
+        let reply = self.send(budget, Method::GET, url, jwt, None).await?;
+        if reply.status == StatusCode::NOT_FOUND {
+            return Err(Failure::Unavailable("github_app_not_installed"));
+        }
+        let installation = self.checked_installation(&reply.ok()?.body)?;
         self.state
             .lock()
             .await
             .installations
-            .insert(repository.key(), (id, Instant::now()));
-        Ok(id)
+            .insert(repository.key(), (installation, Instant::now()));
+        Ok(installation)
+    }
+    /// The installation whose repositories are listed: the pinned one, or the
+    /// app's only installation. More than one unpinned installation is ambiguous.
+    async fn listing_installation(
+        &self,
+        budget: &mut CallBudget,
+        jwt: &Secret,
+    ) -> Outcome<Installation> {
+        const KEY: &str = "*";
+        if let Some(installation) = self.cached_installation(KEY).await {
+            return Ok(installation);
+        }
+        let base = self.base()?;
+        let body = match self.config()?.installation_id {
+            Some(id) => {
+                let url = base.endpoint(&format!("/app/installations/{id}"))?;
+                let reply = self.send(budget, Method::GET, url, jwt, None).await?;
+                if reply.status == StatusCode::NOT_FOUND {
+                    return Err(Failure::Unavailable("github_app_not_installed"));
+                }
+                reply.ok()?.body
+            }
+            None => {
+                let mut url = base.endpoint("/app/installations")?;
+                url.query_pairs_mut().append_pair("per_page", "2");
+                let body = self
+                    .send(budget, Method::GET, url, jwt, None)
+                    .await?
+                    .ok()?
+                    .body;
+                match body.as_array().map(Vec::as_slice) {
+                    Some([only]) => only.clone(),
+                    Some([]) => return Err(Failure::Unavailable("github_app_not_installed")),
+                    Some(_) => return Err(Failure::Unavailable("github_installation_ambiguous")),
+                    None => return Err(Failure::Unavailable("github_invalid_response")),
+                }
+            }
+        };
+        let installation = self.checked_installation(&body)?;
+        self.state
+            .lock()
+            .await
+            .installations
+            .insert(KEY.to_owned(), (installation, Instant::now()));
+        Ok(installation)
     }
 
     /// A single-repository, read-only installation token, cached in memory per
@@ -947,18 +1107,38 @@ impl GithubReader {
                 "repository_not_in_github_app_allowlist",
             ));
         }
+        self.mint(budget, Some(repository), scope).await
+    }
+    /// Mint (or reuse) an installation token. With a repository, the token is
+    /// narrowed to it and its grant is checked against it; without one (listing
+    /// only), it carries `metadata: read` and no repository binding.
+    async fn mint(
+        &self,
+        budget: &mut CallBudget,
+        repository: Option<&RepoName>,
+        scope: Scope,
+    ) -> Outcome<CachedToken> {
+        let config = self.config()?;
         let now = crate::store::now();
-        let key = (repository.key(), scope);
+        let installation_key = repository.map_or_else(|| "*".to_owned(), RepoName::key);
+        let key = (installation_key.clone(), scope);
         if let Some(token) = self.state.lock().await.tokens.get(&key)
             && now < token.refresh_after
         {
             return Ok(token.clone());
         }
         let jwt = app_jwt(config, now)?;
-        let installation = self.installation(budget, repository, &jwt).await?;
-        let url = self
-            .base()?
-            .endpoint(&format!("/app/installations/{installation}/access_tokens"))?;
+        let installation = match repository {
+            Some(repository) => self.installation(budget, repository, &jwt).await?,
+            None => self.listing_installation(budget, &jwt).await?,
+        };
+        if scope == Scope::Contents && !installation.contents_read {
+            return Err(Failure::Unavailable("github_contents_permission_missing"));
+        }
+        let url = self.base()?.endpoint(&format!(
+            "/app/installations/{}/access_tokens",
+            installation.id
+        ))?;
         let reply = self
             .send(
                 budget,
@@ -973,7 +1153,7 @@ impl GithubReader {
                 .lock()
                 .await
                 .installations
-                .remove(&repository.key());
+                .remove(&installation_key);
         }
         let body = reply.ok()?.body;
         let token = body["token"]
@@ -988,41 +1168,56 @@ impl GithubReader {
         let granted = body["permissions"]
             .as_object()
             .ok_or(Failure::Unavailable("github_token_scope_mismatch"))?;
-        let requested = scope.permissions();
+        let accepted = scope.accepted();
         if granted.is_empty()
             || granted.iter().any(|(name, level)| {
-                !requested.contains(&name.as_str()) || level.as_str() != Some("read")
+                !accepted.contains(&name.as_str()) || level.as_str() != Some("read")
             })
+            // A clone token that lacks the one scope it exists for is no use.
+            || (scope == Scope::Contents
+                && granted.get("contents").and_then(Value::as_str) != Some("read"))
         {
             return Err(Failure::Unavailable("github_token_scope_mismatch"));
         }
-        let repositories = body["repositories"]
-            .as_array()
-            .ok_or(Failure::Unavailable("github_token_scope_mismatch"))?;
-        let [granted_repository] = repositories.as_slice() else {
-            return Err(Failure::Unavailable("github_token_scope_mismatch"));
+        let (repository_id, repository_node_id, default_branch) = match repository {
+            None => (0, String::new(), None),
+            Some(repository) => {
+                let repositories = body["repositories"]
+                    .as_array()
+                    .ok_or(Failure::Unavailable("github_token_scope_mismatch"))?;
+                let [granted_repository] = repositories.as_slice() else {
+                    return Err(Failure::Unavailable("github_token_scope_mismatch"));
+                };
+                if granted_repository["full_name"]
+                    .as_str()
+                    .map(str::to_ascii_lowercase)
+                    != Some(repository.key())
+                {
+                    return Err(Failure::Unavailable("github_token_scope_mismatch"));
+                }
+                let repository_id = granted_repository["id"]
+                    .as_u64()
+                    .filter(|id| *id > 0)
+                    .ok_or(Failure::Unavailable("github_invalid_response"))?;
+                let repository_node_id = granted_repository["node_id"]
+                    .as_str()
+                    .filter(|id| valid_node_id(id))
+                    .unwrap_or_default()
+                    .to_owned();
+                let default_branch = granted_repository["default_branch"]
+                    .as_str()
+                    .filter(|branch| valid_branch(branch))
+                    .map(str::to_owned);
+                (repository_id, repository_node_id, default_branch)
+            }
         };
-        if granted_repository["full_name"]
-            .as_str()
-            .map(str::to_ascii_lowercase)
-            != Some(repository.key())
-        {
-            return Err(Failure::Unavailable("github_token_scope_mismatch"));
-        }
-        let repository_id = granted_repository["id"]
-            .as_u64()
-            .filter(|id| *id > 0)
-            .ok_or(Failure::Unavailable("github_invalid_response"))?;
-        let repository_node_id = granted_repository["node_id"]
-            .as_str()
-            .filter(|id| valid_node_id(id))
-            .unwrap_or_default()
-            .to_owned();
         let expires_at = body["expires_at"].as_str().and_then(parse_timestamp);
         let cached = CachedToken {
             token: Secret(token.to_owned()),
             repository_id,
             repository_node_id,
+            default_branch,
+            contents_read: installation.contents_read,
             refresh_after: expires_at
                 .map_or(0, |at| at.saturating_sub(TOKEN_REFRESH_MARGIN_SECONDS)),
         };
@@ -2244,11 +2439,556 @@ impl GithubReader {
     }
 }
 
+// ----------------------------------------------------------------------------
+// Workspaces: list the installation's repositories and clone one connected
+// repository. Reads only; nothing is pushed, branched or written to GitHub.
+
+const LIST_PER_PAGE: u32 = 100;
+const MAX_LIST_PAGES: u32 = 20;
+const LIST_REQUEST_BUDGET: u32 = 6;
+const CLONE_REQUEST_BUDGET: u32 = 6;
+const CLONE_TIMEOUT: Duration = Duration::from_secs(300);
+pub const MAX_DESCRIPTION_CHARS: usize = 280;
+
+/// `page:<n>` for pages 2 and later. No cursor means the first page. Cursors are
+/// Luna's own; GitHub `Link` URLs are never followed.
+pub fn list_cursor_page(cursor: Option<&str>) -> Result<u32> {
+    let Some(cursor) = cursor else {
+        return Ok(1);
+    };
+    let page = cursor
+        .strip_prefix("page:")
+        .filter(|n| !n.is_empty() && n.len() <= 3 && n.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|n| n.parse::<u32>().ok())
+        .filter(|n| (2..=MAX_LIST_PAGES).contains(n));
+    page.ok_or_else(|| anyhow::anyhow!("invalid_github_repository_cursor"))
+}
+/// The listing envelope; `available` and `repositories` are filled on success.
+pub fn repository_list(configured: bool, reason: Option<&str>) -> Value {
+    json!({"schema_version":1,"reported_by":"github","provenance":"github_app",
+        "configured":configured,"available":false,"reason":reason,"repositories":[],
+        "next_cursor":null,"observed_at":crate::store::now()})
+}
+/// Approved aliases by the lowercase `owner/repo` their Git remotes name.
+pub fn remote_aliases(config: &crate::config::Config, web_host: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for (alias, repo) in config.repositories.iter().take(128) {
+        for remote in remote_repositories(&repo.root, web_host) {
+            out.entry(remote.key()).or_insert_with(|| alias.clone());
+        }
+    }
+    out
+}
+/// The repository `origin` names on `web_host`, if any.
+pub fn origin_repository(root: &Path, web_host: &str) -> Option<RepoName> {
+    let url = crate::store::git(root, &["config", "--get", "remote.origin.url"]).ok()?;
+    parse_remote(&url, web_host)
+}
+/// The plain HTTPS remote recorded after cloning. It never carries a credential.
+pub fn canonical_remote(repository: &RepoName, web_host: &str) -> String {
+    format!("https://{web_host}/{}.git", repository.key())
+}
+/// `git clone` with the token only in the environment, as an `http.extraHeader`
+/// read through `GIT_CONFIG_COUNT`. It is never on argv, never written to
+/// `.git/config` and never logged. Protocols are pinned and prompts are off.
+fn clone_command(
+    source: &str,
+    branch: Option<&str>,
+    token: Option<&Secret>,
+    protocol: &str,
+) -> std::process::Command {
+    use base64::Engine;
+    let mut command = crate::workspaces::git_command();
+    command.env("GIT_ALLOW_PROTOCOL", protocol);
+    let mut entries: Vec<(&str, String)> = vec![
+        ("http.followRedirects", "false".into()),
+        ("credential.helper", String::new()),
+    ];
+    if let Some(token) = token {
+        let basic =
+            base64::engine::general_purpose::STANDARD.encode(format!("x-access-token:{}", token.0));
+        entries.push(("http.extraHeader", format!("Authorization: Basic {basic}")));
+    }
+    command.env("GIT_CONFIG_COUNT", entries.len().to_string());
+    for (index, (key, value)) in entries.into_iter().enumerate() {
+        command.env(format!("GIT_CONFIG_KEY_{index}"), key);
+        command.env(format!("GIT_CONFIG_VALUE_{index}"), value);
+    }
+    command.args([
+        "clone",
+        "--quiet",
+        "--template=",
+        "--no-tags",
+        "--single-branch",
+        "--depth",
+        "1",
+        "--no-recurse-submodules",
+    ]);
+    if let Some(branch) = branch {
+        command.arg("--branch").arg(branch);
+    }
+    // The staging directory is created before token minting and the child enters
+    // it with fchdir; clone into `.` so no mutable path is resolved after checks.
+    command.arg("--").arg(source).arg(".");
+    command
+}
+
+impl GithubReader {
+    /// Test hook for debug builds against a loopback fake GitHub: clone from
+    /// `<dir>/<owner>/<repo>.git` (a local bare repository) instead of GitHub. The
+    /// token is still minted and passed exactly as in production. Release builds
+    /// and non-loopback API bases refuse it. Not reachable from MCP.
+    #[doc(hidden)]
+    pub fn use_fixture_clone_source(&self, directory: PathBuf) -> bool {
+        cfg!(debug_assertions)
+            && self.base.as_ref().is_some_and(|base| base.loopback)
+            && self.clone_source.set(directory).is_ok()
+    }
+
+    /// Test-only race seam for replacing the workspace pathname while the
+    /// already-pinned staging directory remains open.
+    #[doc(hidden)]
+    pub fn use_clone_hook(&self, hook: Arc<dyn Fn() + Send + Sync>) -> bool {
+        cfg!(debug_assertions) && self.clone_hook.set(hook).is_ok()
+    }
+
+    /// Test-only seam after Git completes and before lifecycle publication.
+    #[doc(hidden)]
+    pub fn use_clone_completion_hook(&self, hook: Arc<dyn Fn() + Send + Sync>) -> bool {
+        cfg!(debug_assertions) && self.clone_complete_hook.set(hook).is_ok()
+    }
+
+    /// One page of the repositories the installation can see. Each entry is marked
+    /// connected (an approved alias names it) and connectable (allowlisted, the
+    /// installation has `contents: read`, not yet connected).
+    pub async fn list_repositories(&self, page: u32, connected: &HashMap<String, String>) -> Value {
+        let mut result = repository_list(true, None);
+        if let Some(reason) = self.unconfigured_reason() {
+            result["configured"] = json!(false);
+            result["reason"] = json!(reason);
+            return result;
+        }
+        match self.read_repository_page(page, connected).await {
+            Ok((repositories, next)) => {
+                result["available"] = json!(true);
+                result["repositories"] = json!(repositories);
+                result["next_cursor"] = json!(next);
+            }
+            Err(failure) => result["reason"] = json!(failure.reason()),
+        }
+        result
+    }
+    async fn read_repository_page(
+        &self,
+        page: u32,
+        connected: &HashMap<String, String>,
+    ) -> Outcome<(Vec<Value>, Option<String>)> {
+        let mut budget = CallBudget::new(LIST_REQUEST_BUDGET);
+        let token = self.mint(&mut budget, None, Scope::List).await?;
+        let mut url = self.base()?.endpoint("/installation/repositories")?;
+        url.query_pairs_mut()
+            .append_pair("per_page", &LIST_PER_PAGE.to_string())
+            .append_pair("page", &page.to_string());
+        let reply = self
+            .send(&mut budget, Method::GET, url, &token.token, None)
+            .await?;
+        if reply.status == StatusCode::UNAUTHORIZED {
+            self.state
+                .lock()
+                .await
+                .tokens
+                .remove(&("*".to_owned(), Scope::List));
+        }
+        let has_next = reply.has_next;
+        let body = reply.ok()?.body;
+        let items = body["repositories"]
+            .as_array()
+            .ok_or(Failure::Unavailable("github_invalid_response"))?;
+        let mut repositories = Vec::new();
+        for item in items.iter().take(LIST_PER_PAGE as usize) {
+            let Some(name) = item["full_name"]
+                .as_str()
+                .and_then(|full| RepoName::parse(full).ok())
+            else {
+                continue;
+            };
+            let key = name.key();
+            let connected_alias = connected.get(&key).cloned();
+            let blocked_reason = if connected_alias.is_some() {
+                None
+            } else if self.allowed(&name).is_none() {
+                Some("repository_not_in_github_app_allowlist")
+            } else if !token.contents_read {
+                Some("github_contents_permission_missing")
+            } else {
+                None
+            };
+            repositories.push(json!({
+                "full_name":key,
+                "private":item["private"].as_bool().unwrap_or(true),
+                "default_branch":item["default_branch"].as_str().filter(|b| valid_branch(b)),
+                "description":item["description"].as_str().and_then(|d| bounded_text(d, MAX_DESCRIPTION_CHARS)),
+                "connectable":connected_alias.is_none() && blocked_reason.is_none(),
+                "connected_alias":connected_alias,
+                "blocked_reason":blocked_reason
+            }));
+        }
+        let next = (has_next && page < MAX_LIST_PAGES).then(|| format!("page:{}", page + 1));
+        Ok((repositories, next))
+    }
+
+    /// Shallow-clone one allowlisted repository into `target`, which must not
+    /// exist. The token is narrowed to that repository with `contents: read` only.
+    /// Afterwards `origin` is the plain HTTPS URL and `.git/config` is checked to
+    /// hold no credential. Returns the default branch GitHub reported.
+    pub async fn clone_repository(
+        &self,
+        repository: &RepoName,
+        staging: &crate::workspaces::PinnedStaging,
+        max_bytes: u64,
+    ) -> std::result::Result<Option<String>, &'static str> {
+        if let Some(reason) = self.unconfigured_reason() {
+            return Err(reason);
+        }
+        let mut budget = CallBudget::new(CLONE_REQUEST_BUDGET);
+        let token = self
+            .token(&mut budget, repository, Scope::Contents)
+            .await
+            .map_err(|failure| failure.reason())?;
+        if cfg!(debug_assertions)
+            && let Some(hook) = self.clone_hook.get()
+        {
+            hook();
+        }
+        let web_host = self.web_host().to_owned();
+        let (source, protocol) = match self.clone_source.get() {
+            Some(directory) => (
+                format!(
+                    "file://{}/{}/{}.git",
+                    directory.display(),
+                    repository.owner.to_ascii_lowercase(),
+                    repository.name.to_ascii_lowercase()
+                ),
+                "file",
+            ),
+            None => (canonical_remote(repository, &web_host), "https"),
+        };
+        let mut command = clone_command(
+            &source,
+            token.default_branch.as_deref(),
+            Some(&token.token),
+            protocol,
+        );
+        command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
+        staging
+            .prepare_clone_command(&mut command, max_bytes)
+            .map_err(|_| "github_clone_failed")?;
+        let mut command = tokio::process::Command::from(command);
+        command.kill_on_drop(true);
+        let mut child = command.spawn().map_err(|_| "git_unavailable")?;
+        let mut process_group = CloneProcessGroup::new(child.id());
+        let stderr = child.stderr.take().ok_or("github_clone_failed")?;
+        let stderr_task = tokio::spawn(read_clone_stderr(stderr));
+        let clone_deadline = tokio::time::Instant::now() + CLONE_TIMEOUT;
+        let status =
+            wait_for_workspace_clone(&mut child, staging, max_bytes, clone_deadline).await?;
+        let stderr = finish_clone_stderr(stderr_task, &process_group, clone_deadline).await?;
+        if !status.success() {
+            if clone_hit_size_limit(&status, &stderr) {
+                return Err("clone_too_large");
+            }
+            return Err("github_clone_failed");
+        }
+        if staging.size(max_bytes).is_none_or(|size| size > max_bytes) {
+            return Err("clone_too_large");
+        }
+        let mut set_origin = crate::workspaces::git_command();
+        set_origin
+            .args(["remote", "set-url", "origin"])
+            .arg(canonical_remote(repository, &web_host))
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        staging
+            .prepare_clone_command(&mut set_origin, max_bytes)
+            .map_err(|_| "github_clone_failed")?;
+        let status = tokio::process::Command::from(set_origin)
+            .status()
+            .await
+            .map_err(|_| "github_clone_failed")?;
+        if !status.success() {
+            return Err("github_clone_failed");
+        }
+        let target = staging.path();
+        let config =
+            std::fs::read(target.join(".git/config")).map_err(|_| "github_clone_failed")?;
+        let text = String::from_utf8_lossy(&config).to_ascii_lowercase();
+        if text.contains("extraheader")
+            || text.contains("authorization")
+            || text.contains(&token.token.0.to_ascii_lowercase())
+        {
+            return Err("github_clone_credential_persisted");
+        }
+        if cfg!(debug_assertions)
+            && let Some(hook) = self.clone_complete_hook.get()
+        {
+            hook();
+        }
+        process_group.disarm();
+        Ok(token.default_branch)
+    }
+}
+
+/// Git may start helpers that outlive the direct child. Keep the clone in its
+/// own process group so errors, cancellation, and future drops stop the tree.
+struct CloneProcessGroup(Option<u32>);
+impl CloneProcessGroup {
+    fn new(pid: Option<u32>) -> Self {
+        Self(pid)
+    }
+    fn terminate(&self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.0 {
+            // SAFETY: a negative pid targets only the dedicated clone process group.
+            unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
+        }
+    }
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
+impl Drop for CloneProcessGroup {
+    fn drop(&mut self) {
+        self.terminate();
+    }
+}
+
+async fn wait_for_workspace_clone(
+    child: &mut tokio::process::Child,
+    staging: &crate::workspaces::PinnedStaging,
+    max_bytes: u64,
+    deadline: tokio::time::Instant,
+) -> std::result::Result<std::process::ExitStatus, &'static str> {
+    loop {
+        if staging.size(max_bytes).is_none_or(|size| size > max_bytes) {
+            kill_clone_group(child.id());
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Err("clone_too_large");
+        }
+        if tokio::time::Instant::now() >= deadline {
+            kill_clone_group(child.id());
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Err("github_clone_timeout");
+        }
+        match child.try_wait().map_err(|_| "git_unavailable")? {
+            Some(status) if child_was_signaled_by_file_limit(&status) => {
+                return Err("clone_too_large");
+            }
+            Some(status) => return Ok(status),
+            None => tokio::time::sleep(Duration::from_millis(100)).await,
+        }
+    }
+}
+
+async fn finish_clone_stderr(
+    stderr_task: tokio::task::JoinHandle<Vec<u8>>,
+    process_group: &CloneProcessGroup,
+    deadline: tokio::time::Instant,
+) -> std::result::Result<Vec<u8>, &'static str> {
+    let mut stderr_task = stderr_task;
+    match tokio::time::timeout_at(deadline, &mut stderr_task).await {
+        Ok(result) => Ok(result.unwrap_or_default()),
+        Err(_) => {
+            process_group.terminate();
+            stderr_task.abort();
+            Err("github_clone_timeout")
+        }
+    }
+}
+
+fn kill_clone_group(pid: Option<u32>) {
+    #[cfg(unix)]
+    if let Some(pid) = pid {
+        // SAFETY: clone children start a dedicated process group before exec.
+        unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
+    }
+}
+
+async fn read_clone_stderr(mut stderr: tokio::process::ChildStderr) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    let mut kept = Vec::new();
+    let mut buffer = [0_u8; 4096];
+    loop {
+        match stderr.read(&mut buffer).await {
+            Ok(0) | Err(_) => break,
+            Ok(read) => {
+                if kept.len() < 16 * 1024 {
+                    let take = read.min(16 * 1024 - kept.len());
+                    kept.extend_from_slice(&buffer[..take]);
+                }
+            }
+        }
+    }
+    kept
+}
+
+fn clone_hit_file_limit(stderr: &[u8]) -> bool {
+    let lower = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+    lower.contains("file too large") || lower.contains("file size limit exceeded")
+}
+
+fn clone_hit_size_limit(status: &std::process::ExitStatus, stderr: &[u8]) -> bool {
+    child_was_signaled_by_file_limit(status) || clone_hit_file_limit(stderr)
+}
+
+fn child_was_signaled_by_file_limit(status: &std::process::ExitStatus) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal() == Some(libc::SIGXFSZ)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = status;
+        false
+    }
+}
+
 pub type SharedReader = Arc<GithubReader>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn clone_process_group_drop_kills_descendants_after_leader_exit() {
+        use std::{os::unix::process::CommandExt, time::Instant};
+
+        let temp = tempfile::tempdir().unwrap();
+        let pid_file = temp.path().join("child.pid");
+        let mut command = std::process::Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("sleep 30 & echo $! > \"$1\"; wait")
+            .arg("clone-group-test")
+            .arg(&pid_file)
+            .process_group(0);
+        let child = command.spawn().unwrap();
+        let group = CloneProcessGroup::new(Some(child.id()));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !pid_file.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let pid: u32 = std::fs::read_to_string(&pid_file)
+            .expect("child pid was written")
+            .trim()
+            .parse()
+            .unwrap();
+        drop(group);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let state = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .ok()
+                .and_then(|stat| {
+                    stat.rsplit_once(')')
+                        .map(|(_, tail)| tail.trim().chars().next())
+                })
+                .flatten();
+            if state.is_none() || state == Some('Z') {
+                break;
+            }
+            assert!(Instant::now() < deadline, "clone descendant is still alive");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // Reap the group leader after the assertion; Drop already killed the group.
+        let mut child = child;
+        let _ = child.wait();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn stderr_drain_deadline_kills_descendant_after_clone_leader_exit() {
+        use std::{
+            os::unix::process::CommandExt,
+            time::{Duration, Instant},
+        };
+        use tokio::io::AsyncReadExt;
+
+        let mut command = std::process::Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("sleep 30 >/dev/null & echo $!; exit 0")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .process_group(0);
+        let mut child = tokio::process::Command::from(command).spawn().unwrap();
+        let process_group = CloneProcessGroup::new(child.id());
+        let stderr = child.stderr.take().unwrap();
+        let stderr_task = tokio::spawn(read_clone_stderr(stderr));
+        let status = child.wait().await.unwrap();
+        assert!(status.success());
+        let mut stdout = String::new();
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_string(&mut stdout)
+            .await
+            .unwrap();
+        let descendant: u32 = stdout.trim().parse().unwrap();
+
+        let started = Instant::now();
+        let result = finish_clone_stderr(
+            stderr_task,
+            &process_group,
+            tokio::time::Instant::now() + Duration::from_millis(100),
+        )
+        .await;
+        assert_eq!(result.unwrap_err(), "github_clone_timeout");
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let stop_deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let state = std::fs::read_to_string(format!("/proc/{descendant}/stat"))
+                .ok()
+                .and_then(|stat| {
+                    stat.rsplit_once(')')
+                        .map(|(_, tail)| tail.trim().chars().next())
+                })
+                .flatten();
+            if state.is_none() || state == Some('Z') {
+                break;
+            }
+            assert!(
+                Instant::now() < stop_deadline,
+                "descendant remains alive in state {state:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generic_unpack_failure_does_not_imply_a_size_limit() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let unrelated_failure = std::process::ExitStatus::from_raw(128 << 8);
+        assert!(!clone_hit_size_limit(
+            &unrelated_failure,
+            b"fatal: fetch-pack: invalid index-pack output"
+        ));
+        assert!(clone_hit_size_limit(
+            &unrelated_failure,
+            b"error: File too large"
+        ));
+        let terminated = std::process::ExitStatus::from_raw(libc::SIGTERM);
+        assert!(!clone_hit_size_limit(&terminated, b""));
+    }
 
     #[test]
     fn repository_names_and_api_bases_are_bounded() {
@@ -2411,6 +3151,103 @@ mod tests {
             rate_limit(StatusCode::FORBIDDEN, &headers, 900),
             Some(900 + MAX_RATE_LIMIT_WAIT_SECONDS)
         );
+    }
+
+    #[test]
+    fn owner_wildcards_admit_only_that_owner_and_reject_bad_entries() {
+        let config: GithubAppConfig = serde_json::from_value(json!({
+            "app_id":1,"private_key_path":"/k.pem",
+            "allowed_repositories":["JoshYorko/*","other/Exact"]
+        }))
+        .unwrap();
+        config.validate().unwrap();
+        let allowed = |name: &str| config.allowed(&RepoName::parse(name).unwrap());
+        assert_eq!(
+            allowed("joshyorko/anything").unwrap().full(),
+            "joshyorko/anything"
+        );
+        assert_eq!(allowed("other/exact").unwrap().full(), "other/Exact");
+        assert!(allowed("other/else").is_none());
+        assert!(allowed("joshyorkox/plugins").is_none());
+        for bad in [
+            json!(["*/*"]),
+            json!(["owner/*", "OWNER/*"]),
+            json!(["-owner/*"]),
+            json!(["owner/**"]),
+            json!(["owner/"]),
+        ] {
+            let parsed: GithubAppConfig = serde_json::from_value(
+                json!({"app_id":1,"private_key_path":"/k.pem","allowed_repositories":bad.clone()}),
+            )
+            .unwrap();
+            assert!(parsed.validate().is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn clone_tokens_stay_off_argv_and_cursors_and_branches_are_bounded() {
+        let token = Secret("ghs_clonesecret".into());
+        let command = clone_command(
+            "https://github.com/joshyorko/plugins.git",
+            Some("main"),
+            Some(&token),
+            "https",
+        );
+        let args: Vec<String> = command
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        use base64::Engine;
+        let encoded =
+            base64::engine::general_purpose::STANDARD.encode("x-access-token:ghs_clonesecret");
+        for arg in &args {
+            assert!(
+                !arg.contains("ghs_clonesecret") && !arg.contains(&encoded),
+                "{arg}"
+            );
+        }
+        assert!(args.contains(&"--depth".to_owned()) && args.contains(&"main".to_owned()));
+        let envs: HashMap<String, String> = command
+            .get_envs()
+            .filter_map(|(k, v)| {
+                Some((
+                    k.to_string_lossy().into_owned(),
+                    v?.to_string_lossy().into_owned(),
+                ))
+            })
+            .collect();
+        assert_eq!(envs["GIT_ALLOW_PROTOCOL"], "https");
+        assert_eq!(envs["GIT_TERMINAL_PROMPT"], "0");
+        assert_eq!(envs["GIT_CONFIG_GLOBAL"], "/dev/null");
+        let count: usize = envs["GIT_CONFIG_COUNT"].parse().unwrap();
+        let header = (0..count)
+            .find(|i| envs[&format!("GIT_CONFIG_KEY_{i}")] == "http.extraHeader")
+            .unwrap();
+        assert_eq!(
+            envs[&format!("GIT_CONFIG_VALUE_{header}")],
+            format!("Authorization: Basic {encoded}")
+        );
+        assert_eq!(list_cursor_page(None).unwrap(), 1);
+        assert_eq!(list_cursor_page(Some("page:2")).unwrap(), 2);
+        for bad in [
+            "page:1",
+            "page:0",
+            "page:21",
+            "page:x",
+            "2",
+            "page:",
+            "page:0002",
+        ] {
+            assert!(list_cursor_page(Some(bad)).is_err(), "{bad}");
+        }
+        for good in ["main", "release/1.x", "v2_dev"] {
+            assert!(valid_branch(good), "{good}");
+        }
+        for bad in [
+            "", "-x", "a..b", "x.lock", "/a", "a/", "a b", "a@{1}", "a//b",
+        ] {
+            assert!(!valid_branch(bad), "{bad}");
+        }
     }
 
     #[test]

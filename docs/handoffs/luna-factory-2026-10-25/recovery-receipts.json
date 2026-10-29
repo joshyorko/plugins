@@ -1,0 +1,106 @@
+[
+  {
+    "pr": 91,
+    "source_session_id": "01a13a2e-93df-7a52-8657-cbc774e8c7f4",
+    "parent_commit": "17732947f2eea4e6b21bef084b5b6bdb6155096c",
+    "mutation_event_count": 80,
+    "events_sha256": "d221df54422247aafb5f369a46c4e67d31e4aba7a439eaf268e0e8e172462e19",
+    "recovered_patch_sha256": "f3ba9eae0fcba85010ada7b1d567e0e224703606d4da21fe544ad33960414401",
+    "files": [
+      {
+        "path": "plugins/luna-factory/README.md",
+        "sha256": "01f11622259a64f60f9291b9e9cefa64cd900c037a24c4c3699e4ea173e466ab"
+      },
+      {
+        "path": "plugins/luna-factory/container/build_image.py",
+        "sha256": "0915c0b15c1e6c79445c7f1c52ad4222baeb03ddd916b8bc46dc4f414d2e5fc4"
+      },
+      {
+        "path": "plugins/luna-factory/docs/control-wire.md",
+        "sha256": "15732506cf54bc39f82a88a5282eaede551a6aa11aff33cf34e79b3ad1570726"
+      },
+      {
+        "path": "plugins/luna-factory/docs/execution-qualification.md",
+        "sha256": "d620d20f1293e713daae90b06d1b09fe8901142bc20590993adf0d5ea62b5b54"
+      },
+      {
+        "path": "plugins/luna-factory/docs/mission-control.md",
+        "sha256": "e6aa7d05a2ebe80304fe9d7ab16f77c5aef7643cef32e05baa85b85b6dcb9105"
+      },
+      {
+        "path": "plugins/luna-factory/server/src/config.rs",
+        "sha256": "7e842ce85f9d25bc422ffc3bacd27352864f29fcc365cf90887212821d8585ad"
+      },
+      {
+        "path": "plugins/luna-factory/server/src/lifecycle.rs",
+        "sha256": "58634ce666f23dab62b8ba59f0aadc11b6a80000358a07e807496d3e7564ab2b"
+      },
+      {
+        "path": "plugins/luna-factory/server/src/main.rs",
+        "sha256": "a71e98e2e4a791a518bb393c78ca66de9b4808793d372d4c450a743e5a52e0f3"
+      },
+      {
+        "path": "plugins/luna-factory/server/src/native.rs",
+        "sha256": "ff4e67a618980ad0056ac789ffb6e49f403f05655caf078d12ae6ade9c42b2b6"
+      },
+      {
+        "path": "plugins/luna-factory/server/src/qualification.rs",
+        "sha256": "dcc62cfd6b7cbff0c4bdf2d72c02c0279f6e73e042ccf01a22ec7ea673e1eb9a"
+      },
+      {
+        "path": "plugins/luna-factory/server/src/store.rs",
+        "sha256": "24317ea3f078ae26aa19da5124c150127e53ebc13a139b5de0cde2fb9cf1375e"
+      },
+      {
+        "path": "plugins/luna-factory/server/tests/native_daemon.rs",
+        "sha256": "4effec268f8bbfdfc169176d4ca45d736a1f9729629272401917f2e8cf554b8d"
+      },
+      {
+        "path": "plugins/luna-factory/server/tests/native_transport.rs",
+        "sha256": "8805a860cc5df783e8b637892cab505cc564b1be485894ae81a5657c7ed94818"
+      },
+      {
+        "path": "plugins/luna-factory/server/tests/qualification.rs",
+        "sha256": "9c99aed48a194ddd17510e155b9f0ce3a3b315b72cf132c891b306a56edde23b"
+      },
+      {
+        "path": "plugins/luna-factory/server/tests/support/mod.rs",
+        "sha256": "c54c43c5bb79583426fa7424b3ed8f41ba54c720892a8382885f287efbe89924"
+      },
+      {
+        "path": "plugins/luna-factory/tests/fixtures/native/fake_factory.py",
+        "sha256": "610d598b13d2971758ca1940a7c60ca62fe5b7c4cc9865e3f497301013947045"
+      }
+    ]
+  },
+  {
+    "pr": 96,
+    "source_session_id": "01a13a40-434c-7c81-b8c5-510d1f60ad57",
+    "parent_commit": "bf2cad0b4ace0c6b791a6f2bb60fee3b6e885223",
+    "mutation_event_count": 22,
+    "events_sha256": "6a1655cf668b3e690f8f883eb37177ff0803dfc3206d76d7a59ff61331739faf",
+    "recovered_patch_sha256": "5f7d41a40adef986b73b67ebcb94cf6b28e2899416028b4f19f0de3253271428",
+    "files": [
+      {
+        "path": "plugins/luna-factory/docs/github-app.md",
+        "sha256": "89297263a0f0746e08c0ab6ec1ad90e6c2862170ec1204ae9a61bf2e0d51d78c"
+      },
+      {
+        "path": "plugins/luna-factory/server/src/github.rs",
+        "sha256": "28f450eb25debe55c248c4b4e476e0ce8b493dd701ce8ae98320e4f00f614c81"
+      },
+      {
+        "path": "plugins/luna-factory/server/src/lifecycle.rs",
+        "sha256": "311aedd977a30e21a804b199d7fdcab99b34bdde1dd26f29887a89e2be561d86"
+      },
+      {
+        "path": "plugins/luna-factory/server/src/workspaces.rs",
+        "sha256": "a8f4daeb6377e94fe9e59dd1987f211799783fe34bb5fa9da85e60d1420d9ff9"
+      },
+      {
+        "path": "plugins/luna-factory/server/tests/github_app.rs",
+        "sha256": "21b5eeed63fad73ea0d1e3bfb7d128453e0367c26cad0e0c3778d8f0c18e7d33"
+      }
+    ]
+  }
+]

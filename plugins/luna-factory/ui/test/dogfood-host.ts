@@ -12,9 +12,9 @@ const theme = params.get("theme") === "dark" ? "dark" : "light";
 const platform = params.get("platform") === "mobile" ? "mobile" : "desktop";
 const largeFontStyles = McpUiHostStylesSchema.parse({ variables: { "--font-text-md-size": "20px", "--font-text-sm-size": "18px" } });
 const campaign = fixtureCampaignPlan();
-const decisionRun = () => fixtureRun({ id: "review-301", state: "NEEDS_INPUT", pending_decision: { id: "fixture-decision", question: "Which approved scope should the owner use?" }, active_workers: 0, updated_at: 1791141000 });
+const decisionRun = () => fixtureRun({ id: "review-301", state: "NEEDS_INPUT", pending_decision: { id: "fixture-decision", question: "Which approved scope should Luna use?" }, active_workers: 0, updated_at: 1791141000 });
 const blockedRun = () => {
-  const run = fixtureRun({ id: "blocked-77", state: "BLOCKED", pending_decision: null, active_workers: 0, blocker: "Luna can't confirm the earlier run stopped.", updated_at: 1791139000, created_at: 1791132000 });
+  const run = fixtureRun({ id: "blocked-77", repository: "sample", objective: "Check whether the earlier run stopped", state: "BLOCKED", pending_decision: null, active_workers: 0, blocker: "Luna can't confirm the earlier run stopped.", updated_at: 1791139000, created_at: 1791132000 });
   // Server-shaped: unproved liveness with a held claim projects read-only reconciliation, never a decision.
   const reconcile = { kind: "reconcile" as const, label: "Check running work", reason: "read_only_native_reconciliation", tool: "reconcile_factory_run", allowed: true };
   run.presentation!.primary_action = reconcile;
@@ -31,7 +31,7 @@ else {
   graph.graph.criteria = run.control?.criteria ?? [];
   graph.graph.nodes = scenario === "swarm"
     ? (run.control?.tasks ?? []).map(task => ({ ...task, source: null, target_preference: null }))
-    : ["objective", "task-a", "task-b"].map(id => ({ ...graph.graph.nodes[0]!, id, title: id === "objective" ? run.objective : `Candidate ${id}`, criterion_ids: graph.graph.criteria.map(criterion => criterion.id), dependencies: id === "task-b" ? ["task-a"] : [] }));
+    : ["objective", "task-a", "task-b"].map(id => ({ ...graph.graph.nodes[0]!, id, title: id === "objective" ? run.objective : id === "task-a" ? "First task" : "Second task", criterion_ids: graph.graph.criteria.map(criterion => criterion.id), dependencies: id === "task-b" ? ["task-a"] : [] }));
   graph.graph.attempts = scenario === "swarm" ? run.control?.attempts ?? [] : [];
   graph.graph.planning_only = run.planning_only === true;
   graph.graph.claim = run.presentation?.claim ?? graph.graph.claim;
@@ -40,7 +40,7 @@ const focusNode = params.get("node") ?? "task-b";
 if (params.get("proposal") === "1") graph.proposal = { id: "fixture-change", base_revision: graph.graph.revision - 1, actor: "local_operator", idempotency_key: "fixture-key", fingerprint: "fixture-hash", subject: run.current_subject, status: "proposed", applied_revision: null, change: { kind: "set_dependencies", node_id: "task-b", dependencies: [] } };
 // The shape a ChatGPT-applied change returns: a UUID change id and revision numbers that must never reach the main view.
 if (params.get("proposal") === "applied") graph.proposal = { id: "75d01e55-9b57-450c-a0af-65afadca112c", base_revision: graph.graph.revision - 1, actor: "local_operator", idempotency_key: "fixture-applied-key", fingerprint: "fixture-hash", subject: run.current_subject, status: "applied", applied_revision: graph.graph.revision, change: { kind: "set_target", node_id: focusNode, target_id: "native-local" } };
-const homeRuns = scenario === "home" ? [decisionRun(), fixtureSwarmRun(), campaign.run, fixtureRun({ id: "friday-41", repository: "friday", objective: "Tighten the nightly handoff", state: "CONVERGED", active_workers: 0, claim_held: false, blocker: null, remaining_gap: null, delta: "Owner accepted the current subject.", updated_at: 1791130000 }), blockedRun()] : [run];
+const homeRuns = scenario === "home" ? [decisionRun(), fixtureSwarmRun(), campaign.run, fixtureRun({ id: "friday-41", repository: "friday", objective: "Tighten the nightly handoff", state: "CONVERGED", active_workers: 0, claim_held: false, blocker: null, remaining_gap: null, delta: "The requested pull request is ready.", updated_at: 1791130000 }), blockedRun()] : scenario === "home-empty" ? [] : [run];
 // Only the synthetic swarm advertises the app-only timeline read; its results are fixtures too.
 const timelines = scenario === "swarm" ? fixtureTimelines(run.id) : {};
 // Only the campaign plan has GitHub sources; other scenarios show the default-off integration.
@@ -48,7 +48,7 @@ const github = scenario === "campaign" || scenario === "home" ? { configured: tr
 // The plan form opens from home: "plan" offers GitHub connect and new repos, "plan-basic" only approved repos.
 const planning = scenario === "plan" || scenario === "plan-basic";
 const baseCapabilities = scenario === "plan" ? fixturePlanCapabilities : scenario === "plan-basic" ? { ...fixturePlanCapabilities, github, workspaces: undefined } : fixtureWorkbench.capabilities;
-const workbench = { ...fixtureWorkbench, runs: planning ? [] : homeRuns, selected_run: scenario === "home" || planning ? null : run, capabilities: { ...baseCapabilities, execution: { eligible: false, reason: "qualification_unverified" }, ...(scenario === "plan" ? {} : { github }), ...(scenario === "swarm" ? { agent_timeline: fixtureTimelineCapability } : {}) } };
+const workbench = { ...fixtureWorkbench, runs: planning ? [] : homeRuns, selected_run: scenario === "home" || scenario === "home-empty" || planning ? null : run, capabilities: { ...baseCapabilities, execution: { eligible: false, reason: "qualification_unverified" }, ...(scenario === "plan" ? {} : { github }), ...(scenario === "swarm" ? { agent_timeline: fixtureTimelineCapability } : {}) } };
 interface SimulatorInstrumentation { calls: string[]; contexts: unknown[]; messages: unknown[]; sizes: unknown[]; initialized: boolean; disconnect(): Promise<void>; }
 const instrumentation: SimulatorInstrumentation = { calls: [], contexts: [], messages: [], sizes: [], initialized: false, disconnect: async () => { await host.teardownResource({}); await host.close(); } };
 declare global { interface Window { lunaDogfoodHost: SimulatorInstrumentation; } }
@@ -82,7 +82,7 @@ host.onrequestdisplaymode = async ({ mode }) => { host.setHostContext({ displayM
 host.oninitialized = async () => {
   await host.sendToolInput({ arguments: planning ? {} : { run_id: run.id } });
   await host.sendToolResult(scenario === "error" ? { isError: true, content: [{ type: "text", text: "Fixture read failed. Reconnect to read current state." }] } : { content: [], structuredContent: workbench });
-  if (params.get("graph") === "1" && scenario !== "error") host.setHostContext({ "openai/deepLink": { url: `/runs/${run.id}?task=${focusNode}&revision=${graph.graph.revision}` } });
+  if (params.get("graph") === "1" && scenario !== "error" && params.get("noTask") !== "1") host.setHostContext({ "openai/deepLink": { url: `/runs/${run.id}?task=${focusNode}&revision=${graph.graph.revision}` } });
   instrumentation.initialized = true;
 };
 const view = iframe.contentWindow;

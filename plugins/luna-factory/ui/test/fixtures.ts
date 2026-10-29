@@ -150,9 +150,9 @@ export function fixtureSwarmRun(): RunView {
   const base = 1791140400;
   const run = fixtureRun({
     id: "swarm-fixture", repository: "sample-service", objective: "Preserve job progress across restarts", state: "RUNNING", active_workers: 2, owner_thread: "owner-a", turn_id: "turn-a",
-    delta: "The owner reproduced the restart gap. Two observed workers are testing the fix.", remaining_gap: "Owner acceptance of the restart test is still required.", blocker: null, updated_at: base + 2280, created_at: base - 120, activity_at: base + 2280, claim_held: true,
+    delta: "Luna reproduced the restart gap. Two agents are testing the fix.", remaining_gap: "Your approval of the restart test is still required.", blocker: null, updated_at: base + 2280, created_at: base - 120, activity_at: base + 2280, claim_held: true,
     // Attribution as the server records it: the dispatching or emitting thread. The first receipt
-    // predates attribution (null) and stays on Run receipts; Worker 2 has none, so its lane stays hatched.
+    // predates attribution (null) and stays on Run receipts; Agent 2 has none, so its lane stays quiet.
     receipts: [
       { kind: "native_dispatch", summary: "Owner turn dispatched for the bound objective.", subject: "s", created_at: base, thread_id: null },
       { kind: "native_child_spawn", summary: "Observed a native child thread under the owner.", subject: "s", created_at: base + 540, thread_id: "owner-a" },

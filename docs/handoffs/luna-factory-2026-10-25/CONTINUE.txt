@@ -1,0 +1,175 @@
+Finish the approved Luna Factory work in existing PR #91, joshyorko/plugins.
+
+Use ONE agent, ONE branch (luna-factory/qualification-gate), and ONE PR (#91).
+All recovered backend work, current main, and the UX handoff are merged into this
+branch. Do not create new implementation branches, PRs, or parallel agent lanes.
+Push all further work to this same PR. The owner explicitly accepts an unfinished
+plugin checkpoint; do not confuse this handoff with a completed implementation.
+
+Start by fetching origin and reading this handoff's sibling files. Do not restart
+the original three-direction design exercise or repeat the recovery described
+below. The approved work is implementation of the five-slice redesign, plus the
+remaining backend security fixes.
+
+Repository and checkpoints
+
+- Repository: https://github.com/joshyorko/plugins
+- Working branch: luna-factory/qualification-gate. Track existing PR #91.
+- Remote main observed on 2026-10-25:
+  eabf0531c76456ed0b34799bfd8a107fae18fbce
+- PR #91, the single active draft. Fetch its latest head. Original recovery input:
+  https://github.com/joshyorko/plugins/pull/91
+  7951f40fa68ca6218e3a9fe11387668ce80b0837
+- PR #96, superseded by #91. Its fully merged recovery input:
+  https://github.com/joshyorko/plugins/pull/96
+  0b8675eb6e14cb83a3fcd29a88c28fb2566656b7
+- UX slice 1 had no changes at the pause. Its starting commit was
+  4664b855869fdad863e80ddb1bddc5e39ce19315, already included through main.
+  Implement all five slices directly on the existing #91 branch.
+
+Read these archived sources
+
+- ux-review-2026-10-14.md: the Opus review, design system, per-view specification,
+  and acceptance criteria. Section 7 defines all five implementation slices.
+- ux-slice-brief.md: the shared execution and screenshot-validation instructions.
+- gate-task.md: the qualification-gate implementation brief and residuals.
+- github-repos-contract.md: the repository-list/connect/create contract.
+- lf-brief-v2.md: backend isolation, build locks, container tooling, and limits.
+- original-design/: the original audit, platform research, design specification,
+  comparison page, mockups, and screenshots. These are historical design inputs.
+- source-manifest.json and recovery-receipts.json: backup and recovery provenance.
+- recovery-status.txt: checks performed during the checkpoint turn.
+
+These copies preserve their original contents. Old paths, statuses, model rules,
+and verification claims inside them may be stale. This handoff and the owner's
+latest model preferences take precedence. Verify current GitHub state before
+using any old PR or test status. Do not read private keys or .pem files.
+
+What is already merged
+
+PR #94, campaign copy cleanup, merged as f6622f4. PR #95, the one-box plan form
+with the repository popover, merged as 4664b85. Do not redo either PR. Main also
+contains the campaign entity, CAS timeline, GitHub read integration, egress proxy,
+and research reconciliation. The two newest main commits concern RCC.
+
+What happened at the pause
+
+On October 14, the owner paused all agents. PR #91 had 16 modified files and
+PR #96 had five. UX slice 1 had not changed any files. An October 20 workspace
+cleanup subsequently permanently deleted those worktrees and their administration
+records. There was no surviving Git stash containing these security edits.
+
+The October 25 checkpoint recovered the successful edit operations from the
+compressed Codex transcripts. Recovery replayed the original Python edits and
+formatting steps, skipped the historically failed patches, and reproduced the
+16-file and five-file changes in isolated checkouts. Those changes are committed
+at the PR heads above. Do not mistake this recovery for completed remediation.
+
+The historical source sessions were:
+- PR #91: 01a13a2e-93df-7a52-8657-cbc774e8c7f4
+- PR #96: 01a13a40-434c-7c81-b8c5-510d1f60ad57
+
+Backend work remaining
+
+Keep #91 draft until the remaining work is fixed, independently reviewed, and
+validated on its exact final head. Both security checkpoints and current main
+are merged as ancestors of this branch. #96 is superseded, not another work lane.
+Old green CI and old PR-body validation do not qualify this combined head.
+
+A containerized cargo check --locked --all-targets was run after convergence.
+It fails with seven errors. See convergence-cargo-check.txt for exact locations:
+missing UNIX_EPOCH, missing qualification_timestamp, an escaping borrow, and
+unsupported u64 SQLite conversions. bin/check passes with 53 unit tests.
+The owner requested gathering the work first, so these failures are deliberately
+left for you to finish rather than repaired during the convergence turn.
+
+PR #91 addresses six findings:
+1. Revocation while an effectful native write is blocked.
+2. Active turns continuing to create workers after revocation.
+3. Self-qualification through the CLI or an exposed qualification database.
+4. Weak executable identity and unverified native-server identity.
+5. Expired qualification becoming valid again after clock rollback.
+6. Internal callers bypassing qualification through native effect APIs.
+
+The recovered code attempts guarded writes, active-turn revocation, operator/TTY
+checks, sandbox rejection, store boundaries, SHA-256 identity, provider identity,
+and a clock high-water mark. It remains incomplete. cargo fmt --check fails on
+the recovered final source. Inspect that diagnostic and then compile and repair
+the affected code. Full Rust and Python checks were not rerun during recovery.
+The real qualification canary was not implemented or run. Do not claim execution
+is qualified or enable it on the basis of source changes or manifest entries.
+
+PR #96's first security round was already in bf2cad0. The recovered second round
+addresses root-path replacement during token mint/clone and sampled clone-size
+limits through descriptor-pinned filesystem operations and RLIMIT_FSIZE. Check
+root/ancestor swaps, publication conflicts, cancellation and descendants,
+post-publication recovery, final-write oversize, and the documented aggregate
+overshoot boundary. A per-file cap is not an aggregate disk quota.
+
+PR #96 passes cargo fmt --check after recovery. Its historical full-suite result
+is not a fresh result for the recovered commit. Rerun the required locked checks
+and obtain the short independent review that never finished before the pause.
+
+The historical catalogs were 29/20/9 for #91 and 32/23/9 for #96, meaning total,
+model-visible, and app-only tools. Preserve the contracts and reconcile counts
+against the actual combined branch when rebasing; do not copy an obsolete count.
+
+UX work remaining
+
+Use one finishing agent. Claude Opus 5.5 is the owner-preferred model for the
+remaining UX work and can own this whole continuation. Do not spawn implementation
+workers or new lanes. Historical Luna/backend and Kimi/review dispatch instructions
+in the archived briefs do not override this one-agent request.
+
+Build the five UX slices sequentially as checkpoints within the SAME PR #91:
+1. Tokens, shell, and header.
+2. Plain vocabulary and a test preventing the banned terms from returning.
+3. Home with the composer and repository popover built in.
+4. Plan page, task drawer, and proposal review.
+5. Activity, inline chat card, loading/error/offline states, and mobile layout.
+
+The product goal remains a professional, calm ChatGPT-native engineering control
+center. ChatGPT is the control interface. The routine flow is choose a repository,
+describe the work, and go, including greenfield work. Preserve the moon marks.
+Remove unnecessary forms, raw identifiers, jargon, pill-shaped controls, repeated
+status text, and defensive disclaimers. Never invent progress or agent activity.
+Preserve server authority, revision fencing, evidence, and permission boundaries.
+
+For each slice, follow its exact acceptance criteria, regenerate dist and the
+capture manifest, inspect every changed screenshot in light, dark, narrow, and
+mobile layouts, and run the required checks. Source inspection alone is not UX
+acceptance. Show representative screenshots as the work progresses. Do not open
+separate slice PRs or merge incomplete slices into main.
+
+Execution and authority
+
+Read applicable AGENTS.md first. Map the checkout and keep an execution plan.
+Use ghx for read-only GitHub operations and gh for authorized writes. Register
+every PR worked on with T3 link_pull_request. Use one checkout of the existing #91 branch outside the
+second_brain tree or an app-managed checkout. Never overwrite unrelated work.
+The main local checkout was clean but behind origin/main during recovery.
+
+Preserve the machine limits in the briefs. Run heavy work with nice -n 10.
+Serialize Rust commands through flock /tmp/luna-cargo.lock and the pinned tooling
+container. Run Vitest with one worker and browser captures through
+flock /tmp/luna-browser.lock. Do not run multiple Rust builds or browser captures.
+Do not run Cargo for UI-only changes. Prefer repository/container tooling over
+installing packages on the Bluefin host.
+
+For backend completion, run cargo fmt --check, cargo clippy --locked --all-targets
+-- -D warnings, cargo test --locked --no-fail-fast, and the appropriate Python
+suite in the required environment. Run bin/check for repository changes.
+Distinguish source checks, local tests, exact-head CI, runtime tests, deployment,
+and live ChatGPT acceptance. Never claim an unrun check.
+
+The prior owner-approved sequence was to finish and merge reviewed changes, then
+update dogfood and the MCP tunnel after the UX redesign. A one-command up/down
+flow with restart-unless-stopped behavior is also part of that deployment goal.
+This checkpoint turn did not deploy, restart the service, change credentials or
+GitHub App permissions, write a real qualification, or start live inference.
+Do not perform credential changes, real qualification writes, or live inference
+without explicit operator authority. Preserve the existing live service and data.
+
+Begin by checking out the latest remote luna-factory/qualification-gate head.
+Read convergence-cargo-check.txt and finish the backend repairs, then the five
+UX slices, on this same branch and PR. Keep the one-agent ownership throughout.

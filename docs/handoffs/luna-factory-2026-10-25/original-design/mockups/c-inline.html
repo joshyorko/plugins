@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Luna Factory · Dispatch · Inline</title>
+<meta name="viewport" content="width=760">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#FFFFFF;--surf:#F7F7F8;--hair:rgba(0,0,0,.08);--hair2:rgba(0,0,0,.14);
+--ink:#0D0D0D;--ink2:#3D3D3D;--muted:#666666;--faint:#8F8F8F;
+--teal:#0B6B6B;--teal-t:#E6F2F1;--green:#2E7A47;--green-t:#E8F3EC;--amber:#9A5A00;--amber-t:#FBF1E1;--coral:#C2412D;--coral-t:#FCEDEA}
+html,body{width:760px;height:560px;overflow:hidden;background:var(--bg)}
+body{font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;color:var(--ink);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;font-size:14px;line-height:1.45;position:relative}
+.mono{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:.92em}
+.num{font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)} .ink2{color:var(--ink2)}
+a{color:inherit;text-decoration:none}
+svg{display:inline-block;vertical-align:middle;flex:none}
+.ico{display:inline-flex;width:16px;height:16px;align-items:center;justify-content:center;flex:none}
+/* ChatGPT chrome */
+.gpt-bar{position:absolute;left:0;right:0;top:0;height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 16px 0 18px;background:#fff;border-bottom:1px solid var(--hair);z-index:5}
+.gpt-app{display:flex;align-items:center;gap:10px;font-weight:600;font-size:15px}
+.gpt-appicon{width:26px;height:26px;border-radius:7px;background:#0D0D0D;display:flex;align-items:center;justify-content:center}
+.gpt-x{width:36px;height:36px;border-radius:18px;display:flex;align-items:center;justify-content:center;color:#5D5D5D}
+.gpt-dock{position:absolute;left:0;right:0;bottom:0;background:#fff;padding:10px 0 18px;z-index:5}
+.gpt-composer{width:768px;margin:0 auto;background:#fff;border:1px solid rgba(0,0,0,.12);border-radius:28px;box-shadow:0 4px 16px rgba(0,0,0,.06);padding:10px 10px 10px 12px}
+.gpt-row{display:flex;align-items:center;gap:10px}
+.gpt-ph{flex:1;color:#8F8F8F;font-size:15px}
+.gpt-btn{width:36px;height:36px;border-radius:18px;display:flex;align-items:center;justify-content:center;color:#5D5D5D}
+.gpt-send{background:#0D0D0D;color:#fff}
+.gpt-chip{display:inline-flex;align-items:center;gap:7px;background:var(--surf);border:1px solid var(--hair);border-radius:10px;padding:5px 8px 5px 9px;font-size:13px;font-weight:500;margin:0 0 8px 4px;color:var(--ink)}
+.gpt-sugg{width:768px;margin:0 auto 10px;display:flex;gap:8px}
+.gpt-sugg span{border:1px solid rgba(0,0,0,.12);border-radius:18px;padding:7px 13px;font-size:13.5px;color:var(--ink2);background:#fff}
+.gpt-foot{text-align:center;font-size:11.5px;color:var(--faint);margin-top:8px}
+/* typography + primitives */
+.kicker{font-size:12px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.sec{display:flex;align-items:baseline;justify-content:space-between;gap:12px;border-top:1px solid var(--ink);padding-top:9px}
+.sec h2{font-size:13px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;display:flex;align-items:center;gap:7px}
+.sec .aside{font-size:12.5px;color:var(--muted)}
+.mono-w{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:20px;padding:0 5px;border-radius:10px;border:1px solid var(--hair2);font-size:10.5px;font-weight:700;letter-spacing:.02em;color:var(--ink);background:#fff;line-height:1}
+.mono-w.luna{background:var(--ink);color:#fff;border-color:var(--ink)}
+.mono-w.sub{border-style:dashed}
+.btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px;border-radius:17px;font-size:13.5px;font-weight:600;border:1px solid rgba(0,0,0,.16);background:#fff;color:var(--ink);white-space:nowrap}
+.btn.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+.btn.ghost{border-color:transparent;background:transparent;padding:0 8px;text-decoration:underline;text-underline-offset:3px;text-decoration-color:rgba(0,0,0,.25)}
+.ref{font-weight:650;color:var(--ink)}
+code,.code{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:.88em;background:var(--surf);border:1px solid var(--hair);border-radius:5px;padding:0 4px}
+.tag-need{color:var(--coral);font-weight:700}
+
+.conv{padding:20px 30px 0}
+.user{display:flex;justify-content:flex-end}
+.user div{background:#F4F4F4;border-radius:18px;padding:9px 16px;font-size:15px;line-height:1.45;max-width:560px}
+.asst{margin-top:14px;font-size:15px;line-height:1.45}
+.applbl{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--muted);margin-bottom:5px}
+.applbl i{width:18px;height:18px;border-radius:5px;background:#0D0D0D;display:inline-flex;align-items:center;justify-content:center}
+.card{margin-top:10px;border:1px solid rgba(0,0,0,.12);border-radius:18px;padding:15px 20px 14px;background:#fff}
+.ck{display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted)}
+.ck b{color:var(--ink);font-weight:650}
+.ch{font-size:21px;line-height:1.2;font-weight:800;letter-spacing:-.018em;margin:6px 0 8px}
+.ch .soft{color:#6A6A6A}
+.cl{list-style:none}
+.cl li{display:grid;grid-template-columns:22px 1fr;font-size:14px;padding:3px 0;color:var(--ink2);white-space:nowrap}
+.cl li b{color:var(--ink);font-weight:650}
+.cl .gl{padding-top:1px}
+.dec{margin-top:10px;border-top:2px solid var(--coral);padding-top:8px;display:grid;grid-template-columns:22px 1fr}
+.dec .lbl{font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--coral)}
+.dec .qq{font-size:15px;font-weight:700;margin-top:1px}
+.dec code{font-size:.82em;font-weight:600}
+.dc{font-size:13px;color:var(--ink2);margin-top:2px}
+.foot{display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid var(--hair)}
+.fl{width:410px}
+.fl .lg{font-size:11.5px;color:var(--muted);margin-top:5px;white-space:nowrap}
+.fl .lg b{color:var(--ink);font-weight:650}
+.gpt-composer.sm{width:700px;padding:7px 8px 7px 10px}
+.idock{position:absolute;left:0;right:0;bottom:14px}
+</style></head>
+<body><div class="conv">
+<div class="user"><div>Use Luna Factory to finish the issue graph in joshyorko/actions. Parent issue #101. YOLO it.</div></div>
+<div class="asst"><div class="applbl"><i><svg width="11" height="11" viewBox="0 0 11 11"><path d="M10.8 2.2A6 6 0 1 0 13.8 10 4.8 4.8 0 0 1 10.8 2.2z" fill="#fff"/></svg></i>Luna Factory</div>#101 has been running for 2h 14m with 4 workers. Here’s what changed since you last looked.</div>
+<div class="card">
+ <div class="ck"><span><b>joshyorko/actions · #101 Actions v2</b></span><span>Since 13:10 · updated 14:08</span></div>
+ <div class="ch">Wave 2 is half done. <span class="soft">One decision is holding the release path.</span></div>
+ <ul class="cl">
+  <li><span class="gl"><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="#2E7A47" stroke-width="1.8"/><circle cx="8" cy="8" r="2.4" fill="#2E7A47"/></svg></span><span>PR <b>#147</b> passed 6/6 checks and is ready for your review.</span></li>
+  <li><span class="gl"><svg width="14" height="14" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.6-3.7" fill="none" stroke="#9A5A00" stroke-width="1.8" stroke-linecap="round"/><path d="M12 1.8v3.1H8.9" fill="none" stroke="#9A5A00" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span>Worker 4 is repairing a Windows test failure on PR <b>#148</b>, attempt 1 of 2.</span></li>
+  <li><span class="gl"><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="#666" stroke-width="1.5"/><path d="M8 4.6V8l2.4 1.5" fill="none" stroke="#666" stroke-width="1.5" stroke-linecap="round"/></svg></span><span><b>#108</b> is waiting for a macos-14 runner. Luna retries at 14:30.</span></li>
+ </ul>
+ <div class="dec"><span style="padding-top:1px"><svg width="14" height="14" viewBox="0 0 16 16"><rect x="3.2" y="3.2" width="9.6" height="9.6" rx="1.4" transform="rotate(45 8 8)" fill="#C2412D"/><rect x="7.1" y="4.6" width="1.8" height="4.4" rx=".9" fill="#fff"/><circle cx="8" cy="11" r="1" fill="#fff"/></svg></span><div><div class="lbl">1 decision needs you</div><div class="qq">Can #113 add <code>id-token: write</code> to the protected <code>release.yml</code>?</div><div class="dc">If you skip it, release publishing stays manual. Answer here in chat, or open Luna Factory to see the options.</div></div></div>
+ <div class="foot">
+  <div class="fl"><svg width="410" height="8" viewBox="0 0 410 8" aria-label="Flow: 4 waiting, 2 held, 3 in progress, 1 in review, 3 merged"><rect x="0.0" y="0" width="123.7" height="8" rx="2" fill="#BDBDBD"/><rect x="125.7" y="0" width="61.8" height="8" rx="2" fill="#8A8A8A"/><rect x="189.5" y="0" width="92.8" height="8" rx="2" fill="#0B6B6B"/><rect x="284.3" y="0" width="30.9" height="8" rx="2" fill="#5E9B73"/><rect x="317.2" y="0" width="92.8" height="8" rx="2" fill="#2E7A47"/></svg><div class="lg">4 waiting · 2 held · 3 in progress · 1 in review · <b>3 merged</b> of 13</div></div>
+  <span class="btn primary" style="height:38px;padding:0 18px;font-size:14px">Open Luna Factory</span>
+ </div>
+</div>
+</div>
+<div class="idock"><div class="gpt-composer sm"><div class="gpt-row"><span class="gpt-btn"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg></span><span class="gpt-ph">Ask anything</span><span class="gpt-btn"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="7" y="2.5" width="6" height="10" rx="3"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5"/></svg></span><span class="gpt-btn gpt-send"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 8v4M7.3 5.5v9M10.6 7v6M14 4.5v11M17 8.5v3"/></svg></span></div></div></div></body></html>

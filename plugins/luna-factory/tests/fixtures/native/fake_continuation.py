@@ -15,6 +15,18 @@ late_preflight = False
 def emit(value):
     print(json.dumps(value), flush=True)
 
+def revoke_qualifications():
+    """Test-only: revoke every grant in the fixture's temporary DB from this separate
+    process and connection, as an operator `revoke-qualification` would."""
+    import sqlite3
+    db = sqlite3.connect(str(home / "state/runs.sqlite"), timeout=5)
+    for fingerprint, payload in db.execute("SELECT fingerprint,payload FROM execution_qualifications").fetchall():
+        value = json.loads(payload)
+        value["revoked_at"] = 1
+        db.execute("UPDATE execution_qualifications SET payload=? WHERE fingerprint=?", (json.dumps(value), fingerprint))
+    db.commit()
+    db.close()
+
 
 def mode():
     path = home / "mode"
@@ -47,7 +59,14 @@ for line in sys.stdin:
     method, params = message["method"], message.get("params", {})
     result = {}
     if method == "initialize":
-        result = {"userAgent": "synthetic-continuation"}
+        result = {
+            "userAgent": "synthetic-continuation",
+            "serverInfo": {
+                "name": "codex-fixture",
+                "version": "1.0",
+                "buildHash": "fixture-sha256",
+            },
+        }
     elif method == "model/list":
         if history and history[-1]["status"] == "completed" and mode().startswith("late_"):
             late_preflight = True
@@ -79,6 +98,8 @@ for line in sys.stdin:
         turn["status"] = "completed"
         turn["report"] = report(turn)
         save()
+        if mode() == "revoke_after_completion":
+            revoke_qualifications()
         if mode() == "identity_drift":
             (home / "repo/.git").rename(home / "original-git")
             shutil.copytree(home / "original-git", home / "repo/.git")

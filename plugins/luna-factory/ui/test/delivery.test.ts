@@ -58,7 +58,7 @@ describe("GitHub-reported delivery contract", () => {
     expect(deliveryCalls(unconfigured.call)).toHaveLength(0);
     const legacy = await campaign({ capabilities: null });
     expect(deliveryCalls(legacy.call)).toHaveLength(0);
-    expect(render(legacy.controller, "issue-109").querySelector(".github-report, .pr-chip")).toBeNull();
+    expect(render(legacy.controller, "issue-109").querySelector(".github-report, .pr-meta")).toBeNull();
   });
 
   it("keeps a failed read quiet: no error banner, no data and nothing shown", async () => {
@@ -67,48 +67,62 @@ describe("GitHub-reported delivery contract", () => {
     expect(controller.state.error).toBeNull();
     expect(controller.state.delivery).toBeNull();
     const root = render(controller, "issue-109");
-    expect(root.querySelector(".pr-chip, .github-report")).toBeNull();
+    expect(root.querySelector(".pr-meta, .github-report")).toBeNull();
     const malformed = await campaign({ delivery: fixtureGraph() });
     expect(malformed.controller.state.delivery).toBeNull();
     expect(malformed.controller.state.error).toBeNull();
   });
 
-  it("shows PR chips with check dots only for nodes GitHub reported a pull request for", async () => {
+  it("shows an inline pull-request line only for nodes GitHub reported a pull request for", async () => {
     const { controller } = await campaign();
     const root = render(controller);
-    const chips = Array.from(root.querySelectorAll<HTMLElement>(".map-node .pr-chip"));
-    expect(chips.map(chip => chip.closest(".map-node")!.getAttribute("data-node-id"))).toEqual(["issue-103", "issue-105", "issue-109", "issue-111"]);
-    const chip = (id: string) => root.querySelector<HTMLElement>(`[data-node-id="${id}"] .pr-chip`)!;
-    expect(chip("issue-103").classList.contains("ready")).toBe(true);
-    expect(chip("issue-103").querySelectorAll(".check-dot.c-success")).toHaveLength(3);
-    expect(chip("issue-109").querySelectorAll(".check-dot.c-failure")).toHaveLength(1);
-    expect(chip("issue-109").querySelectorAll(".check-dot.c-pending")).toHaveLength(1);
-    expect(chip("issue-105").classList.contains("ready")).toBe(false);
-    expect(chip("issue-111").classList.contains("stale")).toBe(true);
-    expect(chip("issue-111").classList.contains("ready")).toBe(false);
-    expect(chip("issue-103").textContent).toContain("Reported by GitHub");
+    const lines = Array.from(root.querySelectorAll<HTMLElement>(".map-node .pr-meta"));
+    expect(lines.map(line => line.closest(".map-node")!.getAttribute("data-node-id"))).toEqual(["issue-103", "issue-105", "issue-109", "issue-111"]);
+    const line = (id: string) => root.querySelector<HTMLElement>(`[data-node-id="${id}"] .pr-meta`)!;
+    expect(line("issue-103").querySelector("span:not(.sr-only)")?.textContent).toBe("PR #121 · checks passed");
+    expect(line("issue-103").querySelectorAll(".check-dot")).toHaveLength(1);
+    expect(line("issue-109").querySelector("span:not(.sr-only)")?.textContent).toBe("PR #130 · 2/4 passed");
+    expect(line("issue-105").querySelector("span:not(.sr-only)")?.textContent).toBe("PR #124 · 1/2 passed");
+    expect(line("issue-111").classList.contains("stale")).toBe(true);
+    expect(line("issue-111").querySelector("span:not(.sr-only)")?.textContent).toBe("PR #133 · passed · stale");
+    expect(line("issue-103").textContent).toContain("Reported by GitHub");
     // The coral "needs" hue and Needs you stay reserved for real operator decisions.
-    expect(root.querySelector(".pr-chip .needs, .pr-chip [class*='needs']")).toBeNull();
+    expect(root.querySelector(".pr-meta .needs, .pr-meta [class*='needs']")).toBeNull();
+  });
+
+  it("keeps dependency counts off map cards while retaining the relationship in task details", async () => {
+    const { controller } = await campaign();
+    const root = render(controller, "issue-105");
+    const card = root.querySelector<HTMLElement>('.map-node[data-node-id="issue-105"]');
+    expect(card?.querySelector(".node-meta")?.textContent).toContain("#105 · Planned");
+    expect(card?.querySelector(".node-meta")?.textContent).not.toContain("Waits on");
+    expect(card?.querySelector(".node-meta")?.getAttribute("title")).toBe("#105 · Planned");
+    const waitsOn = Array.from(root.querySelectorAll<HTMLElement>(".drawer-section")).find(section => section.querySelector("h4")?.textContent === "Waits on");
+    expect(waitsOn?.textContent).toContain("Add uv lockfile support to the package builder");
   });
 
   it("separates Ready for review from merge and never changes proof or attention", async () => {
     const { controller, plan } = await campaign();
     const ready = render(controller, "issue-103").querySelector<HTMLElement>(".github-report")!;
-    expect(ready.textContent).toContain("Reported by GitHub");
-    expect(ready.textContent).toContain("Ready for review");
-    expect(ready.textContent).toContain("review approved");
-    expect(ready.textContent).toContain("+412");
-    expect(ready.textContent).toContain("9 files");
-    expect(ready.textContent).toContain("not Luna proof");
+    expect(ready.querySelector("h4")?.textContent).toBe("Pull request");
+    expect(ready.querySelector(".pr-report-link")?.textContent).toBe("#121 · Review approved · checks passed");
+    expect(ready.querySelector(".check-list")).toBeNull();
+    expect(ready.textContent).not.toContain("Updated");
+    expect(ready.textContent).not.toContain("+412");
+    expect(ready.textContent).not.toContain("9 files");
+    expect(ready.textContent).not.toContain("not Luna proof");
     expect(ready.textContent).not.toMatch(/ready to (merge|integrate)|mergeable|merge now/i);
 
     const failing = render(controller, "issue-109");
     const section = failing.querySelector<HTMLElement>(".github-report")!;
+    expect(section.querySelector(".pr-report-link")?.textContent).toBe("#130 · Changes requested · 2 of 4 checks passed");
     expect(section.textContent).toContain("Cache key mismatch on windows-latest");
-    expect(section.textContent).toContain("changes requested");
+    expect(Array.from(section.querySelectorAll(".check-list li"), item => item.textContent)).toHaveLength(1);
+    expect(section.textContent).not.toContain("lint");
+    expect(section.textContent).not.toContain("pending");
     expect(section.textContent).not.toContain("Ready for review");
     // Luna's own proof is untouched by GitHub's report.
-    expect(failing.querySelector(".graph-proof")?.textContent).toContain("Not done yet");
+    expect(failing.querySelector(".graph-proof")?.textContent).toContain("Not checked yet");
     expect(runTier(plan.run)).toBe(runTier(controller.selected!));
     const proofWithout = (await campaign({ capabilities: null })).controller;
     expect(render(proofWithout, "issue-103").querySelector(".graph-proof")?.textContent).toBe(render(controller, "issue-103").querySelector(".graph-proof")?.textContent);
@@ -118,8 +132,8 @@ describe("GitHub-reported delivery contract", () => {
   it("shows stale data with its age and unavailable data with its reason", async () => {
     const { controller } = await campaign();
     const stale = render(controller, "issue-111").querySelector<HTMLElement>(".github-report")!;
-    expect(stale.textContent).toContain("Stale · observed 20 min ago");
-    expect(stale.textContent).toContain("Ready for review (as last observed)");
+    expect(stale.textContent).toContain("GitHub data may be out of date");
+    expect(stale.textContent).not.toContain("Updated");
     expect(render(controller, "issue-113").querySelector(".github-report")?.textContent).toContain("no linked pull request");
 
     const limited = await campaign({ delivery: fixtureDeliveryUnavailable() });
@@ -128,7 +142,8 @@ describe("GitHub-reported delivery contract", () => {
     expect(unavailable.textContent).toContain("about 15 min");
     expect(unavailable.textContent).not.toContain("rate_limited");
     const kept = render(limited.controller, "issue-103").querySelector<HTMLElement>(".github-report")!;
-    expect(kept.textContent).toContain("Stale · observed 10 min ago");
+    expect(kept.textContent).toContain("GitHub data may be out of date");
+    expect(kept.textContent).not.toContain("Last updated");
     expect(kept.textContent).not.toContain("Partial read");
     expect(limited.controller.state.error).toBeNull();
   });

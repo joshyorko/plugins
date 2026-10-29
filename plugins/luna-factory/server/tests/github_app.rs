@@ -106,6 +106,11 @@ struct World {
     hits: Vec<Hit>,
     jwt_claims: Vec<Value>,
     jwt_headers: Vec<Value>,
+    /// Repositories the installation can see (`GET /installation/repositories`),
+    /// in addition to REPO for installation lookups.
+    repositories: Vec<Value>,
+    /// Extra installations reported by `GET /app/installations`.
+    extra_installations: u32,
 }
 impl Default for World {
     fn default() -> Self {
@@ -128,8 +133,28 @@ impl Default for World {
             hits: vec![],
             jwt_claims: vec![],
             jwt_headers: vec![],
+            repositories: vec![],
+            extra_installations: 0,
         }
     }
+}
+/// A repository object with the fields GitHub returns in listings and token grants.
+fn repository(full_name: &str, id: u64, description: Option<&str>) -> Value {
+    let (_, name) = full_name.split_once('/').unwrap();
+    json!({"id":id,"node_id":format!("R_fixture{id}"),"name":name,"full_name":full_name,
+        "private":id.is_multiple_of(2),"default_branch":"main","description":description,"archived":false})
+}
+fn visible(world: &World, full_name: &str) -> Option<Value> {
+    world
+        .repositories
+        .iter()
+        .find(|r| {
+            r["full_name"]
+                .as_str()
+                .unwrap()
+                .eq_ignore_ascii_case(full_name)
+        })
+        .cloned()
 }
 type Shared = Arc<Mutex<World>>;
 
@@ -241,7 +266,8 @@ async fn handle(
             if !verify_jwt(&mut world, bearer) {
                 return unauthorized();
             }
-            if format!("{owner}/{name}").to_ascii_lowercase() != REPO {
+            let full = format!("{owner}/{name}");
+            if full.to_ascii_lowercase() != REPO && visible(&world, &full).is_none() {
                 return reply(StatusCode::NOT_FOUND, &[], json!({"message":"Not Found"}));
             }
             reply(
@@ -264,15 +290,73 @@ async fn handle(
                 .clone()
                 .unwrap_or_else(|| body["permissions"].clone());
             let expires = (now() as i64 + world.token_ttl).max(0) as u64;
-            let repositories = world.token_repositories.clone().unwrap_or_else(|| {
-                json!([{"id":REPO_ID,"node_id":REPO_NODE,"name":"plugins","full_name":REPO,"private":false}])
+            let requested = body["repositories"][0].as_str().map(str::to_owned);
+            let narrowed = requested.as_ref().and_then(|name| {
+                world
+                    .repositories
+                    .iter()
+                    .find(|r| r["name"].as_str().unwrap().eq_ignore_ascii_case(name))
+                    .cloned()
             });
+            let repositories = world.token_repositories.clone().unwrap_or_else(|| match narrowed {
+                Some(found) => json!([found]),
+                None => json!([{"id":REPO_ID,"node_id":REPO_NODE,"name":"plugins","full_name":REPO,"private":false}]),
+            });
+            let mut granted = json!({"token":format!("{TOKEN_PREFIX}{:04}", world.mints),"expires_at":iso(expires),
+                "permissions":permissions,"repository_selection":"selected"});
+            // An unnarrowed (listing) token reports no repository list.
+            if requested.is_some() || world.token_repositories.is_some() {
+                granted["repositories"] = repositories;
+            }
+            reply(StatusCode::CREATED, &[], granted)
+        }
+        ("GET", ["app", "installations", id]) => {
+            if !verify_jwt(&mut world, bearer) {
+                return unauthorized();
+            }
+            if id.parse::<u64>().ok() != Some(world.installation_id) {
+                return reply(StatusCode::NOT_FOUND, &[], json!({"message":"Not Found"}));
+            }
             reply(
-                StatusCode::CREATED,
+                StatusCode::OK,
                 &[],
-                json!({"token":format!("{TOKEN_PREFIX}{:04}", world.mints),"expires_at":iso(expires),
-                    "permissions":permissions,"repository_selection":"selected",
-                    "repositories":repositories}),
+                json!({"id":world.installation_id,"app_id":APP_ID,"repository_selection":"all",
+                    "permissions":world.installation_permissions,"account":{"login":"joshyorko"}}),
+            )
+        }
+        ("GET", ["app", "installations"]) => {
+            if !verify_jwt(&mut world, bearer) {
+                return unauthorized();
+            }
+            let mut all = vec![json!({"id":world.installation_id,"app_id":APP_ID,
+                "repository_selection":"all","permissions":world.installation_permissions})];
+            for extra in 0..world.extra_installations {
+                all.push(
+                    json!({"id":900 + extra,"app_id":APP_ID,"permissions":{"metadata":"read"}}),
+                );
+            }
+            reply(StatusCode::OK, &[], json!(all))
+        }
+        ("GET", ["installation", "repositories"]) => {
+            if !token_ok {
+                return unauthorized();
+            }
+            let per_page = query_value(&query, "per_page").unwrap_or(30);
+            let page = query_value(&query, "page").unwrap_or(1).max(1);
+            let all = &world.repositories;
+            let start = ((page - 1) * per_page).min(all.len());
+            let end = (start + per_page).min(all.len());
+            let mut headers = vec![];
+            if end < all.len() {
+                headers.push((
+                    "link",
+                    format!("<https://api.github.com/installation/repositories?per_page={per_page}&page={}>; rel=\"next\"", page + 1),
+                ));
+            }
+            reply(
+                StatusCode::OK,
+                &headers,
+                json!({"total_count":all.len(),"repositories":all[start..end]}),
             )
         }
         ("GET", ["repos", _, _, "issues", number, rest @ ..]) => {
@@ -1753,4 +1837,1173 @@ async fn credential_echoing_error_bodies_and_persisted_state_stay_clean() {
         scanned += 1;
     }
     assert!(scanned > 0, "the ledger was written");
+}
+
+// ----------------------------------------------------------------------------
+// Workspaces: pick a GitHub repository or start a new local one.
+
+const WIDGET: &str = "joshyorko/widget";
+
+fn workspace_world(count: u64) -> World {
+    let mut world = World {
+        installation_permissions: json!({"actions":"read","checks":"read","contents":"read",
+            "issues":"read","metadata":"read","pull_requests":"read","statuses":"read"}),
+        ..World::default()
+    };
+    world
+        .repositories
+        .push(repository(REPO, REPO_ID, Some("Plugins")));
+    world
+        .repositories
+        .push(repository(WIDGET, 7, Some("A widget")));
+    world
+        .repositories
+        .push(repository("other-owner/foreign", 8, None));
+    for index in 0..count {
+        world.repositories.push(repository(
+            &format!("joshyorko/repo-{index:03}"),
+            100 + index,
+            None,
+        ));
+    }
+    world
+}
+/// GitHub App plus an enabled workspace root under the harness temp directory.
+async fn workspace_harness(
+    world: World,
+    configure: impl FnOnce(&mut Value, &str),
+) -> (Harness, PathBuf) {
+    let h = harness(world, |config, base| {
+        config["github_app"]["allowed_repositories"] = json!(["joshyorko/*"]);
+        let root = PathBuf::from(config["database"].as_str().unwrap())
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("workspaces");
+        std::fs::create_dir(&root).unwrap();
+        config["workspaces"] = json!({"root":root,"connect_github":true,"create_local":true});
+        configure(config, base);
+    })
+    .await;
+    let root = h._temp.path().join("workspaces");
+    // Bare repositories stand in for GitHub's git endpoint: <fixtures>/<owner>/<repo>.git.
+    let fixtures = h._temp.path().join("git-fixtures");
+    for name in ["widget", "gadget"] {
+        let work = h._temp.path().join(format!("work-{name}"));
+        std::fs::create_dir_all(&work).unwrap();
+        git(&work, &["init", "-q", "-b", "main"]);
+        std::fs::write(work.join("README.md"), format!("# {name}\n")).unwrap();
+        git(&work, &["add", "README.md"]);
+        git(
+            &work,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
+        );
+        let bare = fixtures.join("joshyorko").join(format!("{name}.git"));
+        std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+        git(
+            h._temp.path(),
+            &[
+                "clone",
+                "-q",
+                "--bare",
+                work.to_str().unwrap(),
+                bare.to_str().unwrap(),
+            ],
+        );
+    }
+    // Accepted only in debug builds with a loopback API base (absent when unconfigured).
+    let configured = h
+        .server
+        .factory
+        .github_reader()
+        .unavailable_reason()
+        .is_none();
+    assert_eq!(
+        h.server
+            .factory
+            .github_reader()
+            .use_fixture_clone_source(fixtures),
+        configured
+    );
+    (h, root)
+}
+async fn invoke_err(h: &Harness, name: &str, args: Value) -> String {
+    let error = h.server.invoke(name, args).await.unwrap_err().to_string();
+    assert!(
+        !error.contains(TOKEN_PREFIX) && !error.contains('/'),
+        "{error}"
+    );
+    error
+}
+fn git_out(root: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{args:?}");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+fn ledger_rows(h: &Harness, table: &str) -> i64 {
+    let connection = rusqlite::Connection::open(h._temp.path().join("state/runs.sqlite")).unwrap();
+    connection
+        .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+}
+fn graph_request(repository: &str, key: &str) -> Value {
+    json!({"repository":repository,"objective":"Plan it","acceptance":["It is planned"],"non_goals":[],
+        "finish":"local_candidate","profile":"default","capacity":1,"repair_attempts":0,"wall_seconds":60,
+        "idempotency_key":key})
+}
+
+#[tokio::test]
+async fn installation_repositories_are_listed_paginated_and_marked_connected() {
+    let mut world = workspace_world(120);
+    world.repositories[1]["description"] = json!(format!("Uses ghp_{} somewhere", "x".repeat(20)));
+    world.repositories[3]["description"] = json!("d".repeat(900));
+    let (h, _) = workspace_harness(world, |_, _| {}).await;
+    let first = invoke(&h, "list_factory_github_repositories", json!({})).await;
+    assert_eq!(
+        (
+            first["available"].clone(),
+            first["configured"].clone(),
+            first["reason"].clone()
+        ),
+        (json!(true), json!(true), Value::Null)
+    );
+    assert_eq!(first["reported_by"], "github");
+    assert_eq!(first["provenance"], "github_app");
+    let repositories = first["repositories"].as_array().unwrap();
+    assert_eq!(repositories.len(), 100);
+    assert_eq!(first["next_cursor"], "page:2");
+    let by_name = |list: &[Value], name: &str| {
+        list.iter()
+            .find(|r| r["full_name"] == name)
+            .cloned()
+            .unwrap()
+    };
+    // The harness's approved alias `test` has a remote naming joshyorko/plugins.
+    let plugins = by_name(repositories, REPO);
+    assert_eq!(plugins["connected_alias"], "test");
+    assert_eq!(
+        (
+            plugins["connectable"].clone(),
+            plugins["blocked_reason"].clone()
+        ),
+        (json!(false), Value::Null)
+    );
+    let widget = by_name(repositories, WIDGET);
+    assert_eq!(
+        (
+            widget["connectable"].clone(),
+            widget["connected_alias"].clone()
+        ),
+        (json!(true), Value::Null)
+    );
+    assert_eq!(
+        widget["description"],
+        Value::Null,
+        "credential-like text is withheld"
+    );
+    assert_eq!(widget["default_branch"], "main");
+    let foreign = by_name(repositories, "other-owner/foreign");
+    assert_eq!(
+        (
+            foreign["connectable"].clone(),
+            foreign["blocked_reason"].clone()
+        ),
+        (
+            json!(false),
+            json!("repository_not_in_github_app_allowlist")
+        )
+    );
+    assert_eq!(
+        by_name(repositories, "joshyorko/repo-000")["description"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count(),
+        280
+    );
+    let second = invoke(
+        &h,
+        "list_factory_github_repositories",
+        json!({"cursor":first["next_cursor"]}),
+    )
+    .await;
+    assert_eq!(second["repositories"].as_array().unwrap().len(), 23);
+    assert_eq!(second["next_cursor"], Value::Null);
+    // The listing token is metadata-only and minted once; the pinned installation is used.
+    let mints = h.mints();
+    assert_eq!(mints.len(), 1);
+    assert_eq!(mints[0].body, json!({"permissions":{"metadata":"read"}}));
+    let listing: Vec<_> = h
+        .hits()
+        .into_iter()
+        .filter(|hit| hit.path == "/installation/repositories")
+        .collect();
+    assert_eq!(listing.len(), 2);
+    assert!(listing[1].query.contains("page=2") && listing[1].query.contains("per_page=100"));
+    assert!(
+        h.hits()
+            .iter()
+            .any(|hit| hit.path == format!("/app/installations/{INSTALLATION}"))
+    );
+    for bad in [
+        "page:1",
+        "page:99",
+        "https://api.github.com/installation/repositories?page=2",
+    ] {
+        assert_eq!(
+            invoke_err(
+                &h,
+                "list_factory_github_repositories",
+                json!({"cursor":bad})
+            )
+            .await,
+            "invalid_github_repository_cursor"
+        );
+    }
+    // Listing writes nothing.
+    assert_eq!(ledger_rows(&h, "workspace_repositories"), 0);
+    assert_eq!(ledger_rows(&h, "runs"), 0);
+    assert!(
+        std::fs::read_dir(h._temp.path().join("workspaces"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn unpinned_listing_needs_exactly_one_installation_and_contents_read_to_connect() {
+    let mut world = workspace_world(0);
+    world.extra_installations = 1;
+    let (h, _) = workspace_harness(world, |config, _| {
+        config["github_app"]
+            .as_object_mut()
+            .unwrap()
+            .remove("installation_id");
+    })
+    .await;
+    let ambiguous = invoke(&h, "list_factory_github_repositories", json!({})).await;
+    assert_eq!(
+        (ambiguous["available"].clone(), ambiguous["reason"].clone()),
+        (json!(false), json!("github_installation_ambiguous"))
+    );
+    assert!(h.mints().is_empty());
+
+    // Without contents: read nothing is connectable and no clone token is minted.
+    let mut world = workspace_world(0);
+    world.installation_permissions = json!({"issues":"read","metadata":"read"});
+    let (h, root) = workspace_harness(world, |_, _| {}).await;
+    let listed = invoke(&h, "list_factory_github_repositories", json!({})).await;
+    let widget = listed["repositories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["full_name"] == WIDGET)
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (
+            widget["connectable"].clone(),
+            widget["blocked_reason"].clone()
+        ),
+        (json!(false), json!("github_contents_permission_missing"))
+    );
+    assert_eq!(
+        invoke_err(
+            &h,
+            "connect_factory_github_repository",
+            json!({"repository":WIDGET,"idempotency_key":"k"})
+        )
+        .await,
+        "github_contents_permission_missing"
+    );
+    assert!(
+        !h.mints()
+            .iter()
+            .any(|m| m.body["permissions"].get("contents").is_some())
+    );
+    assert!(std::fs::read_dir(&root).unwrap().next().is_none());
+
+    // contents: read keeps the read-only installation check passing; any write fails it.
+    let h = harness(parent_world(), |_, _| {}).await;
+    h.world.lock().unwrap().installation_permissions =
+        json!({"contents":"read","issues":"read","metadata":"read"});
+    assert_eq!(inspect(&h, REPO, 67).await["status"], "complete");
+    let (h, _) = workspace_harness(workspace_world(0), |_, _| {}).await;
+    h.world.lock().unwrap().installation_permissions =
+        json!({"contents":"write","metadata":"read"});
+    assert_eq!(
+        invoke_err(
+            &h,
+            "connect_factory_github_repository",
+            json!({"repository":WIDGET,"idempotency_key":"k"})
+        )
+        .await,
+        "github_app_not_read_only"
+    );
+    assert!(h.mints().is_empty());
+}
+
+#[tokio::test]
+async fn allowlist_and_owner_wildcards_gate_connects_before_any_request() {
+    let (h, root) = workspace_harness(workspace_world(0), |config, _| {
+        config["github_app"]["allowed_repositories"] = json!([REPO, "JoshYorko/Gadget"]);
+    })
+    .await;
+    for repository in [WIDGET, "other-owner/foreign"] {
+        assert_eq!(
+            invoke_err(
+                &h,
+                "connect_factory_github_repository",
+                json!({"repository":repository,"idempotency_key":"k"})
+            )
+            .await,
+            "repository_not_in_github_app_allowlist"
+        );
+    }
+    assert!(h.hits().is_empty(), "no request may precede the allowlist");
+    assert!(std::fs::read_dir(&root).unwrap().next().is_none());
+    for bad in [
+        json!({"repository":"../etc","idempotency_key":"k"}),
+        json!({"repository":WIDGET,"idempotency_key":""}),
+        json!({"repository":WIDGET,"idempotency_key":"k","root":"/tmp"}),
+    ] {
+        assert!(
+            h.server
+                .invoke("connect_factory_github_repository", bad.clone())
+                .await
+                .is_err(),
+            "{bad}"
+        );
+    }
+    // An owner wildcard admits that owner's repositories and nobody else's.
+    let (h, _) = workspace_harness(workspace_world(0), |_, _| {}).await;
+    let connected = invoke(
+        &h,
+        "connect_factory_github_repository",
+        json!({"repository":WIDGET,"idempotency_key":"k"}),
+    )
+    .await;
+    assert_eq!(connected["status"], "connected");
+    assert_eq!(
+        invoke_err(
+            &h,
+            "connect_factory_github_repository",
+            json!({"repository":"other-owner/foreign","idempotency_key":"k2"})
+        )
+        .await,
+        "repository_not_in_github_app_allowlist"
+    );
+}
+
+#[tokio::test]
+async fn disabled_workspace_flags_answer_typed_reasons_and_do_nothing() {
+    let (h, root) = workspace_harness(workspace_world(0), |config, _| {
+        config["workspaces"]["connect_github"] = json!(false);
+        config["workspaces"]["create_local"] = json!(false);
+    })
+    .await;
+    let capabilities = invoke(&h, "get_factory_capabilities", json!({})).await;
+    assert_eq!(
+        capabilities["workspaces"],
+        json!({"connect_github":false,"create_local":false})
+    );
+    assert!(!capabilities.to_string().contains(root.to_str().unwrap()));
+    let listed = invoke(&h, "list_factory_github_repositories", json!({})).await;
+    assert_eq!(
+        (
+            listed["configured"].clone(),
+            listed["available"].clone(),
+            listed["reason"].clone()
+        ),
+        (
+            json!(true),
+            json!(false),
+            json!("github_connect_not_enabled")
+        )
+    );
+    assert_eq!(
+        invoke_err(
+            &h,
+            "connect_factory_github_repository",
+            json!({"repository":WIDGET,"idempotency_key":"k"})
+        )
+        .await,
+        "github_connect_not_enabled"
+    );
+    assert_eq!(
+        invoke_err(
+            &h,
+            "create_factory_local_repository",
+            json!({"name":"my-app","idempotency_key":"k"})
+        )
+        .await,
+        "local_create_not_enabled"
+    );
+    assert!(h.hits().is_empty());
+    assert!(std::fs::read_dir(&root).unwrap().next().is_none());
+    assert_eq!(ledger_rows(&h, "workspace_repositories"), 0);
+
+    // No workspaces block at all: the same reasons, and capabilities report both off.
+    let h = harness(workspace_world(0), |_, _| {}).await;
+    assert_eq!(
+        invoke(&h, "get_factory_capabilities", json!({})).await["workspaces"],
+        json!({"connect_github":false,"create_local":false})
+    );
+    assert_eq!(
+        invoke_err(
+            &h,
+            "create_factory_local_repository",
+            json!({"name":"my-app","idempotency_key":"k"})
+        )
+        .await,
+        "local_create_not_enabled"
+    );
+    // A disabled connect flag is reported without inspecting an absent App key.
+    let (h, _) = workspace_harness(workspace_world(0), |config, _| {
+        config.as_object_mut().unwrap().remove("github_app");
+        config["workspaces"]["connect_github"] = json!(false);
+    })
+    .await;
+    let listed = invoke(&h, "list_factory_github_repositories", json!({})).await;
+    assert_eq!(
+        (listed["configured"].clone(), listed["reason"].clone()),
+        (json!(false), json!("github_connect_not_enabled"))
+    );
+    assert_eq!(
+        invoke_err(
+            &h,
+            "connect_factory_github_repository",
+            json!({"repository":WIDGET,"idempotency_key":"k"})
+        )
+        .await,
+        "github_connect_not_enabled"
+    );
+    assert!(h.hits().is_empty());
+}
+
+#[tokio::test]
+async fn connecting_clones_with_a_narrowed_token_and_leaves_no_credential_behind() {
+    let (h, root) = workspace_harness(workspace_world(0), |_, _| {}).await;
+    let connected = invoke(
+        &h,
+        "connect_factory_github_repository",
+        json!({"repository":"JoshYorko/Widget","idempotency_key":"connect-1"}),
+    )
+    .await;
+    assert_eq!(connected["status"], "connected");
+    assert_eq!(connected["alias"], "widget");
+    assert_eq!(connected["full_name"], WIDGET);
+    assert_eq!(connected["default_branch"], "main");
+    assert_eq!(connected["provenance"], "github_app");
+    assert_eq!(connected["repository"]["alias"], "widget");
+    let identity = connected["repository"]["identity"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(identity.len(), 64);
+    // Exactly one clone token: one repository, contents: read only.
+    let mints = h.mints();
+    assert_eq!(mints.len(), 1);
+    assert_eq!(
+        mints[0].body,
+        json!({"repositories":["Widget"],"permissions":{"contents":"read"}})
+    );
+    // The clone is shallow, its remote is the plain HTTPS URL and no credential persists.
+    let clone = root.join("joshyorko__widget");
+    assert_eq!(
+        std::fs::read_to_string(clone.join("README.md")).unwrap(),
+        "# widget\n"
+    );
+    assert_eq!(
+        git_out(&clone, &["config", "--get", "remote.origin.url"]),
+        "https://github.com/joshyorko/widget.git"
+    );
+    assert_eq!(
+        git_out(&clone, &["rev-parse", "--is-shallow-repository"]),
+        "true"
+    );
+    assert_eq!(git_out(&clone, &["branch", "--show-current"]), "main");
+    let git_config = std::fs::read_to_string(clone.join(".git/config")).unwrap();
+    assert!(!git_config.contains(TOKEN_PREFIX));
+    assert!(!git_config.to_ascii_lowercase().contains("extraheader"));
+    assert!(!git_config.to_ascii_lowercase().contains("authorization"));
+    let names: Vec<String> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["joshyorko__widget"],
+        "no staging directory is left"
+    );
+
+    // The alias is approved immediately, with provenance, wherever approved repositories appear.
+    let expected = json!({"alias":"widget","max_finish":"local_candidate","provenance":"github_app_installation"});
+    let capabilities = invoke(&h, "get_factory_capabilities", json!({})).await;
+    assert!(
+        capabilities["repositories"]
+            .as_array()
+            .unwrap()
+            .contains(&expected)
+    );
+    assert_eq!(
+        capabilities["workspaces"],
+        json!({"connect_github":true,"create_local":true})
+    );
+    let workbench = invoke(&h, "open_factory", json!({})).await;
+    assert!(
+        workbench["capabilities"]["repositories"]
+            .as_array()
+            .unwrap()
+            .contains(&expected)
+    );
+    assert!(!workbench.to_string().contains(root.to_str().unwrap()));
+    let listed = invoke(&h, "list_factory_github_repositories", json!({})).await;
+    let widget = listed["repositories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["full_name"] == WIDGET)
+        .unwrap()
+        .clone();
+    assert_eq!(widget["connected_alias"], "widget");
+    assert_eq!(widget["connectable"], false);
+
+    // Connecting starts nothing: no run, claim or receipt.
+    assert_eq!(ledger_rows(&h, "runs"), 0);
+    assert_eq!(ledger_rows(&h, "claims"), 0);
+    assert_eq!(ledger_rows(&h, "receipts"), 0);
+    assert_eq!(
+        invoke(&h, "list_factory_runs", json!({})).await["runs"],
+        json!([])
+    );
+
+    // Exact replay: the same result with no request at all.
+    let before = h.hits().len();
+    let replay = invoke(
+        &h,
+        "connect_factory_github_repository",
+        json!({"repository":"JoshYorko/Widget","idempotency_key":"connect-1"}),
+    )
+    .await;
+    assert_eq!(replay, connected);
+    assert_eq!(h.hits().len(), before);
+    let again = invoke(
+        &h,
+        "connect_factory_github_repository",
+        json!({"repository":WIDGET,"idempotency_key":"connect-2"}),
+    )
+    .await;
+    assert_eq!(again["status"], "already_connected");
+    assert_eq!(again["repository"], connected["repository"]);
+    assert_eq!(h.hits().len(), before);
+    assert_eq!(
+        invoke_err(
+            &h,
+            "connect_factory_github_repository",
+            json!({"repository":"joshyorko/gadget","idempotency_key":"connect-1"})
+        )
+        .await,
+        "idempotency_conflict"
+    );
+    // A repository already approved through the operator config is already connected.
+    let existing = invoke(
+        &h,
+        "connect_factory_github_repository",
+        json!({"repository":REPO,"idempotency_key":"connect-3"}),
+    )
+    .await;
+    assert_eq!(
+        (existing["status"].clone(), existing["alias"].clone()),
+        (json!("already_connected"), json!("test"))
+    );
+    assert_eq!(
+        invoke_err(
+            &h,
+            "connect_factory_github_repository",
+            json!({"repository":WIDGET,"idempotency_key":"connect-3"}),
+        )
+        .await,
+        "idempotency_conflict"
+    );
+    assert_eq!(h.hits().len(), before);
+
+    // The new alias plans like any approved repository, bound to the same identity.
+    let graph = invoke(&h, "create_factory_graph", graph_request("widget", "g1")).await;
+    assert_eq!(graph["graph"]["repository"]["alias"], "widget");
+    assert_eq!(graph["graph"]["repository"]["identity"], identity);
+    assert_eq!(graph["graph"]["planning_only"], true);
+    assert_eq!(graph["graph"]["claim"]["held"], false);
+    assert_eq!(ledger_rows(&h, "claims"), 0);
+    assert_eq!(ledger_rows(&h, "workspace_repositories"), 1);
+    assert_eq!(ledger_rows(&h, "repository_registrations"), 0);
+}
+
+#[tokio::test]
+async fn replacing_workspace_root_during_token_mint_keeps_clone_in_pinned_root() {
+    let (h, root) = workspace_harness(workspace_world(0), |_, _| {}).await;
+    let moved = h._temp.path().join("workspaces-original");
+    let elsewhere = h._temp.path().join("replacement");
+    std::fs::create_dir(&elsewhere).unwrap();
+    let root_for_hook = root.clone();
+    let moved_for_hook = moved.clone();
+    let elsewhere_for_hook = elsewhere.clone();
+    assert!(
+        h.server
+            .factory
+            .github_reader()
+            .use_clone_hook(std::sync::Arc::new(move || {
+                std::fs::rename(&root_for_hook, &moved_for_hook).unwrap();
+                std::os::unix::fs::symlink(&elsewhere_for_hook, &root_for_hook).unwrap();
+            }))
+    );
+    let root_for_restore = root.clone();
+    let moved_for_restore = moved.clone();
+    assert!(
+        h.server
+            .factory
+            .github_reader()
+            .use_clone_completion_hook(std::sync::Arc::new(move || {
+                std::fs::remove_file(&root_for_restore).unwrap();
+                std::fs::rename(&moved_for_restore, &root_for_restore).unwrap();
+            }))
+    );
+
+    let connected = invoke(
+        &h,
+        "connect_factory_github_repository",
+        json!({"repository":"joshyorko/widget","idempotency_key":"root-swap"}),
+    )
+    .await;
+    assert_eq!(connected["status"], "connected");
+    assert!(root.join("joshyorko__widget/README.md").is_file());
+    assert!(!moved.exists());
+    assert!(!elsewhere.join("joshyorko__widget").exists());
+    assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn replacing_workspace_ancestor_during_token_mint_keeps_clone_fd_anchored() {
+    let (h, default_root) = workspace_harness(workspace_world(0), |config, _| {
+        let base = PathBuf::from(config["workspaces"]["root"].as_str().unwrap());
+        let parent = base.parent().unwrap().join("nested-workspaces");
+        std::fs::create_dir(&parent).unwrap();
+        let root = parent.join("root");
+        std::fs::create_dir(&root).unwrap();
+        config["workspaces"]["root"] = json!(root);
+    })
+    .await;
+    let parent = default_root.parent().unwrap().join("nested-workspaces");
+    let root = parent.join("root");
+    let moved = parent.with_file_name("nested-workspaces-original");
+    let replacement = parent.with_file_name("nested-workspaces-replacement");
+    std::fs::create_dir(&replacement).unwrap();
+    let parent_hook = parent.clone();
+    let moved_hook = moved.clone();
+    let replacement_hook = replacement.clone();
+    assert!(
+        h.server
+            .factory
+            .github_reader()
+            .use_clone_hook(std::sync::Arc::new(move || {
+                std::fs::rename(&parent_hook, &moved_hook).unwrap();
+                std::os::unix::fs::symlink(&replacement_hook, &parent_hook).unwrap();
+            }))
+    );
+    let parent_restore = parent.clone();
+    let moved_restore = moved.clone();
+    assert!(
+        h.server
+            .factory
+            .github_reader()
+            .use_clone_completion_hook(std::sync::Arc::new(move || {
+                std::fs::remove_file(&parent_restore).unwrap();
+                std::fs::rename(&moved_restore, &parent_restore).unwrap();
+            }))
+    );
+
+    let connected = invoke(
+        &h,
+        "connect_factory_github_repository",
+        json!({"repository":"joshyorko/widget","idempotency_key":"ancestor-swap"}),
+    )
+    .await;
+    assert_eq!(connected["status"], "connected");
+    assert!(root.join("joshyorko__widget/README.md").is_file());
+    assert!(!replacement.join("root/joshyorko__widget").exists());
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+}
+
+#[tokio::test]
+async fn target_created_during_clone_is_never_replaced_or_deleted() {
+    let (h, root) = workspace_harness(workspace_world(0), |_, _| {}).await;
+    let target = root.join("joshyorko__widget");
+    let target_hook = target.clone();
+    assert!(
+        h.server
+            .factory
+            .github_reader()
+            .use_clone_hook(std::sync::Arc::new(move || {
+                std::fs::create_dir(&target_hook).unwrap();
+                std::fs::write(target_hook.join("operator-data.txt"), "keep").unwrap();
+            }))
+    );
+
+    assert_eq!(
+        invoke_err(
+            &h,
+            "connect_factory_github_repository",
+            json!({"repository":"joshyorko/widget","idempotency_key":"target-race"}),
+        )
+        .await,
+        "workspace_path_conflict"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("operator-data.txt")).unwrap(),
+        "keep"
+    );
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+    // The idempotency reservation stays pending after the concurrent target
+    // conflict; the target's operator data is left untouched for manual repair.
+    assert_eq!(ledger_rows(&h, "workspace_repositories"), 1);
+}
+
+#[tokio::test]
+#[cfg(debug_assertions)]
+async fn retry_recovers_a_repository_published_before_registration() {
+    let (h, root) = workspace_harness(workspace_world(0), |_, _| {}).await;
+    let interrupt_once = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let interrupt_hook = interrupt_once.clone();
+    assert!(
+        h.server
+            .factory
+            .interrupt_connect_after_publish_for_test(std::sync::Arc::new(move || {
+                interrupt_hook.swap(false, std::sync::atomic::Ordering::SeqCst)
+            }),)
+    );
+    let request = json!({"repository":"joshyorko/widget","idempotency_key":"recover-published"});
+
+    assert_eq!(
+        invoke_err(&h, "connect_factory_github_repository", request.clone()).await,
+        "workspace_publish_interrupted_for_test"
+    );
+    let target = root.join("joshyorko__widget");
+    assert!(target.join("README.md").is_file());
+    assert_eq!(ledger_rows(&h, "workspace_repositories"), 1);
+
+    let Harness {
+        _temp,
+        server,
+        world,
+        key_path,
+    } = h;
+    let config = server.factory.config.as_ref().clone();
+    let html = server.html.clone();
+    drop(server);
+    let h = Harness {
+        _temp,
+        server: McpServer {
+            factory: Factory::new(config).unwrap(),
+            html,
+        },
+        world,
+        key_path,
+    };
+
+    let recovered = invoke(&h, "connect_factory_github_repository", request).await;
+    assert_eq!(recovered["status"], "connected");
+    assert_eq!(recovered["alias"], "widget");
+    assert_eq!(ledger_rows(&h, "workspace_repositories"), 1);
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+}
+
+#[tokio::test]
+async fn aggregate_clone_size_checks_multiple_sub_limit_files_after_completion() {
+    let mut world = workspace_world(0);
+    world
+        .repositories
+        .push(repository("joshyorko/aggregate", 9, None));
+    let (h, root) = workspace_harness(world, |config, _| {
+        config["workspaces"]["max_clone_bytes"] = json!(1_048_576_u64);
+    })
+    .await;
+
+    let work = h._temp.path().join("work-aggregate");
+    std::fs::create_dir(&work).unwrap();
+    git(&work, &["init", "-q", "-b", "main"]);
+    std::fs::write(work.join("first.bin"), vec![0_u8; 700_000]).unwrap();
+    std::fs::write(work.join("second.bin"), vec![1_u8; 700_000]).unwrap();
+    git(&work, &["add", "first.bin", "second.bin"]);
+    git(
+        &work,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "aggregate fixture",
+        ],
+    );
+    let fixtures = h._temp.path().join("git-fixtures/joshyorko");
+    std::fs::create_dir_all(&fixtures).unwrap();
+    git(
+        h._temp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            work.to_str().unwrap(),
+            fixtures.join("aggregate.git").to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(
+        invoke_err(
+            &h,
+            "connect_factory_github_repository",
+            json!({"repository":"joshyorko/aggregate","idempotency_key":"aggregate-too-large"}),
+        )
+        .await,
+        "clone_too_large"
+    );
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn clone_file_limit_is_hard_and_failed_clone_cleans_staging() {
+    let mut world = workspace_world(0);
+    world
+        .repositories
+        .push(repository("joshyorko/oversized", 9, None));
+    let (h, root) = workspace_harness(world, |config, _| {
+        config["workspaces"]["max_clone_bytes"] = json!(1_048_576_u64);
+    })
+    .await;
+    let work = h._temp.path().join("work-oversized");
+    std::fs::create_dir(&work).unwrap();
+    git(&work, &["init", "-q", "-b", "main"]);
+    let mut state = 0x6d2b_79f5_u32;
+    // The file exceeds the cap by only one byte so the last write exercises the
+    // hard RLIMIT_FSIZE boundary independently of the 100 ms aggregate sampler.
+    let mut large = vec![0_u8; 1_048_577];
+    for byte in &mut large {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        *byte = state as u8;
+    }
+    std::fs::write(work.join("large.bin"), large).unwrap();
+    git(&work, &["add", "large.bin"]);
+    git(
+        &work,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "large fixture",
+        ],
+    );
+    let fixtures = h._temp.path().join("git-fixtures/joshyorko");
+    std::fs::create_dir_all(&fixtures).unwrap();
+    git(
+        h._temp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            work.to_str().unwrap(),
+            fixtures.join("oversized.git").to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(
+        invoke_err(
+            &h,
+            "connect_factory_github_repository",
+            json!({"repository":"joshyorko/oversized","idempotency_key":"too-large"}),
+        )
+        .await,
+        "clone_too_large"
+    );
+    assert_eq!(
+        std::fs::read_dir(&root).unwrap().count(),
+        0,
+        "staging is removed"
+    );
+}
+
+#[tokio::test]
+async fn existing_workspace_paths_conflict_unless_they_are_the_same_repository() {
+    let (h, root) = workspace_harness(workspace_world(0), |_, _| {}).await;
+    h.world
+        .lock()
+        .unwrap()
+        .repositories
+        .push(repository("joshyorko/gadget", 9, None));
+    // A foreign directory at the target is refused and left untouched.
+    let occupied = root.join("joshyorko__widget");
+    std::fs::create_dir(&occupied).unwrap();
+    std::fs::write(occupied.join("notes.txt"), "mine").unwrap();
+    assert_eq!(
+        invoke_err(
+            &h,
+            "connect_factory_github_repository",
+            json!({"repository":WIDGET,"idempotency_key":"k1"})
+        )
+        .await,
+        "workspace_path_conflict"
+    );
+    assert_eq!(
+        std::fs::read_to_string(occupied.join("notes.txt")).unwrap(),
+        "mine"
+    );
+    assert!(
+        h.mints().is_empty(),
+        "no token is minted for a conflicting path"
+    );
+    // A symlink at the target is refused too.
+    std::os::unix::fs::symlink(h._temp.path(), root.join("my-app")).unwrap();
+    assert_eq!(
+        invoke_err(
+            &h,
+            "create_factory_local_repository",
+            json!({"name":"my-app","idempotency_key":"k2"})
+        )
+        .await,
+        "workspace_path_conflict"
+    );
+    // A matching origin does not prove Luna created or controls a directory.
+    let adopted = root.join("joshyorko__gadget");
+    std::fs::create_dir(&adopted).unwrap();
+    git(&adopted, &["init", "-q"]);
+    git(
+        &adopted,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "existing",
+        ],
+    );
+    git(
+        &adopted,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/joshyorko/gadget.git",
+        ],
+    );
+    git(&adopted, &["config", "core.fsmonitor", "true"]);
+    std::fs::write(adopted.join(".git/hooks/pre-commit"), "#!/bin/sh\nexit 1\n").unwrap();
+    assert_eq!(
+        invoke_err(
+            &h,
+            "connect_factory_github_repository",
+            json!({"repository":"joshyorko/gadget","idempotency_key":"k3"}),
+        )
+        .await,
+        "workspace_path_conflict"
+    );
+    assert!(h.mints().is_empty());
+    let capabilities = invoke(&h, "get_factory_capabilities", json!({})).await;
+    let aliases: Vec<_> = capabilities["repositories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["alias"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(aliases, vec!["test"]);
+    assert_eq!(ledger_rows(&h, "runs"), 0);
+}
+
+#[tokio::test]
+async fn local_repositories_are_created_replayed_and_approved_without_github() {
+    let (h, root) = workspace_harness(workspace_world(0), |_, _| {}).await;
+    let created = invoke(
+        &h,
+        "create_factory_local_repository",
+        json!({"name":"my.app","idempotency_key":"create-1"}),
+    )
+    .await;
+    assert_eq!(created["status"], "created");
+    assert_eq!(created["alias"], "my-app");
+    assert_eq!(created["repository"]["alias"], "my-app");
+    let identity = created["repository"]["identity"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(identity.len(), 64);
+    let repo = root.join("my.app");
+    assert_eq!(git_out(&repo, &["branch", "--show-current"]), "main");
+    assert_eq!(git_out(&repo, &["rev-list", "--count", "HEAD"]), "1");
+    assert_eq!(git_out(&repo, &["ls-tree", "-r", "HEAD"]), "");
+    assert_eq!(git_out(&repo, &["remote"]), "");
+    assert!(
+        h.hits().is_empty(),
+        "creating a local repository calls no GitHub API"
+    );
+
+    let replay = invoke(
+        &h,
+        "create_factory_local_repository",
+        json!({"name":"my.app","idempotency_key":"create-1"}),
+    )
+    .await;
+    assert_eq!(replay, created);
+    let again = invoke(
+        &h,
+        "create_factory_local_repository",
+        json!({"name":"my.app","idempotency_key":"create-2"}),
+    )
+    .await;
+    assert_eq!(again["status"], "already_exists");
+    assert_eq!(again["repository"], created["repository"]);
+    assert_eq!(
+        invoke_err(
+            &h,
+            "create_factory_local_repository",
+            json!({"name":"other","idempotency_key":"create-2"}),
+        )
+        .await,
+        "idempotency_conflict"
+    );
+    assert_eq!(git_out(&repo, &["rev-list", "--count", "HEAD"]), "1");
+    assert_eq!(
+        invoke_err(
+            &h,
+            "create_factory_local_repository",
+            json!({"name":"other","idempotency_key":"create-1"})
+        )
+        .await,
+        "idempotency_conflict"
+    );
+    for bad in ["My-App", "-x", ".hidden", "a/b", ""] {
+        assert!(
+            h.server
+                .invoke(
+                    "create_factory_local_repository",
+                    json!({"name":bad,"idempotency_key":"create-9"})
+                )
+                .await
+                .is_err(),
+            "{bad}"
+        );
+    }
+    // An alias already taken (here by the operator's `test`) is refused cleanly.
+    assert_eq!(
+        invoke_err(
+            &h,
+            "create_factory_local_repository",
+            json!({"name":"test","idempotency_key":"create-3"})
+        )
+        .await,
+        "repository_alias_conflict"
+    );
+    assert!(!root.join("test").exists());
+
+    let capabilities = invoke(&h, "get_factory_capabilities", json!({})).await;
+    assert!(capabilities["repositories"].as_array().unwrap().contains(
+        &json!({"alias":"my-app","max_finish":"local_candidate","provenance":"local_create"})
+    ));
+    let graph = invoke(&h, "create_factory_graph", graph_request("my-app", "g1")).await;
+    assert_eq!(graph["graph"]["repository"]["identity"], identity);
+    let campaign = invoke(&h, "create_factory_campaign", json!({
+        "repository":"my-app","parent":{"forge":{"provider":"local","repository":"local/my-app","number":1},"revision":"r1"},
+        "title":"First","objective":"Plan it","acceptance":["It is planned"],"non_goals":[],
+        "finish":"local_candidate","profile":"default","idempotency_key":"c1"
+    })).await;
+    assert_eq!(campaign["campaign"]["repository"]["alias"], "my-app");
+    assert_eq!(campaign["campaign"]["repository"]["identity"], identity);
+    assert_eq!(ledger_rows(&h, "claims"), 0);
+    assert!(h.hits().is_empty());
+}
+
+#[tokio::test]
+async fn workspace_approval_follows_the_operator_flag_and_survives_restart() {
+    let (h, root) = workspace_harness(workspace_world(0), |_, _| {}).await;
+    invoke(
+        &h,
+        "create_factory_local_repository",
+        json!({"name":"keep","idempotency_key":"k"}),
+    )
+    .await;
+    let config_path = h._temp.path().join("state/runs.sqlite");
+    let mut config = json!({
+        "listen":"127.0.0.1:8787","database":config_path,
+        "codex_binary":"/absent-codex-github-fixture","skill_path":h._temp.path().join("SKILL.md"),
+        "repositories":{},"profiles":{"default":{"effort":"low"}},
+        "limits":{"capacity":2,"repair_attempts":1,"wall_seconds":600},
+        "workspaces":{"root":root,"connect_github":false,"create_local":true}
+    });
+    let Harness {
+        _temp: temp,
+        server,
+        ..
+    } = h;
+    drop(server);
+    let restarted = McpServer {
+        factory: Factory::new(serde_json::from_value(config.clone()).unwrap()).unwrap(),
+        html: Arc::new(String::new()),
+    };
+    let capabilities = restarted
+        .invoke("get_factory_capabilities", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(
+        capabilities["repositories"],
+        json!([{"alias":"keep","max_finish":"local_candidate","provenance":"local_create"}])
+    );
+    drop(restarted);
+    // Turning the flag off withdraws the approval; the directory is left alone.
+    config["workspaces"]["create_local"] = json!(false);
+    let revoked = McpServer {
+        factory: Factory::new(serde_json::from_value(config).unwrap()).unwrap(),
+        html: Arc::new(String::new()),
+    };
+    assert_eq!(
+        revoked
+            .invoke("get_factory_capabilities", json!({}))
+            .await
+            .unwrap()["repositories"],
+        json!([])
+    );
+    assert!(
+        revoked
+            .invoke("create_factory_graph", graph_request("keep", "g"))
+            .await
+            .is_err()
+    );
+    assert!(root.join("keep/.git").is_dir());
+    drop(temp);
 }

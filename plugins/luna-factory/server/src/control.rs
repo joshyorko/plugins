@@ -396,13 +396,14 @@ impl Control {
             );
         }
         for (id, task) in &self.tasks {
+            let title_limit = if id == "objective" { 8000 } else { 4000 };
             ensure!(
                 id == &task.id
                     && bounded_id(id)
                     && task.criteria.len() <= 32
                     && task.dependencies.len() <= 128
                     && task.dependencies.iter().all(|id| bounded_id(id))
-                    && task.title.len() <= 4000
+                    && task.title.len() <= title_limit
                     && task
                         .reason
                         .as_ref()
