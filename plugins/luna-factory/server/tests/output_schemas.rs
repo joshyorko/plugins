@@ -89,6 +89,31 @@ fn every_tool_has_a_concrete_valid_schema() {
         assert!(!validator(&tool.name).is_valid(&json!({})), "{}", tool.name);
     }
 }
+
+#[tokio::test]
+async fn update_task_proposal_response_matches_the_output_schema() {
+    let (_temp, server) = setup(true);
+    let graph = invoke(
+        &server,
+        "create_factory_graph",
+        json!({"repository":"test","objective":"Planning snapshot","acceptance":["A1: preserve the plan"],
+            "non_goals":[],"finish":"local_candidate","profile":"default","capacity":1,
+            "repair_attempts":0,"wall_seconds":60,"idempotency_key":"update-task-output"}),
+    )
+    .await;
+    let proposal = invoke(
+        &server,
+        "propose_factory_change",
+        json!({"run_id":graph["graph"]["run_id"],
+            "expected_revision":graph["graph"]["revision"],
+            "idempotency_key":"full-task-snapshot",
+            "change":{"kind":"update_task","node_id":"objective","title":"Updated planning title",
+                "dependencies":[],"target_id":null}}),
+    )
+    .await;
+    assert_eq!(proposal["proposal"]["change"]["kind"], "update_task");
+    assert!(proposal["proposal"]["change"]["target_id"].is_null());
+}
 #[tokio::test]
 async fn read_settings_onboarding_and_graph_responses_match_their_contracts() {
     let (_temp, server) = setup(true);

@@ -532,3 +532,33 @@ fn import_source_display_is_optional_bounded_and_github_only() {
         );
     }
 }
+
+#[test]
+fn update_task_schema_requires_a_full_snapshot_and_nullable_target() {
+    let tool = tool_definitions()
+        .into_iter()
+        .find(|tool| tool.name == "propose_factory_change")
+        .unwrap();
+    let schema = serde_json::to_value(tool.input_schema).unwrap();
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let request = json!({
+        "run_id":"run","expected_revision":1,"idempotency_key":"update",
+        "change":{"kind":"update_task","node_id":"objective","title":"New title",
+            "dependencies":["prerequisite"],"target_id":null}
+    });
+    assert!(validator.is_valid(&request));
+    let mut target = request.clone();
+    target["change"]["target_id"] = json!("native-local");
+    assert!(validator.is_valid(&target));
+
+    for field in ["node_id", "title", "dependencies", "target_id"] {
+        let mut missing = request.clone();
+        missing["change"].as_object_mut().unwrap().remove(field);
+        assert!(!validator.is_valid(&missing), "missing {field}");
+    }
+    for wrong in [json!(false), json!(123), json!({})] {
+        let mut invalid = request.clone();
+        invalid["change"]["target_id"] = wrong.clone();
+        assert!(!validator.is_valid(&invalid), "invalid target {wrong}");
+    }
+}

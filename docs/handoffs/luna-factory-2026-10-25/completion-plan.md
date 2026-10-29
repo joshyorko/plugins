@@ -11,16 +11,16 @@ uncommitted original checkout and its sync-conflict files.
 
 | Task | Required result | Owner | State |
 | --- | --- | --- | --- |
-| A1 | Compile, fail closed at every effect path, revoke active work, protect qualification writes and exact identities, persist clock high-water mark | qualification worker | final validation and review |
-| A2 | Descriptor-pinned clone/publication/recovery, cancellation of descendants, final size checks, documented aggregate limit | workspace security worker | focused tests and independent review passed; integrated checks pending |
+| A1 | Compile, fail closed at every effect path, revoke active work, protect qualification writes and exact identities, persist clock high-water mark | qualification worker | passed backend tests, independent review and exact-head CI at c179e60 |
+| A2 | Descriptor-pinned clone/publication/recovery, cancellation of descendants, final size checks, documented aggregate limit | workspace security worker | passed backend tests, independent review and exact-head CI at c179e60 |
 | A3 | Tokens, shell, header | UX worker, sequential slice 1 | running |
 | A4 | Plain language and banned-term regression | UX worker, sequential slice 2 | pending A3 |
 | A5 | Home composer and repository popover | UX worker, sequential slice 3 | pending A4 |
-| A6 | Plan, task drawer, edit/proposal review | UX worker, sequential slice 4 | pending A5 |
+| A6 | Plan, task drawer, edit/proposal review | UX worker plus bounded planning-contract worker | atomic update_task proposal required; implementation and regression coverage in progress |
 | A7 | Activity, inline card, states and mobile | UX worker, sequential slice 5 | pending A6 |
 | A8 | Package/docs/catalog parity and portable one-command deployment flow | parent | running |
 | A9 | Fresh independent review and exact-head source, test and CI evidence | parent and independent reviewer | pending integration |
-| A10 | Relaunch the validated Rust OCI service with retained state, verify MCP connection, keep execution denied without an operator grant | parent | immediate priority, pending backend checks/review only |
+| A10 | Relaunch the validated Rust OCI service with retained state, verify MCP connection, keep execution denied without an operator grant | parent | deployed c179e60, healthy; 32 tools, saved run preserved; Dakota daemon and current-host MCP verified; OMP connection verified |
 
 ## Execution and verification
 
@@ -72,3 +72,19 @@ synthetic screenshots do not prove deployed or live ChatGPT acceptance.
 
 Deferred: changes outside issue #102 and live execution qualification/ChatGPT
 acceptance without the required explicit operator authority.
+
+## Runtime checkpoint
+
+The c179e60 image is deployed and all hosted checks on that commit passed. Native
+initialization and catalog observation make zero inference calls. Trusted daemon
+identity remains unavailable in Codex 0.165.0; ordinary/canary execution and grant
+recording remain denied. OMP 18.13.3 connection testing passes but the client
+exposes the nine app-only tools too. These limits are not hidden by the deployment
+result. Unfinished UI changes are excluded from that image.
+
+Independent UI review found that the existing graph contract cannot save a task's
+title, dependencies and target in one proposal. Add a bounded full-snapshot
+`update_task` variant with the existing source, authority, DAG, active/unknown and
+revision guards. Test atomic rejection, replay and persistence. Preserve the old
+change variants. A saved new-variant proposal requires a compatible runtime;
+never restore an old database backup over newer planning records to roll back.

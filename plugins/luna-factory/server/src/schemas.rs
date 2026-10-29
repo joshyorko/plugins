@@ -186,7 +186,9 @@ fn definitions() -> Map<String, Value> {
     defs.insert("change".into(),json!({"oneOf":[
         object(json!({"kind":{"const":"import_candidates"},"nodes":array(reference("graph_candidate"),32)})),
         object(json!({"kind":{"const":"set_dependencies"},"node_id":id(),"dependencies":array(id(),128)})),
-        object(json!({"kind":{"const":"set_target"},"node_id":id(),"target_id":id()}))
+        object(json!({"kind":{"const":"set_target"},"node_id":id(),"target_id":id()})),
+        object(json!({"kind":{"const":"update_task"},"node_id":id(),"title":text(4000),
+            "dependencies":array(id(),128),"target_id":nullable(id())}))
     ]}));
     defs.insert("proposal".into(),object(json!({"id":id(),"idempotency_key":id(),"fingerprint":{"type":"string","pattern":"^[a-f0-9]{64}$"},"actor":{"const":"local_operator"},"base_revision":count(),"subject":id(),"change":reference("change"),"status":enumeration(&["proposed","applied"]),"applied_revision":nullable(count())})));
     defs.insert("graph_node".into(),json!({"allOf":[reference("task"),object(json!({"source":nullable(reference("source")),"target_preference":nullable(id())}))]}));

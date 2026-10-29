@@ -736,6 +736,12 @@ impl Factory {
             crate::graph::GraphChange::SetTarget { target_id, .. } => {
                 crate::backends::validate_preference(&self.effective_config().await?, target_id)?;
             }
+            crate::graph::GraphChange::UpdateTask {
+                target_id: Some(target_id),
+                ..
+            } => {
+                crate::backends::validate_preference(&self.effective_config().await?, target_id)?;
+            }
             _ => {}
         }
         Ok(())
