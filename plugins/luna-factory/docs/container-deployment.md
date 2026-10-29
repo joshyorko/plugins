@@ -104,6 +104,18 @@ Codex executable. Discover the current socket with `codex app-server daemon
 version` on the host. Resolve any socket symlink before choosing its mount;
 mounting the symlink's directory alone can leave its target unavailable.
 
+The new execution source supports an independent Linux kernel peer binding for
+Codex 0.165.0, which lacks initialize `serverInfo`. It requires Linux 6.5+ and a
+visible peer in the same PID namespace. The default private container PID namespace
+cannot attest the host daemon. This PR does not change that isolation. Review
+process placement separately before any real qualification.
+
+Declare `native_paths` for every execution path, including identity mappings,
+canonical skill and the read-only Factory subject CLI binary on the daemon host.
+Verify repository/worktree and Git common-directory visibility in both namespaces
+with the prepared [execution canary runbook](execution-canary-runbook.md). Mapping
+arithmetic in cloud tests is not Dakota host visibility proof.
+
 Mount only the required socket directory and executable. A read-only socket bind
 still grants access to the authenticated Codex protocol. Do not mount the whole
 Codex home or copy credentials. Qualification remains required for native effects;

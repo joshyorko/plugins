@@ -16,6 +16,10 @@ pub struct Config {
     pub native_transport: String,
     #[serde(default)]
     pub native_socket: Option<PathBuf>,
+    /// Operator-declared shared paths: Factory namespace root -> daemon namespace root.
+    /// Every daemon execution path requires an explicit mapping, including identity maps.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub native_paths: BTreeMap<PathBuf, PathBuf>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub cas_targets: BTreeMap<String, crate::cas::CasTarget>,
     /// Optional, operator-only: repository alias -> CAS target alias whose exact
@@ -93,6 +97,36 @@ fn default_transport() -> String {
     "stdio".into()
 }
 impl Config {
+    pub fn native_path(&self, path: &Path) -> Result<PathBuf> {
+        ensure!(
+            path.is_absolute()
+                && !path.components().any(|c| matches!(
+                    c,
+                    std::path::Component::ParentDir | std::path::Component::CurDir
+                )),
+            "invalid_native_execution_path"
+        );
+        if self.native_transport == "stdio" {
+            return Ok(path.to_path_buf());
+        }
+        let (local, native) = self
+            .native_paths
+            .iter()
+            .find(|(local, _)| path.starts_with(local))
+            .context("native_execution_path_unmapped")?;
+        let suffix = path.strip_prefix(local)?;
+        Ok(if suffix.as_os_str().is_empty() {
+            native.clone()
+        } else {
+            native.join(suffix)
+        })
+    }
+    pub fn validate_execution_paths(&self, root: &Path) -> Result<()> {
+        self.native_path(root)?;
+        self.native_path(&self.skill_path)?;
+        self.native_path(&std::env::current_exe()?)?;
+        Ok(())
+    }
     pub fn load(path: &Path) -> Result<Self> {
         let bytes = std::fs::read(path).context("read_operator_config")?;
         ensure!(bytes.len() <= 65536, "configuration_too_large");
@@ -135,6 +169,32 @@ impl Config {
             ensure!(
                 socket.is_absolute() && self.native_transport == "existing_daemon",
                 "invalid_native_socket"
+            );
+        }
+        ensure!(
+            self.native_paths.len() <= 16,
+            "too_many_native_path_mappings"
+        );
+        for (local, native) in &self.native_paths {
+            for path in [local, native] {
+                ensure!(
+                    path.is_absolute()
+                        && path.parent().is_some()
+                        && !path.components().any(|c| matches!(
+                            c,
+                            std::path::Component::ParentDir | std::path::Component::CurDir
+                        )),
+                    "invalid_native_path_mapping"
+                );
+            }
+            ensure!(
+                self.native_paths.keys().all(|other| other == local
+                    || (!local.starts_with(other) && !other.starts_with(local))),
+                "overlapping_native_path_mappings"
+            );
+            ensure!(
+                canonical_destination(local)? == *local,
+                "native_path_mapping_symlink"
             );
         }
         ensure!(

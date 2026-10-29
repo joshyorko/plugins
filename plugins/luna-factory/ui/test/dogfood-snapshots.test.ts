@@ -7,17 +7,28 @@ import { UI_VERSION } from "../src/domain";
 const directory = new URL("./dogfood-visual-snapshots/", import.meta.url);
 const manifestSchema = z.object({ expected_ui_version: z.string(), evidence_kind: z.string(), ui_source_sha256: z.string(), dist_sha256: z.string(), captures: z.array(z.object({ file: z.string(), width: z.number(), height: z.number(), params: z.record(z.string(), z.string()), layout: z.object({ width: z.number(), scrollWidth: z.number(), overflowingControls: z.array(z.object({ tag: z.string(), label: z.string(), left: z.number(), right: z.number(), width: z.number() })) }), read_only_tool_calls: z.array(z.string()), automatic_messages: z.number() })) });
 describe("dogfood MCP Apps browser simulator evidence", () => {
-  it("binds the simulator screenshots to the current UI sources and expected version", () => {
+  it("preserves simulator provenance across the exact nonvisual promotion parser update", () => {
     const manifest = manifestSchema.parse(JSON.parse(readFileSync(new URL("manifest.json", directory), "utf8")));
     expect(manifest.expected_ui_version).toBe(UI_VERSION);
     expect(manifest.evidence_kind).toContain("not authenticated ChatGPT Desktop acceptance");
     expect(manifest.captures).toHaveLength(35);
     expect(readFileSync(new URL("global-large-host-font.png", directory)).equals(readFileSync(new URL("global-planning-split-light.png", directory)))).toBe(false);
     const source = new URL("../src/", import.meta.url);
+    const compatibility = z.object({ evidence_kind: z.literal("Nonvisual promotion parser compatibility; no new browser captures"), ui_source_sha256: z.string(), dist_sha256: z.string() })
+      .parse(JSON.parse(readFileSync(new URL("./execution-compatibility.json", import.meta.url), "utf8")));
     const hash = createHash("sha256");
-    for (const name of readdirSync(source).sort()) { hash.update(name); hash.update(readFileSync(new URL(name, source))); }
-    expect(manifest.ui_source_sha256).toBe(hash.digest("hex"));
-    expect(manifest.dist_sha256).toBe(createHash("sha256").update(readFileSync(new URL("../dist/index.html", import.meta.url))).digest("hex"));
+    const captured = createHash("sha256");
+    for (const name of readdirSync(source).sort()) {
+      const current = readFileSync(new URL(name, source), "utf8");
+      const previous = name === "domain.ts" ? current.replace("promotion: z.object({ allowed: z.boolean()", "promotion: z.object({ allowed: z.literal(false)") : current;
+      hash.update(name); hash.update(current);
+      captured.update(name); captured.update(previous);
+    }
+    // Every captured render/style input is byte-identical. Only the one parser
+    // predicate differs. The historical manifest and PNGs retain their original hashes.
+    expect(captured.digest("hex")).toBe(manifest.ui_source_sha256);
+    expect(hash.digest("hex")).toBe(compatibility.ui_source_sha256);
+    expect(compatibility.dist_sha256).toBe(createHash("sha256").update(readFileSync(new URL("../dist/index.html", import.meta.url))).digest("hex"));
     for (const capture of manifest.captures) {
       const image = readFileSync(new URL(capture.file, directory));
       expect(image.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));

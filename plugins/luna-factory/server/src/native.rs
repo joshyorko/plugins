@@ -250,6 +250,7 @@ struct Inner {
     next_id: AtomicU64,
     closed: AtomicBool,
     provider_identity: StdMutex<Option<crate::qualification::NativeServerIdentity>>,
+    peer_identity: Option<crate::peer_identity::PeerIdentity>,
     options: NativeOptions,
 }
 impl Inner {
@@ -326,6 +327,7 @@ impl NativeClient {
             next_id: AtomicU64::new(1),
             closed: AtomicBool::new(false),
             provider_identity: StdMutex::new(None),
+            peer_identity: None,
             options,
         });
         let weak = Arc::downgrade(&inner);
@@ -394,15 +396,17 @@ impl NativeClient {
                         anyhow!("native daemon socket unavailable; no daemon was started")
                     })?;
                 // Fixed root URL is framing metadata, never a TCP destination.
+                let peer = crate::peer_identity::PeerIdentity::capture(&stream, binary);
                 let (websocket, _) =
                     client_async_with_config("ws://localhost/", stream, Some(ws_config))
                         .await
                         .map_err(|_| anyhow!("native daemon WebSocket handshake failed"))?;
-                Ok::<_, anyhow::Error>(websocket)
+                Ok::<_, anyhow::Error>((websocket, peer))
             };
-            let websocket = timeout(options.request_timeout, connection)
-                .await
-                .map_err(|_| anyhow!("native daemon connection timed out"))??;
+            let (websocket, peer_identity) =
+                timeout(options.request_timeout, connection)
+                    .await
+                    .map_err(|_| anyhow!("native daemon connection timed out"))??;
             let socket = Arc::new(StdMutex::new(Some(websocket)));
             let (events, _) = broadcast::channel(options.event_capacity);
             let inner = Arc::new(Inner {
@@ -415,6 +419,7 @@ impl NativeClient {
                 next_id: AtomicU64::new(1),
                 closed: AtomicBool::new(false),
                 provider_identity: StdMutex::new(None),
+                peer_identity,
                 options,
             });
             let weak = Arc::downgrade(&inner);
@@ -429,7 +434,10 @@ impl NativeClient {
     async fn initialize(&self) -> Result<()> {
         let handshake = timeout(self.inner.options.request_timeout, async {
             let response = self.request("initialize", json!({"clientInfo":{"name":"luna_factory", "title":"Luna Factory", "version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}})).await?;
-            let identity = provider_identity(&response)?;
+            let identity = match &self.inner.peer_identity {
+                Some(peer) => peer.current(),
+                None => provider_identity(&response)?,
+            };
             // Some app-server builds omit serverInfo. Keep passive reads available;
             // qualification rejects a missing identity before every execution write.
             *self.inner.provider_identity.lock().expect("provider identity lock") = identity;
@@ -453,6 +461,9 @@ impl NativeClient {
     }
 
     pub fn provider_identity(&self) -> Option<crate::qualification::NativeServerIdentity> {
+        if let Some(peer) = &self.inner.peer_identity {
+            return peer.current();
+        }
         self.inner
             .provider_identity
             .lock()
@@ -557,6 +568,29 @@ impl NativeClient {
         message: Value,
         authorization: Option<&crate::qualification::DispatchAuthorization>,
     ) -> Result<()> {
+        // A cached grant never substitutes for current peer-process identity. Add
+        // this restriction to every first-write poll, including backpressure waits.
+        let restricted = authorization.map(|authorization| {
+            let client = self.clone();
+            let expected = self
+                .inner
+                .provider_identity
+                .lock()
+                .expect("provider identity lock")
+                .clone();
+            authorization.restrict(move || {
+                if client.inner.peer_identity.is_some()
+                    && (expected.is_none() || client.provider_identity() != expected)
+                {
+                    return Err(crate::qualification::ExecutionDenied {
+                        code: crate::qualification::PROVIDER_MISMATCH,
+                    }
+                    .into());
+                }
+                Ok(())
+            })
+        });
+        let authorization = restricted.as_ref();
         let qualified_write = authorization.is_some();
         let timeout_reason = if qualified_write {
             "qualification_write_timeout"
@@ -1200,12 +1234,13 @@ impl NativeClient {
     pub(crate) async fn start_thread_guarded(
         &self,
         cwd: &Path,
+        native_cwd: &Path,
         effort: &str,
         max_threads: usize,
         guard: &crate::qualification::DispatchAuthorization,
     ) -> Result<Value> {
         ensure!(
-            cwd.is_absolute() && cwd.is_dir(),
+            cwd.is_absolute() && cwd.is_dir() && native_cwd.is_absolute(),
             "trusted repository cwd must be an existing absolute directory"
         );
         ensure!(
@@ -1214,7 +1249,7 @@ impl NativeClient {
         );
         validate_luna_route(&self.list_models().await?, effort)?;
         let response = self.request_guarded("thread/start", json!({
-            "cwd":cwd, "model":LUNA_MODEL,
+            "cwd":native_cwd, "model":LUNA_MODEL,
             "config":{"model_reasoning_effort":effort, "agents.max_concurrent_threads_per_session":max_threads, "agents.default_subagent_model":LUNA_MODEL}
         }), guard).await?;
         ensure!(
@@ -1233,6 +1268,7 @@ impl NativeClient {
         &self,
         thread_id: &str,
         skill_path: &Path,
+        native_skill_path: &Path,
         objective: &str,
         effort: &str,
         output_schema: Option<Value>,
@@ -1243,7 +1279,14 @@ impl NativeClient {
         if let Some(dispatch_id) = dispatch_id {
             validate_id(dispatch_id)?;
         }
-        let input = canonical_skill_input(skill_path, objective)?;
+        let mut input = canonical_skill_input(skill_path, objective)?;
+        ensure!(
+            native_skill_path.is_absolute(),
+            "native_skill_path_must_be_absolute"
+        );
+        // Validate the canonical file in Factory's namespace, then send only the
+        // operator-mapped daemon path. Never canonicalize a host path in the OCI view.
+        input[0]["path"] = json!(native_skill_path);
         validate_luna_route(&self.list_models().await?, effort)?;
         let thread = self.read_thread(thread_id).await?;
         ensure!(
@@ -1319,7 +1362,7 @@ impl NativeClient {
     ) -> Result<Value> {
         assert_test_binary();
         let authorization = crate::qualification::test_dispatch_authorization(check);
-        self.start_thread_guarded(cwd, effort, max_threads, &authorization)
+        self.start_thread_guarded(cwd, cwd, effort, max_threads, &authorization)
             .await
     }
 
@@ -1382,6 +1425,7 @@ impl NativeClient {
         let authorization = crate::qualification::test_dispatch_authorization(check);
         self.start_skill_turn_with_id_guarded(
             thread_id,
+            skill_path,
             skill_path,
             objective,
             effort,

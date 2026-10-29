@@ -26,3 +26,5 @@ pub mod cas_boundary;
 pub mod continuation;
 pub mod timeline;
 pub mod workspaces;
+
+mod peer_identity;

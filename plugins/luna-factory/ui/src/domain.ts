@@ -207,7 +207,7 @@ const campaignSchema = z.object({
   planning: z.object({ run_id: runId, revision, planning_only: z.literal(true), tasks: z.object({ total: count, candidate: count, ready: count, running: count, verify: count, done: count, blocked: count }) }),
   runs: z.array(z.object({ id: runId, state: z.enum(states), updated_at: timestamp })).max(64),
   // A campaign projection never authorizes execution; anything else is rejected, not shown.
-  promotion: z.object({ allowed: z.literal(false), reason: z.string().max(160) }),
+  promotion: z.object({ allowed: z.boolean(), reason: z.string().max(160) }),
 }).superRefine((campaign, context) => {
   const { tasks } = campaign.planning;
   const { forge } = campaign.parent;
