@@ -51,7 +51,7 @@ serialized; Vitest used one worker. No captures were generated.
 | Vitest `--maxWorkers=1` | 282 passed; one opt-in compiled integration skipped in unit suite |
 | Compiled graph/workbench integration | separately passed, 1/1, real local Rust/SQLite/HTTP and synthetic AppBridge; zero native dispatch |
 | Python/package tests | 84 passed |
-| `bin/check` | 79 passed, 10 existing environment-specific skips; repository structure validated |
+| `bin/check` | 79 tests total: 69 passed, 10 existing environment-specific skips; repository structure validated |
 | Working tree / whitespace | clean at source checkpoint; `git diff --check` passed |
 
 The local debug binary SHA-256 was
