@@ -1,8 +1,5 @@
 //! Explicit opt-in installed-binary test. Only initialize + model/list are sent.
-#[allow(dead_code)]
-#[path = "../src/native.rs"]
-mod native;
-use native::{NativeClient, validate_luna_route};
+use luna_factoryd::native::{NativeClient, validate_luna_route};
 use std::path::Path;
 
 #[tokio::test]

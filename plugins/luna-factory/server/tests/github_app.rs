@@ -2502,6 +2502,195 @@ async fn replacing_workspace_root_during_token_mint_keeps_clone_in_pinned_root()
 }
 
 #[tokio::test]
+async fn replacing_workspace_ancestor_during_token_mint_keeps_clone_fd_anchored() {
+    let (h, default_root) = workspace_harness(workspace_world(0), |config, _| {
+        let base = PathBuf::from(config["workspaces"]["root"].as_str().unwrap());
+        let parent = base.parent().unwrap().join("nested-workspaces");
+        std::fs::create_dir(&parent).unwrap();
+        let root = parent.join("root");
+        std::fs::create_dir(&root).unwrap();
+        config["workspaces"]["root"] = json!(root);
+    })
+    .await;
+    let parent = default_root.parent().unwrap().join("nested-workspaces");
+    let root = parent.join("root");
+    let moved = parent.with_file_name("nested-workspaces-original");
+    let replacement = parent.with_file_name("nested-workspaces-replacement");
+    std::fs::create_dir(&replacement).unwrap();
+    let parent_hook = parent.clone();
+    let moved_hook = moved.clone();
+    let replacement_hook = replacement.clone();
+    assert!(
+        h.server
+            .factory
+            .github_reader()
+            .use_clone_hook(std::sync::Arc::new(move || {
+                std::fs::rename(&parent_hook, &moved_hook).unwrap();
+                std::os::unix::fs::symlink(&replacement_hook, &parent_hook).unwrap();
+            }))
+    );
+    let parent_restore = parent.clone();
+    let moved_restore = moved.clone();
+    assert!(
+        h.server
+            .factory
+            .github_reader()
+            .use_clone_completion_hook(std::sync::Arc::new(move || {
+                std::fs::remove_file(&parent_restore).unwrap();
+                std::fs::rename(&moved_restore, &parent_restore).unwrap();
+            }))
+    );
+
+    let connected = invoke(
+        &h,
+        "connect_factory_github_repository",
+        json!({"repository":"joshyorko/widget","idempotency_key":"ancestor-swap"}),
+    )
+    .await;
+    assert_eq!(connected["status"], "connected");
+    assert!(root.join("joshyorko__widget/README.md").is_file());
+    assert!(!replacement.join("root/joshyorko__widget").exists());
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+}
+
+#[tokio::test]
+async fn target_created_during_clone_is_never_replaced_or_deleted() {
+    let (h, root) = workspace_harness(workspace_world(0), |_, _| {}).await;
+    let target = root.join("joshyorko__widget");
+    let target_hook = target.clone();
+    assert!(
+        h.server
+            .factory
+            .github_reader()
+            .use_clone_hook(std::sync::Arc::new(move || {
+                std::fs::create_dir(&target_hook).unwrap();
+                std::fs::write(target_hook.join("operator-data.txt"), "keep").unwrap();
+            }))
+    );
+
+    assert_eq!(
+        invoke_err(
+            &h,
+            "connect_factory_github_repository",
+            json!({"repository":"joshyorko/widget","idempotency_key":"target-race"}),
+        )
+        .await,
+        "workspace_path_conflict"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("operator-data.txt")).unwrap(),
+        "keep"
+    );
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+    // The idempotency reservation stays pending after the concurrent target
+    // conflict; the target's operator data is left untouched for manual repair.
+    assert_eq!(ledger_rows(&h, "workspace_repositories"), 1);
+}
+
+#[tokio::test]
+#[cfg(debug_assertions)]
+async fn retry_recovers_a_repository_published_before_registration() {
+    let (h, root) = workspace_harness(workspace_world(0), |_, _| {}).await;
+    let interrupt_once = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let interrupt_hook = interrupt_once.clone();
+    assert!(
+        h.server
+            .factory
+            .interrupt_connect_after_publish_for_test(std::sync::Arc::new(move || {
+                interrupt_hook.swap(false, std::sync::atomic::Ordering::SeqCst)
+            }),)
+    );
+    let request = json!({"repository":"joshyorko/widget","idempotency_key":"recover-published"});
+
+    assert_eq!(
+        invoke_err(&h, "connect_factory_github_repository", request.clone()).await,
+        "workspace_publish_interrupted_for_test"
+    );
+    let target = root.join("joshyorko__widget");
+    assert!(target.join("README.md").is_file());
+    assert_eq!(ledger_rows(&h, "workspace_repositories"), 1);
+
+    let Harness {
+        _temp,
+        server,
+        world,
+        key_path,
+    } = h;
+    let config = server.factory.config.as_ref().clone();
+    let html = server.html.clone();
+    drop(server);
+    let h = Harness {
+        _temp,
+        server: McpServer {
+            factory: Factory::new(config).unwrap(),
+            html,
+        },
+        world,
+        key_path,
+    };
+
+    let recovered = invoke(&h, "connect_factory_github_repository", request).await;
+    assert_eq!(recovered["status"], "connected");
+    assert_eq!(recovered["alias"], "widget");
+    assert_eq!(ledger_rows(&h, "workspace_repositories"), 1);
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+}
+
+#[tokio::test]
+async fn aggregate_clone_size_checks_multiple_sub_limit_files_after_completion() {
+    let mut world = workspace_world(0);
+    world
+        .repositories
+        .push(repository("joshyorko/aggregate", 9, None));
+    let (h, root) = workspace_harness(world, |config, _| {
+        config["workspaces"]["max_clone_bytes"] = json!(1_048_576_u64);
+    })
+    .await;
+
+    let work = h._temp.path().join("work-aggregate");
+    std::fs::create_dir(&work).unwrap();
+    git(&work, &["init", "-q", "-b", "main"]);
+    std::fs::write(work.join("first.bin"), vec![0_u8; 700_000]).unwrap();
+    std::fs::write(work.join("second.bin"), vec![1_u8; 700_000]).unwrap();
+    git(&work, &["add", "first.bin", "second.bin"]);
+    git(
+        &work,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "aggregate fixture",
+        ],
+    );
+    let fixtures = h._temp.path().join("git-fixtures/joshyorko");
+    std::fs::create_dir_all(&fixtures).unwrap();
+    git(
+        h._temp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            work.to_str().unwrap(),
+            fixtures.join("aggregate.git").to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(
+        invoke_err(
+            &h,
+            "connect_factory_github_repository",
+            json!({"repository":"joshyorko/aggregate","idempotency_key":"aggregate-too-large"}),
+        )
+        .await,
+        "clone_too_large"
+    );
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+}
+
+#[tokio::test]
 async fn clone_file_limit_is_hard_and_failed_clone_cleans_staging() {
     let mut world = workspace_world(0);
     world
@@ -2515,7 +2704,9 @@ async fn clone_file_limit_is_hard_and_failed_clone_cleans_staging() {
     std::fs::create_dir(&work).unwrap();
     git(&work, &["init", "-q", "-b", "main"]);
     let mut state = 0x6d2b_79f5_u32;
-    let mut large = vec![0_u8; 2 * 1024 * 1024];
+    // The file exceeds the cap by only one byte so the last write exercises the
+    // hard RLIMIT_FSIZE boundary independently of the 100 ms aggregate sampler.
+    let mut large = vec![0_u8; 1_048_577];
     for byte in &mut large {
         state ^= state << 13;
         state ^= state >> 17;

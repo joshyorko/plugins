@@ -2689,13 +2689,15 @@ impl GithubReader {
         let mut command = tokio::process::Command::from(command);
         command.kill_on_drop(true);
         let mut child = command.spawn().map_err(|_| "git_unavailable")?;
+        let mut process_group = CloneProcessGroup::new(child.id());
         let stderr = child.stderr.take().ok_or("github_clone_failed")?;
         let stderr_task = tokio::spawn(read_clone_stderr(stderr));
+        let clone_deadline = tokio::time::Instant::now() + CLONE_TIMEOUT;
         let status =
-            wait_for_workspace_clone(&mut child, staging, max_bytes, CLONE_TIMEOUT).await?;
-        let stderr = stderr_task.await.unwrap_or_default();
+            wait_for_workspace_clone(&mut child, staging, max_bytes, clone_deadline).await?;
+        let stderr = finish_clone_stderr(stderr_task, &process_group, clone_deadline).await?;
         if !status.success() {
-            if child_was_signaled(&status) || clone_hit_file_limit(&stderr) {
+            if clone_hit_size_limit(&status, &stderr) {
                 return Err("clone_too_large");
             }
             return Err("github_clone_failed");
@@ -2735,7 +2737,32 @@ impl GithubReader {
         {
             hook();
         }
+        process_group.disarm();
         Ok(token.default_branch)
+    }
+}
+
+/// Git may start helpers that outlive the direct child. Keep the clone in its
+/// own process group so errors, cancellation, and future drops stop the tree.
+struct CloneProcessGroup(Option<u32>);
+impl CloneProcessGroup {
+    fn new(pid: Option<u32>) -> Self {
+        Self(pid)
+    }
+    fn terminate(&self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.0 {
+            // SAFETY: a negative pid targets only the dedicated clone process group.
+            unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
+        }
+    }
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
+impl Drop for CloneProcessGroup {
+    fn drop(&mut self) {
+        self.terminate();
     }
 }
 
@@ -2743,25 +2770,52 @@ async fn wait_for_workspace_clone(
     child: &mut tokio::process::Child,
     staging: &crate::workspaces::PinnedStaging,
     max_bytes: u64,
-    timeout: Duration,
+    deadline: tokio::time::Instant,
 ) -> std::result::Result<std::process::ExitStatus, &'static str> {
-    let deadline = tokio::time::Instant::now() + timeout;
     loop {
         if staging.size(max_bytes).is_none_or(|size| size > max_bytes) {
+            kill_clone_group(child.id());
             let _ = child.kill().await;
             let _ = child.wait().await;
             return Err("clone_too_large");
         }
         if tokio::time::Instant::now() >= deadline {
+            kill_clone_group(child.id());
             let _ = child.kill().await;
             let _ = child.wait().await;
             return Err("github_clone_timeout");
         }
         match child.try_wait().map_err(|_| "git_unavailable")? {
-            Some(status) if child_was_signaled(&status) => return Err("clone_too_large"),
+            Some(status) if child_was_signaled_by_file_limit(&status) => {
+                return Err("clone_too_large");
+            }
             Some(status) => return Ok(status),
             None => tokio::time::sleep(Duration::from_millis(100)).await,
         }
+    }
+}
+
+async fn finish_clone_stderr(
+    stderr_task: tokio::task::JoinHandle<Vec<u8>>,
+    process_group: &CloneProcessGroup,
+    deadline: tokio::time::Instant,
+) -> std::result::Result<Vec<u8>, &'static str> {
+    let mut stderr_task = stderr_task;
+    match tokio::time::timeout_at(deadline, &mut stderr_task).await {
+        Ok(result) => Ok(result.unwrap_or_default()),
+        Err(_) => {
+            process_group.terminate();
+            stderr_task.abort();
+            Err("github_clone_timeout")
+        }
+    }
+}
+
+fn kill_clone_group(pid: Option<u32>) {
+    #[cfg(unix)]
+    if let Some(pid) = pid {
+        // SAFETY: clone children start a dedicated process group before exec.
+        unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
     }
 }
 
@@ -2788,11 +2842,15 @@ fn clone_hit_file_limit(stderr: &[u8]) -> bool {
     lower.contains("file too large") || lower.contains("file size limit exceeded")
 }
 
-fn child_was_signaled(status: &std::process::ExitStatus) -> bool {
+fn clone_hit_size_limit(status: &std::process::ExitStatus, stderr: &[u8]) -> bool {
+    child_was_signaled_by_file_limit(status) || clone_hit_file_limit(stderr)
+}
+
+fn child_was_signaled_by_file_limit(status: &std::process::ExitStatus) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
-        status.signal().is_some()
+        status.signal() == Some(libc::SIGXFSZ)
     }
     #[cfg(not(unix))]
     {
@@ -2806,6 +2864,131 @@ pub type SharedReader = Arc<GithubReader>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn clone_process_group_drop_kills_descendants_after_leader_exit() {
+        use std::{os::unix::process::CommandExt, time::Instant};
+
+        let temp = tempfile::tempdir().unwrap();
+        let pid_file = temp.path().join("child.pid");
+        let mut command = std::process::Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("sleep 30 & echo $! > \"$1\"; wait")
+            .arg("clone-group-test")
+            .arg(&pid_file)
+            .process_group(0);
+        let child = command.spawn().unwrap();
+        let group = CloneProcessGroup::new(Some(child.id()));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !pid_file.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let pid: u32 = std::fs::read_to_string(&pid_file)
+            .expect("child pid was written")
+            .trim()
+            .parse()
+            .unwrap();
+        drop(group);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let state = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .ok()
+                .and_then(|stat| {
+                    stat.rsplit_once(')')
+                        .map(|(_, tail)| tail.trim().chars().next())
+                })
+                .flatten();
+            if state.is_none() || state == Some('Z') {
+                break;
+            }
+            assert!(Instant::now() < deadline, "clone descendant is still alive");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // Reap the group leader after the assertion; Drop already killed the group.
+        let mut child = child;
+        let _ = child.wait();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn stderr_drain_deadline_kills_descendant_after_clone_leader_exit() {
+        use std::{
+            os::unix::process::CommandExt,
+            time::{Duration, Instant},
+        };
+        use tokio::io::AsyncReadExt;
+
+        let mut command = std::process::Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("sleep 30 >/dev/null & echo $!; exit 0")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .process_group(0);
+        let mut child = tokio::process::Command::from(command).spawn().unwrap();
+        let process_group = CloneProcessGroup::new(child.id());
+        let stderr = child.stderr.take().unwrap();
+        let stderr_task = tokio::spawn(read_clone_stderr(stderr));
+        let status = child.wait().await.unwrap();
+        assert!(status.success());
+        let mut stdout = String::new();
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_string(&mut stdout)
+            .await
+            .unwrap();
+        let descendant: u32 = stdout.trim().parse().unwrap();
+
+        let started = Instant::now();
+        let result = finish_clone_stderr(
+            stderr_task,
+            &process_group,
+            tokio::time::Instant::now() + Duration::from_millis(100),
+        )
+        .await;
+        assert_eq!(result.unwrap_err(), "github_clone_timeout");
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let stop_deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let state = std::fs::read_to_string(format!("/proc/{descendant}/stat"))
+                .ok()
+                .and_then(|stat| {
+                    stat.rsplit_once(')')
+                        .map(|(_, tail)| tail.trim().chars().next())
+                })
+                .flatten();
+            if state.is_none() || state == Some('Z') {
+                break;
+            }
+            assert!(
+                Instant::now() < stop_deadline,
+                "descendant remains alive in state {state:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generic_unpack_failure_does_not_imply_a_size_limit() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let unrelated_failure = std::process::ExitStatus::from_raw(128 << 8);
+        assert!(!clone_hit_size_limit(
+            &unrelated_failure,
+            b"fatal: fetch-pack: invalid index-pack output"
+        ));
+        assert!(clone_hit_size_limit(
+            &unrelated_failure,
+            b"error: File too large"
+        ));
+        let terminated = std::process::ExitStatus::from_raw(libc::SIGTERM);
+        assert!(!clone_hit_size_limit(&terminated, b""));
+    }
 
     #[test]
     fn repository_names_and_api_bases_are_bounded() {

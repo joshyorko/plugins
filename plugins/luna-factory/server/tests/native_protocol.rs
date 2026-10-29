@@ -1,8 +1,5 @@
 //! Protocol contract and fail-closed routing tests; all data is synthetic.
-#[allow(dead_code)]
-#[path = "../src/native.rs"]
-mod native;
-use native::{
+use luna_factoryd::native::{
     LUNA_MODEL, canonical_skill_input, child_thread_ids, configured_route, thread_is_idle,
     validate_luna_route,
 };

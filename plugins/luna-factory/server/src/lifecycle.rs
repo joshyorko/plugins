@@ -345,6 +345,8 @@ pub struct Factory {
     github: crate::github::SharedReader,
     /// Serializes workspace connects and creates (clones run outside `mutation`).
     workspace: Arc<Mutex<()>>,
+    #[cfg(debug_assertions)]
+    workspace_publish_hook: Arc<std::sync::OnceLock<Arc<dyn Fn() -> bool + Send + Sync>>>,
     _lease: Arc<ServiceLease>,
 }
 struct PendingRepositoryForm {
@@ -482,8 +484,25 @@ impl Factory {
             )),
             github,
             workspace: Arc::new(Mutex::new(())),
+            #[cfg(debug_assertions)]
+            workspace_publish_hook: Arc::new(std::sync::OnceLock::new()),
             _lease: Arc::new(lease),
         })
+    }
+
+    /// Test-only seam for simulating interruption after atomic publication.
+    #[doc(hidden)]
+    #[cfg(debug_assertions)]
+    pub fn interrupt_connect_after_publish_for_test(
+        &self,
+        hook: Arc<dyn Fn() -> bool + Send + Sync>,
+    ) -> bool {
+        self.workspace_publish_hook.set(hook).is_ok()
+    }
+
+    #[cfg(debug_assertions)]
+    fn should_interrupt_connect_after_publish_for_test(&self) -> bool {
+        self.workspace_publish_hook.get().is_some_and(|hook| hook())
     }
     pub async fn issue_repository_form_state(&self, candidates: &Value) -> Result<String> {
         let values = candidates
@@ -1400,7 +1419,7 @@ impl Factory {
         // Keep this directory descriptor across token minting and clone startup:
         // a replaced workspace pathname cannot redirect the child's cwd.
         let pinned_root = workspaces.open_pinned_root()?;
-        let staging = pinned_root.staging("connect")?;
+        let mut staging = pinned_root.staging("connect")?;
         record.default_branch = match self
             .github
             .clone_repository(&repository, &staging, workspaces.max_clone_bytes())
@@ -1418,6 +1437,10 @@ impl Factory {
         self.save_pending_workspace(&record).await?;
         workspaces.check_root()?;
         staging.publish(&record.directory)?;
+        #[cfg(debug_assertions)]
+        if self.should_interrupt_connect_after_publish_for_test() {
+            bail!("workspace_publish_interrupted_for_test");
+        }
         let record = self.register_workspace(workspaces, record).await?;
         Ok(record.connect_result("connected"))
     }
@@ -2039,21 +2062,36 @@ impl Factory {
             let mut qualification_interval =
                 tokio::time::interval(std::time::Duration::from_secs(10));
             qualification_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut qualification_lost = false;
             loop {
                 tokio::select! {
                     _ = qualification_interval.tick() => {
-                        if factory.qualification_revoked(&id, &client).await {
+                        if qualification_lost {
+                            if !factory.qualification_revoked(&id, &client).await {
+                                break;
+                            }
+                        } else if factory.qualification_revoked(&id, &client).await {
                             let _ = factory.stop_for_qualification_revoked(&id, &client, &Value::Null).await;
-                            break;
+                            qualification_lost = true;
                         }
                     }
                     received = receiver.recv() => match received {
                         Ok(event) => {
+                            if qualification_lost {
+                                if !factory.qualification_revoked(&id, &client).await {
+                                    break;
+                                }
+                                if Self::event_indicates_new_work(&event) {
+                                    let _ = factory.stop_for_qualification_revoked(&id, &client, &event).await;
+                                }
+                                continue;
+                            }
                             if Self::event_indicates_new_work(&event)
                                 && factory.qualification_revoked(&id, &client).await
                             {
                                 let _ = factory.stop_for_qualification_revoked(&id, &client, &event).await;
-                                break;
+                                qualification_lost = true;
+                                continue;
                             }
                             match factory.observe(&id, event).await {
                                 Ok(true) => break,
@@ -2064,7 +2102,9 @@ impl Factory {
                             }
                         }
                         Err(_) => {
-                            let _=factory.block(&id,"Native event stream was lost. Ownership is uncertain; the run deadline remains active.").await;
+                            if !qualification_lost {
+                                let _=factory.block(&id,"Native event stream was lost. Ownership is uncertain; the run deadline remains active.").await;
+                            }
                             break;
                         }
                     }
@@ -2092,6 +2132,9 @@ impl Factory {
             Ok(run) => run,
             Err(_) => return true,
         };
+        if run.claim_held && run.blocker.as_deref() == Some("qualification_revoked") {
+            return true;
+        }
         if run.state != "RUNNING" || run.dispatch_phase != "active" {
             return false;
         }
@@ -2112,7 +2155,11 @@ impl Factory {
     ) -> Result<()> {
         let _mutation = self.mutation.lock().await;
         let mut run = self.store.lock().await.get(id)?;
-        if !run.claim_held || run.state != "RUNNING" || run.dispatch_phase != "active" {
+        let already_revoked =
+            run.state == "BLOCKED" && run.blocker.as_deref() == Some("qualification_revoked");
+        if !run.claim_held
+            || (!already_revoked && (run.state != "RUNNING" || run.dispatch_phase != "active"))
+        {
             return Ok(());
         }
         let owner = run.thread_id.clone().context("owner_identity_unknown")?;
@@ -3296,7 +3343,7 @@ impl Factory {
             {
                 crate::evidence::revalidate_failures(&control, &diagnosis.check_refs, root)?;
             }
-            ensure!(now() < run.deadline_at, "time_budget_exhausted");
+            ensure!(now() < dispatch_run.deadline_at, "time_budget_exhausted");
             Ok(())
         };
         Ok(crate::qualification::dispatch_authorization_with(

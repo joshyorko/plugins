@@ -35,7 +35,11 @@ pub struct Workspaces {
     pub connect_github: bool,
     #[serde(default)]
     pub create_local: bool,
-    /// Optional repository-size ceiling, defaulting to two GiB.
+    /// Approximate aggregate repository-size ceiling, defaulting to two GiB.
+    /// RLIMIT_FSIZE hard-limits each file; aggregate tree size is sampled every
+    /// 100 ms, so concurrent writes can exceed the threshold before the next
+    /// observation. That transient overshoot has no fixed aggregate bound and
+    /// this setting is not a disk quota.
     #[serde(default)]
     pub max_clone_bytes: Option<u64>,
     #[serde(skip)]
@@ -205,11 +209,25 @@ impl PinnedWorkspaceRoot {
             }
             // SAFETY: `openat` returned a new descriptor which this value owns.
             let directory = unsafe { std::os::fd::OwnedFd::from_raw_fd(raw) };
+            let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
+            // SAFETY: `directory` is open and `metadata` points to writable storage.
+            ensure!(
+                unsafe { libc::fstat(directory.as_raw_fd(), metadata.as_mut_ptr()) } == 0,
+                "workspace_staging_invalid"
+            );
+            // SAFETY: fstat succeeded and initialized the structure.
+            let metadata = unsafe { metadata.assume_init() };
+            ensure!(
+                metadata.st_mode & libc::S_IFMT == libc::S_IFDIR,
+                "workspace_staging_invalid"
+            );
             let root = self.fd.try_clone().context("workspace_staging_invalid")?;
             Ok(PinnedStaging {
                 root,
                 directory,
-                name,
+                name: Some(name),
+                device: metadata.st_dev,
+                inode: metadata.st_ino,
             })
         }
         #[cfg(not(target_os = "linux"))]
@@ -227,7 +245,11 @@ pub struct PinnedStaging {
     #[cfg(target_os = "linux")]
     directory: std::os::fd::OwnedFd,
     #[cfg(target_os = "linux")]
-    name: String,
+    name: Option<String>,
+    #[cfg(target_os = "linux")]
+    device: u64,
+    #[cfg(target_os = "linux")]
+    inode: u64,
 }
 
 impl PinnedStaging {
@@ -260,6 +282,9 @@ impl PinnedStaging {
             // guard lives; both operations are async-signal-safe in pre_exec.
             unsafe {
                 command.pre_exec(move || {
+                    if libc::setpgid(0, 0) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
                     if libc::fchdir(directory_fd) != 0 {
                         return Err(std::io::Error::last_os_error());
                     }
@@ -268,6 +293,11 @@ impl PinnedStaging {
                         rlim_max: limit,
                     };
                     if libc::setrlimit(libc::RLIMIT_FSIZE, &limits) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    // Preserve EFBIG diagnostics instead of letting a helper
+                    // die from SIGXFSZ before Git can report the failed write.
+                    if libc::signal(libc::SIGXFSZ, libc::SIG_IGN) == libc::SIG_ERR {
                         return Err(std::io::Error::last_os_error());
                     }
                     Ok(())
@@ -284,11 +314,11 @@ impl PinnedStaging {
 
     /// Atomically publish without replacing an existing target, relative to
     /// the pinned root descriptor.
-    pub fn publish(&self, final_name: &str) -> Result<()> {
+    pub fn publish(&mut self, final_name: &str) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
             use std::os::fd::AsRawFd;
-            let from = c_name(&self.name)?;
+            let from = c_name(self.name.as_deref().context("workspace_staging_invalid")?)?;
             let to = c_name(final_name)?;
             // Linux renameat2 provides an atomic no-replace publication.
             // SAFETY: both directory descriptors are held open and names are NUL-free.
@@ -303,41 +333,12 @@ impl PinnedStaging {
                 )
             };
             if result == 0 {
+                self.name = None;
                 return Ok(());
             }
-            let error = std::io::Error::last_os_error();
-            if !matches!(error.raw_os_error(), Some(code) if code == libc::ENOSYS || code == libc::EINVAL)
-            {
-                anyhow::bail!("workspace_path_conflict");
-            }
-            // Old Linux kernels may lack renameat2. Check through the fd, then
-            // renameat; this fallback preserves the existing best-effort contract.
-            let mut target = std::mem::MaybeUninit::<libc::stat>::uninit();
-            // SAFETY: both pointers are valid; AT_SYMLINK_NOFOLLOW never follows a target.
-            let exists = unsafe {
-                libc::fstatat(
-                    self.root.as_raw_fd(),
-                    to.as_ptr(),
-                    target.as_mut_ptr(),
-                    libc::AT_SYMLINK_NOFOLLOW,
-                )
-            };
-            if exists == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ENOENT) {
-                anyhow::bail!("workspace_path_conflict");
-            }
-            // SAFETY: source and destination are names relative to held directory fds.
-            ensure!(
-                unsafe {
-                    libc::renameat(
-                        self.root.as_raw_fd(),
-                        from.as_ptr(),
-                        self.root.as_raw_fd(),
-                        to.as_ptr(),
-                    )
-                } == 0,
-                "workspace_path_conflict"
-            );
-            Ok(())
+            // Never emulate RENAME_NOREPLACE with check-then-rename: that can
+            // overwrite a target created in the gap on older kernels.
+            anyhow::bail!("workspace_path_conflict");
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -347,6 +348,9 @@ impl PinnedStaging {
     }
 
     /// Keep total-size sampling anchored to this staging directory descriptor.
+    /// This is an aggregate guard, not a quota: parallel writes may exceed the
+    /// threshold between samples, while RLIMIT_FSIZE supplies the hard per-file
+    /// ceiling before Git starts.
     pub fn size(&self, maximum: u64) -> Option<u64> {
         #[cfg(target_os = "linux")]
         {
@@ -365,8 +369,17 @@ impl PinnedStaging {
 impl Drop for PinnedStaging {
     fn drop(&mut self) {
         use std::os::fd::AsRawFd;
-        let Ok(name) = c_name(&self.name) else { return };
-        let _ = remove_tree_at(self.root.as_raw_fd(), &name);
+        let Some(staging_name) = self.name.as_deref() else {
+            return;
+        };
+        let Ok(name) = c_name(staging_name) else {
+            return;
+        };
+        let _ = remove_tree_at_identity(
+            self.root.as_raw_fd(),
+            &name,
+            Some((self.device, self.inode)),
+        );
     }
 }
 
@@ -379,6 +392,15 @@ fn c_name(name: &str) -> Result<std::ffi::CString> {
 
 #[cfg(target_os = "linux")]
 fn remove_tree_at(parent: std::os::fd::RawFd, name: &std::ffi::CStr) -> std::io::Result<()> {
+    remove_tree_at_identity(parent, name, None)
+}
+
+#[cfg(target_os = "linux")]
+fn remove_tree_at_identity(
+    parent: std::os::fd::RawFd,
+    name: &std::ffi::CStr,
+    expected: Option<(u64, u64)>,
+) -> std::io::Result<()> {
     use std::os::fd::{AsRawFd, FromRawFd};
     // SAFETY: fstatat inspects the entry without following symlinks.
     let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
@@ -400,6 +422,10 @@ fn remove_tree_at(parent: std::os::fd::RawFd, name: &std::ffi::CStr) -> std::io:
     }
     // SAFETY: fstatat succeeded and initialized metadata.
     let metadata = unsafe { metadata.assume_init() };
+    if expected.is_some_and(|(device, inode)| metadata.st_dev != device || metadata.st_ino != inode)
+    {
+        return Ok(());
+    }
     if metadata.st_mode & libc::S_IFMT != libc::S_IFDIR {
         // SAFETY: unlinkat removes this name itself and does not follow symlinks.
         return if unsafe { libc::unlinkat(parent, name.as_ptr(), 0) } == 0 {
@@ -421,6 +447,18 @@ fn remove_tree_at(parent: std::os::fd::RawFd, name: &std::ffi::CStr) -> std::io:
     }
     // SAFETY: `raw` is newly opened and owned here.
     let directory = unsafe { std::os::fd::OwnedFd::from_raw_fd(raw) };
+    if let Some((device, inode)) = expected {
+        let mut opened = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: the opened directory is valid and the output buffer is writable.
+        if unsafe { libc::fstat(directory.as_raw_fd(), opened.as_mut_ptr()) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: fstat succeeded and initialized the structure.
+        let opened = unsafe { opened.assume_init() };
+        if opened.st_dev != device || opened.st_ino != inode {
+            return Ok(());
+        }
+    }
     let scan_fd = unsafe { libc::fcntl(directory.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
     if scan_fd < 0 {
         return Err(std::io::Error::last_os_error());
@@ -448,6 +486,31 @@ fn remove_tree_at(parent: std::os::fd::RawFd, name: &std::ffi::CStr) -> std::io:
     unsafe { libc::closedir(stream) };
     for child in names {
         remove_tree_at(directory.as_raw_fd(), &child)?;
+    }
+    if let Some((device, inode)) = expected {
+        let mut current = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: inspect the cleanup name without following a replacement symlink.
+        if unsafe {
+            libc::fstatat(
+                parent,
+                name.as_ptr(),
+                current.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } != 0
+        {
+            let error = std::io::Error::last_os_error();
+            return if error.raw_os_error() == Some(libc::ENOENT) {
+                Ok(())
+            } else {
+                Err(error)
+            };
+        }
+        // SAFETY: fstatat succeeded and initialized the structure.
+        let current = unsafe { current.assume_init() };
+        if current.st_dev != device || current.st_ino != inode {
+            return Ok(());
+        }
     }
     // SAFETY: the descriptor still points to the same opened directory.
     if unsafe { libc::unlinkat(parent, name.as_ptr(), libc::AT_REMOVEDIR) } == 0 {
@@ -944,6 +1007,21 @@ impl Drop for StagingGuard {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    fn pinned_test_root(root: &Path) -> PinnedWorkspaceRoot {
+        let workspaces = Workspaces {
+            root: root.to_path_buf(),
+            connect_github: true,
+            create_local: true,
+            max_clone_bytes: None,
+            root_identity: Arc::default(),
+        };
+        workspaces
+            .validate(&root.parent().unwrap().join("state.sqlite"))
+            .unwrap();
+        workspaces.open_pinned_root().unwrap()
+    }
+
     #[test]
     fn names_aliases_and_directories_are_bounded() {
         for good in ["a", "0", "my-app", "x.y_z", &"a".repeat(64)] {
@@ -1006,5 +1084,58 @@ mod tests {
         std::fs::write(stage.join("partial"), "partial clone").unwrap();
         drop(StagingGuard::new(stage.clone()));
         assert!(!stage.exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn failed_clone_cleanup_ignores_replacement_at_staging_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let pinned = pinned_test_root(&root);
+        let staging = pinned.staging("connect").unwrap();
+        let stage_path = root.join(staging.name.as_deref().unwrap());
+        let moved = root.join(".moved-staging");
+        std::fs::write(staging.path().join("partial-clone"), "clone data").unwrap();
+
+        std::fs::rename(&stage_path, &moved).unwrap();
+        std::fs::create_dir(&stage_path).unwrap();
+        std::fs::write(stage_path.join("operator-data"), "keep").unwrap();
+        drop(staging);
+
+        assert_eq!(
+            std::fs::read_to_string(stage_path.join("operator-data")).unwrap(),
+            "keep"
+        );
+        assert_eq!(
+            std::fs::read_to_string(moved.join("partial-clone")).unwrap(),
+            "clone data"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn published_staging_drop_does_not_clean_reused_staging_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let pinned = pinned_test_root(&root);
+        let mut staging = pinned.staging("connect").unwrap();
+        let stage_path = root.join(staging.name.as_deref().unwrap());
+        std::fs::write(staging.path().join("repository-file"), "published").unwrap();
+
+        staging.publish("published").unwrap();
+        std::fs::create_dir(&stage_path).unwrap();
+        std::fs::write(stage_path.join("operator-data"), "keep").unwrap();
+        drop(staging);
+
+        assert_eq!(
+            std::fs::read_to_string(root.join("published/repository-file")).unwrap(),
+            "published"
+        );
+        assert_eq!(
+            std::fs::read_to_string(stage_path.join("operator-data")).unwrap(),
+            "keep"
+        );
     }
 }

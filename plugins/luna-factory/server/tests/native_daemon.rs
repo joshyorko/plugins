@@ -67,7 +67,7 @@ async fn existing_daemon_uses_websocket_frames_and_closes_only_connection() {
 }
 
 #[tokio::test]
-async fn existing_daemon_fails_closed_when_initialize_identity_is_absent() {
+async fn existing_daemon_without_server_identity_allows_reads_and_explicit_interrupts() {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("daemon.sock");
     let listener = UnixListener::bind(&socket).unwrap();
@@ -83,24 +83,44 @@ async fn existing_daemon_fails_closed_when_initialize_identity_is_absent() {
         ))
         .await
         .unwrap();
-        let next = tokio::time::timeout(std::time::Duration::from_secs(1), ws.next())
-            .await
-            .unwrap();
-        assert!(
-            !matches!(next, Some(Ok(Message::Text(text))) if serde_json::from_str::<Value>(&text).is_ok_and(|message| message["method"] == "initialized")),
-            "initialized was sent without identity"
+        let initialized: Value =
+            serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(initialized["method"], "initialized");
+        let list_models: Value =
+            serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(list_models["method"], "model/list");
+        ws.send(Message::Text(
+            json!({"id":list_models["id"],"result":{"data":[{"model":"gpt-6-luna","supportedReasoningEfforts":[{"reasoningEffort":"high"}]}]}})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let interrupt: Value =
+            serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(interrupt["method"], "turn/interrupt");
+        assert_eq!(
+            interrupt["params"],
+            json!({"threadId":"owner","turnId":"turn-one"})
         );
+        ws.send(Message::Text(
+            json!({"id":interrupt["id"],"result":{"accepted":true}})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
     });
-    let result = NativeClient::connect_existing(Path::new("/not-executed"), Some(&socket)).await;
-    let error = match result {
-        Ok(_) => panic!("existing daemon without identity was accepted"),
-        Err(error) => error,
-    };
-    assert!(
-        error
-            .chain()
-            .any(|cause| { cause.to_string() == luna_factoryd::qualification::PROVIDER_MISMATCH })
+    let client = NativeClient::connect_existing(Path::new("/not-executed"), Some(&socket))
+        .await
+        .unwrap();
+    assert!(client.provider_identity().is_none());
+    assert_eq!(
+        client.list_models().await.unwrap()["data"][0]["model"],
+        "gpt-6-luna"
     );
+    client.interrupt_turn("owner", "turn-one").await.unwrap();
+    client.shutdown().await.unwrap();
     server.await.unwrap();
 }
 

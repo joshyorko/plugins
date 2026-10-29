@@ -59,7 +59,14 @@ for line in sys.stdin:
     method, params = message["method"], message.get("params", {})
     result = {}
     if method == "initialize":
-        result = {"userAgent": "synthetic-continuation"}
+        result = {
+            "userAgent": "synthetic-continuation",
+            "serverInfo": {
+                "name": "codex-fixture",
+                "version": "1.0",
+                "buildHash": "fixture-sha256",
+            },
+        }
     elif method == "model/list":
         if history and history[-1]["status"] == "completed" and mode().startswith("late_"):
             late_preflight = True

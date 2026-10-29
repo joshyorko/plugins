@@ -199,9 +199,21 @@ class ContainerBuildTests(unittest.TestCase):
             ]
         )
         # Listing reviewed files is not a prefix grant: siblings stay rejected.
-        for unlisted in ["plugins/luna-factory/server/src/store_extra.rs", "plugins/luna-factory/server/tests/native_live.rs"]:
+        for unlisted in ["plugins/luna-factory/server/src/store_extra.rs", "plugins/luna-factory/server/tests/native_unreviewed.rs"]:
             with self.assertRaisesRegex(ValueError, "unreviewed release source delta"):
                 BUILD.validate_release_delta([unlisted])
+
+    def test_release_delta_ignores_files_outside_the_image_source(self):
+        BUILD.validate_release_delta([
+            "plugins/rcc/skills/rcc-core/SKILL.md",
+            "docs/handoffs/luna-factory-2026-10-25/CONTINUE.txt",
+            "marketplaces/catalog.json",
+        ])
+        with self.assertRaisesRegex(ValueError, "unreviewed release source delta"):
+            BUILD.validate_release_delta([
+                "plugins/rcc/plugin.json",
+                "plugins/luna-factory/server/src/unreviewed.rs",
+            ])
 
     def test_oci_icon_pins_the_reviewed_moonlight_logo(self):
         logo = CONTAINER_DIR.parent / "assets/logo.png"

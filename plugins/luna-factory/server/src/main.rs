@@ -8,8 +8,55 @@ use luna_factoryd::{
     store::repository_subject,
 };
 use serde_json::json;
-use std::path::PathBuf;
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+};
 use tokio_util::sync::CancellationToken;
+
+fn canary_evidence_destination(path: &Path, workspace: &Path) -> Result<PathBuf> {
+    let absolute = std::path::absolute(path).context("qualification_canary_output_invalid")?;
+    let parent = absolute
+        .parent()
+        .context("qualification_canary_output_invalid")?
+        .canonicalize()
+        .context("qualification_canary_output_parent_unavailable")?;
+    let destination = parent.join(
+        absolute
+            .file_name()
+            .context("qualification_canary_output_invalid")?,
+    );
+    let workspace = workspace
+        .canonicalize()
+        .context("canary_workspace_unavailable")?;
+    ensure!(
+        !destination.starts_with(&workspace),
+        "qualification_canary_output_inside_workspace"
+    );
+    Ok(destination)
+}
+
+fn write_canary_evidence(
+    path: &Path,
+    workspace: &Path,
+    evidence: &serde_json::Value,
+) -> Result<()> {
+    let destination = canary_evidence_destination(path, workspace)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&destination)
+        .context("qualification_canary_output_create_failed")?;
+    file.write_all(serde_json::to_string_pretty(evidence)?.as_bytes())?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    Ok(())
+}
 
 async fn current_provider_identity(
     config: &Config,
@@ -184,7 +231,7 @@ async fn main() -> Result<()> {
             let record = qualification::record(
                 &config,
                 qualification::RecordRequest {
-                    alias: &profile,
+                    alias: &profile.profile,
                     evidence: &evidence,
                     scope: qualification::Scope::parse(&scope)?,
                     max_capacity,
@@ -236,19 +283,34 @@ async fn main() -> Result<()> {
                 &config,
                 &luna_factoryd::store::Store::open(&config)?.repository_registrations()?,
             );
-            let preconditions =
-                qualification::canary_preconditions(&effective, &profile, &workspace)?;
-            if let Some(output) = output {
+            qualification::canary_preconditions(&effective, &profile, &workspace)?;
+            if let Some(output) = output.as_deref() {
+                let destination = canary_evidence_destination(output, &workspace)?;
                 ensure!(
-                    !output.exists(),
+                    !destination.exists(),
                     "qualification_canary_output_exists; refusing to overwrite"
                 );
             }
-            eprintln!("{}", serde_json::to_string_pretty(&preconditions)?);
-            // Never fake success: no native process is started and no evidence is written
-            // until the bounded owner turn, independent hash check and cessation proof exist.
-            anyhow::bail!(
-                "qualification_canary_not_yet_implemented: preconditions passed; no native process was started and no evidence was written"
+            qualification::ensure_operator_context()?;
+            let execution_profile = ExecutionProfile::from_config(&effective, &profile)?;
+            let confirmation = qualification::confirm_operator_action(
+                &format!(
+                    "Run isolated qualification canary\nprofile: {}\nfingerprint: {}\nworkspace: {}\ncapacity: 1\nwall budget: 30 seconds",
+                    execution_profile.profile,
+                    execution_profile.fingerprint(),
+                    workspace.display()
+                ),
+                &execution_profile.profile,
+            )?;
+            let evidence =
+                qualification::run_canary(&effective, &profile, &workspace, &confirmation).await?;
+            if let Some(output) = output.as_deref() {
+                write_canary_evidence(output, &workspace, &evidence)?;
+            }
+            println!("{}", serde_json::to_string_pretty(&evidence)?);
+            ensure!(
+                evidence["qualification_run"]["outcome"] == "passed",
+                "qualification_canary_failed"
             );
         }
         Command::Status { config } => {

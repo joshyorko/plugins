@@ -14,7 +14,7 @@ An execution profile is derived from the operator config plus a profile alias:
 | `factory_version` | `CARGO_PKG_VERSION` of the running binary |
 | `transport` | `native_transport` (`stdio` or `existing_daemon`) |
 | `codex_binary` | Absolute, symlink-resolved `codex_binary` path |
-| `codex_binary_identity` | SHA-256 of the bounded executable read, cached by device, inode, size and mtime |
+| `codex_binary_identity` | SHA-256 of the bounded executable read, cached by device, inode, size, mtime and ctime |
 | `native_socket` | Optional configured socket path |
 | `model` | `gpt-6-luna` (`native::LUNA_MODEL`) |
 | `profile` | Profile alias |
@@ -61,8 +61,9 @@ MCP errors carry the bare code. Run blockers read
 
 ## Enforcement
 
-Each qualification check uses a fresh SQLite transaction and advances a persisted
-wall-clock high-water value. The final qualification check runs while the native writer
+Each qualification check advances a persisted wall-clock high-water value in a
+separate transaction, then reads qualification through a fresh read-only connection.
+The final qualification check runs while the native writer
 lock is held, at the transport's first write poll, immediately before bytes are handed
 to the writer.
 
@@ -131,6 +132,8 @@ Scope `ordinary` also requires `qualification_run` to have:
 - ordered `started_at` and `finished_at` values
 - a non-empty `checks` list in which every check passed
 - `cessation.verified: true`
+- `cessation.scope: "native_owner_descendants_and_reported_terminals"` and
+  `cessation.process_tree: "unverified"`
 
 Recording again for the same fingerprint replaces the grant.
 
@@ -147,8 +150,8 @@ qualification module; the public native API has no unguarded execution path.
 
 This does not make hand-authored evidence independently trustworthy. Its digest and
 reference preserve what the operator asserted; a manually written evidence file remains
-an unverified operator assertion. The canary harness is not implemented, so no real
-profile is qualified by this change.
+an unverified operator assertion. Fixture tests of the canary do not qualify a real
+profile. Recording a real grant still requires the interactive operator procedure.
 
 ## Canary harness contract
 
@@ -158,13 +161,25 @@ root with no remotes. It must not overlap any configured or approved repository 
 or discovery root, must not share their Git identity, and must not contain the
 database. The canary uses no repository alias, admits no run and isn't reachable via MCP.
 
-**Not yet implemented.** After the preconditions pass, the command refuses with
-`qualification_canary_not_yet_implemented`. It starts no native process and writes no
-evidence. The bounded owner turn hasn't been built yet. That turn would use capacity 1
-and a tiny wall budget, write a fixed canary file, have Luna compute that file's hash
-itself, and require verified cessation. Until it exists, no evidence file that passes
-the `ordinary` check is produced by Luna. An operator who hand-authors one is making
-an unverified local assertion.
+After interactive operator confirmation, the harness runs one capacity-1 native
+owner turn with a 20-second work budget and 30-second total budget. It requests
+one fixed file in the disposable repository, independently hashes its content,
+rejects extra worktree changes, and checks cessation before producing evidence.
+The qualification-only grant is checked again before native writes. It never
+admits an ordinary run or starts an existing plan.
+
+Cessation evidence covers the owner, reported descendant threads and reported
+background terminals, including active command items. It explicitly records
+`process_tree: "unverified"`; detached subprocesses outside native terminal
+observations remain unverified. It does not claim operating-system process-tree
+cessation. A failed or uncertain check produces failed evidence, never a grant.
+
+For an existing daemon, the native initialization response must identify the
+provider before the CLI can record a grant or the canary can execute. Dakota's
+Codex 0.165.0 response currently lacks `serverInfo`. Connection, catalog reads and
+targeted stop-only containment can remain available, but qualification refuses
+with `qualification_provider_mismatch`. The user-agent string is not a trusted
+replacement for server identity.
 
 ## Remaining for full #71
 

@@ -144,22 +144,32 @@ fn provider_identity(
         return Err(anyhow!(crate::qualification::PROVIDER_MISMATCH));
     }
     let read_hash = |direct: &[&str], nested: Option<(&str, &[&str])>| -> Result<Option<String>> {
-        let value = direct
-            .iter()
-            .find_map(|key| info.get(*key))
-            .or_else(|| nested.and_then(|(object, keys)| info.get(object).and_then(|v| keys.iter().find_map(|key| v.get(*key)))));
+        let value = direct.iter().find_map(|key| info.get(*key)).or_else(|| {
+            nested.and_then(|(object, keys)| {
+                info.get(object)
+                    .and_then(|v| keys.iter().find_map(|key| v.get(*key)))
+            })
+        });
         match value {
             None | Some(Value::Null) => Ok(None),
             Some(Value::String(value))
-                if !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control) =>
+                if !value.is_empty()
+                    && value.len() <= 512
+                    && !value.chars().any(char::is_control) =>
             {
                 Ok(Some(value.clone()))
             }
             Some(_) => Err(anyhow!(crate::qualification::PROVIDER_MISMATCH)),
         }
     };
-    let build_hash = read_hash(&["buildHash", "build_hash"], Some(("buildInfo", &["hash", "sha256"])))?;
-    let binary_hash = read_hash(&["binaryHash", "binary_hash"], Some(("binary", &["hash", "sha256"])))?;
+    let build_hash = read_hash(
+        &["buildHash", "build_hash"],
+        Some(("buildInfo", &["hash", "sha256"])),
+    )?;
+    let binary_hash = read_hash(
+        &["binaryHash", "binary_hash"],
+        Some(("binary", &["hash", "sha256"])),
+    )?;
     Ok(Some(crate::qualification::NativeServerIdentity {
         name: name.to_owned(),
         version: version.to_owned(),
@@ -169,6 +179,9 @@ fn provider_identity(
 }
 
 fn is_effectful_method(method: &str) -> bool {
+    // Inference and owner changes require exact profile authorization. Explicit
+    // interruption and freshly revalidated terminal stops remain available as
+    // containment actions even when the provider identity is unavailable.
     matches!(
         method,
         "thread/start" | "turn/start" | "thread/resume" | "turn/steer"
@@ -337,7 +350,7 @@ impl NativeClient {
             .expect("task lock")
             .extend([stdout_task, stderr_task]);
         let client = Self { inner };
-        client.initialize(false).await?;
+        client.initialize().await?;
         Ok(client)
     }
 
@@ -408,18 +421,17 @@ impl NativeClient {
             let task = tokio::spawn(read_websocket(socket, weak));
             inner.tasks.lock().expect("task lock").push(task);
             let client = Self { inner };
-            client.initialize(true).await?;
+            client.initialize().await?;
             Ok(client)
         }
     }
 
-    async fn initialize(&self, require_provider_identity: bool) -> Result<()> {
+    async fn initialize(&self) -> Result<()> {
         let handshake = timeout(self.inner.options.request_timeout, async {
             let response = self.request("initialize", json!({"clientInfo":{"name":"luna_factory", "title":"Luna Factory", "version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}})).await?;
             let identity = provider_identity(&response)?;
-            if require_provider_identity {
-                ensure!(identity.is_some(), crate::qualification::PROVIDER_MISMATCH);
-            }
+            // Some app-server builds omit serverInfo. Keep passive reads available;
+            // qualification rejects a missing identity before every execution write.
             *self.inner.provider_identity.lock().expect("provider identity lock") = identity;
             self.write_message(json!({"method":"initialized"})).await
         }).await.map_err(|_| anyhow!("native initialize timed out")).and_then(|result| result);
@@ -660,7 +672,12 @@ impl NativeClient {
                 .await;
                 match queued {
                     Err(error) => Err(error),
-                    Ok(()) => flush_websocket(socket).await,
+                    Ok(()) => match authorization {
+                        Some(authorization) => {
+                            flush_websocket_guarded(socket, authorization, &mut frame_guard).await
+                        }
+                        None => flush_websocket(socket).await,
+                    },
                 }
             }
         };
@@ -843,6 +860,46 @@ async fn flush_websocket(socket: &SharedDaemonSocket) -> Result<()> {
         };
         ws.poll_flush_unpin(cx)
             .map_err(|_| anyhow!("native WebSocket flush failed"))
+    })
+    .await
+}
+
+#[cfg(unix)]
+async fn flush_websocket_guarded(
+    socket: &SharedDaemonSocket,
+    authorization: &crate::qualification::DispatchAuthorization,
+    frame_guard: &mut WriteGuard,
+) -> Result<()> {
+    flush_websocket_guarded_with_hook(socket, authorization, frame_guard, || {}).await
+}
+
+#[cfg(unix)]
+async fn flush_websocket_guarded_with_hook(
+    socket: &SharedDaemonSocket,
+    authorization: &crate::qualification::DispatchAuthorization,
+    frame_guard: &mut WriteGuard,
+    mut after_authorization: impl FnMut(),
+) -> Result<()> {
+    let mut flush_attempted = false;
+    std::future::poll_fn(|cx| {
+        let mut slot = socket.lock().expect("daemon socket lock");
+        let Some(ws) = slot.as_mut() else {
+            return std::task::Poll::Ready(Err(anyhow!("native transport is closed")));
+        };
+        if let Err(error) = authorization.check() {
+            return std::task::Poll::Ready(Err(if flush_attempted {
+                anyhow!("native write failed; outcome unknown")
+            } else {
+                error
+            }));
+        }
+        // Sink::start_send queues a frame; the actual socket write can remain
+        // backpressured here. Recheck immediately before every flush poll.
+        flush_attempted = true;
+        after_authorization();
+        frame_guard.complete = false;
+        ws.poll_flush_unpin(cx)
+            .map_err(|_| anyhow!("native write failed; outcome unknown"))
     })
     .await
 }
@@ -1658,7 +1715,8 @@ mod dispatch_guard_tests {
             json!({
                 "profile_fingerprint":profile,
                 "qualification_run":{"harness":crate::qualification::HARNESS,"outcome":"passed",
-                    "started_at":1,"finished_at":2,"checks":[{"passed":true}],"cessation":{"verified":true}}
+                    "started_at":1,"finished_at":2,"checks":[{"passed":true}],"cessation":{"verified":true,
+                        "scope":crate::qualification::CANARY_CESSATION_SCOPE,"process_tree":"unverified"}}
             })
             .to_string(),
         )
@@ -1838,5 +1896,171 @@ mod dispatch_guard_tests {
         client.request("safe-read", json!({})).await.unwrap();
         server.await.unwrap();
         client.shutdown().await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn websocket_backpressure_rechecks_revocation_before_flushing_a_queued_effect() {
+        use std::os::fd::AsRawFd;
+        use tokio_tungstenite::accept_async;
+
+        let (directory, mut config, _) = qualification_fixture();
+        let path = directory.path().join("backpressured-native.sock");
+        config.native_transport = "existing_daemon".into();
+        config.native_socket = Some(path.clone());
+        let identity = crate::qualification::NativeServerIdentity {
+            name: "codex-fixture".into(),
+            version: "1.0".into(),
+            build_hash: Some("fixture-sha256".into()),
+            binary_hash: None,
+        };
+        let profile = crate::qualification::ExecutionProfile::from_config(&config, "default")
+            .unwrap()
+            .fingerprint();
+        let evidence = directory.path().join("websocket-qualification.json");
+        std::fs::write(
+            &evidence,
+            json!({"profile_fingerprint":profile,
+                "qualification_run":{"harness":crate::qualification::HARNESS,"outcome":"passed",
+                    "started_at":1,"finished_at":2,"checks":[{"passed":true}],
+                    "cessation":{"verified":true,"scope":crate::qualification::CANARY_CESSATION_SCOPE,
+                        "process_tree":"unverified"}}}).to_string(),
+        )
+        .unwrap();
+        crate::qualification::record(
+            &config,
+            crate::qualification::RecordRequest {
+                alias: "default",
+                evidence: &evidence,
+                scope: crate::qualification::Scope::Ordinary,
+                max_capacity: 1,
+                expires_in_days: None,
+                provider_identity: Some(identity.clone()),
+            },
+            &crate::qualification::test_operator_confirmation(),
+        )
+        .unwrap();
+        let fingerprint = crate::qualification::ExecutionProfile::from_config(&config, "default")
+            .unwrap()
+            .fingerprint();
+
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = accept_async(stream).await.unwrap();
+            let initialize: Value =
+                serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+            ws.send(Message::Text(
+                json!({"id":initialize["id"],"result":{"serverInfo":{"name":"codex-fixture","version":"1.0","buildHash":"fixture-sha256"}}})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+            let initialized: Value =
+                serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+            assert_eq!(initialized["method"], "initialized");
+            released.await.unwrap();
+            let mut effect_seen = false;
+            while let Some(message) = ws.next().await {
+                match message {
+                    Ok(Message::Text(text)) => {
+                        if serde_json::from_str::<Value>(&text)
+                            .is_ok_and(|message| message["method"] == "turn/start")
+                        {
+                            effect_seen = true;
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(_) => break,
+                }
+            }
+            effect_seen
+        });
+        let options = NativeOptions {
+            request_timeout: Duration::from_secs(15),
+            ..NativeOptions::default()
+        };
+        let client =
+            NativeClient::connect_existing_with_options(&config.codex_binary, Some(&path), options)
+                .await
+                .unwrap();
+        let socket = client.inner.daemon_socket.as_ref().unwrap().clone();
+        {
+            let mut slot = socket.lock().unwrap();
+            let stream = slot.as_mut().unwrap().get_ref();
+            let send_buffer_size: libc::c_int = 4096;
+            let result = unsafe {
+                libc::setsockopt(
+                    stream.as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    libc::SO_SNDBUF,
+                    (&send_buffer_size as *const libc::c_int).cast(),
+                    std::mem::size_of_val(&send_buffer_size) as libc::socklen_t,
+                )
+            };
+            assert_eq!(result, 0);
+        }
+
+        let authorization =
+            crate::qualification::dispatch_authorization(&config, "default", 1, Some(identity));
+        authorization.check().unwrap();
+        let message = Message::Text(
+            json!({"id":77,"method":"turn/start","params":{"threadId":"owner","payload":"x".repeat(750_000)}})
+                .to_string()
+                .into(),
+        );
+        {
+            let mut slot = socket.lock().unwrap();
+            let ws = slot.as_mut().unwrap();
+            ws.start_send_unpin(message).unwrap();
+        }
+        let (flush_started, flush_started_rx) = tokio::sync::oneshot::channel();
+        let mut flush_started = Some(flush_started);
+        let mut frame_guard = WriteGuard {
+            inner: Arc::downgrade(&client.inner),
+            complete: false,
+            timing_out: Arc::new(AtomicBool::new(false)),
+            timeout_reason: "qualification_write_timeout",
+        };
+        let flush_socket = socket.clone();
+        let flush = tokio::spawn(async move {
+            flush_websocket_guarded_with_hook(
+                &flush_socket,
+                &authorization,
+                &mut frame_guard,
+                move || {
+                    if let Some(started) = flush_started.take() {
+                        let _ = started.send(());
+                    }
+                },
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), flush_started_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !flush.is_finished(),
+            "the Unix socket was not backpressured"
+        );
+
+        crate::qualification::revoke(
+            &config,
+            &fingerprint,
+            &crate::qualification::test_operator_confirmation(),
+        )
+        .unwrap();
+        release.send(()).unwrap();
+        let error = flush.await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("outcome unknown"), "{error}");
+        client.shutdown().await.unwrap();
+        assert!(
+            !server.await.unwrap(),
+            "queued turn/start reached the daemon"
+        );
     }
 }

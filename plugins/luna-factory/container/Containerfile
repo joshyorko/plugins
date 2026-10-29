@@ -22,6 +22,7 @@ RUN CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} cargo build --locked --release
 FROM ${PYTHON_BASE}
 
 ARG SOURCE_COMMIT
+ARG RELEASE_COMMIT
 ARG SOURCE_PATCH_SHA256
 ARG IMAGE_FINGERPRINT
 ARG RELEASE_ARCHIVE_SHA256
@@ -34,6 +35,7 @@ ARG UI_VERSION
 LABEL org.opencontainers.image.title="Luna Factory OCI preview" \
       org.opencontainers.image.version="0.2.1" \
       org.opencontainers.image.revision="${SOURCE_COMMIT}" \
+      io.luna-factory.base-release="${RELEASE_COMMIT}" \
       io.luna-factory.release-archive-sha256="${RELEASE_ARCHIVE_SHA256}" \
       io.luna-factory.released-ui-sha256="${RELEASE_UI_SHA256}" \
       io.luna-factory.git-package-version="${GIT_PACKAGE_VERSION}" \

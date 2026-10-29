@@ -154,6 +154,12 @@ fn existing_daemon_grant_requires_the_initialize_server_identity_and_reported_ha
         qualification::Status::Denied(qualification::PROVIDER_MISMATCH)
     );
     assert_eq!(
+        qualification::require_with_identity(&config, "default", 1, None)
+            .unwrap_err()
+            .to_string(),
+        qualification::PROVIDER_MISMATCH
+    );
+    assert_eq!(
         qualification::check_with_provider_identity(
             &config,
             "default",
@@ -470,11 +476,14 @@ async fn revocation_mid_turn_interrupts_before_recording_a_new_spawned_worker() 
     let factory = Factory::new(config).unwrap();
     std::fs::write(fixture.dir.path().join("mode"), "revoke_mid_turn").unwrap();
     let started = factory.start(fixture.request.clone()).await.unwrap();
-    let id = started["id"].as_str().unwrap();
+    let id = started["id"].as_str().unwrap().to_owned();
     let mut stopped = started;
-    for _ in 0..100 {
-        stopped = factory.get(id).await.unwrap();
-        if stopped["blocker"] == "qualification_revoked" {
+    for _ in 0..200 {
+        stopped = factory.get(&id).await.unwrap();
+        let revoked_child_interrupted = calls(&fixture.dir).iter().any(|call| {
+            call["method"] == "turn/interrupt" && call["params"]["threadId"] == "revoked-child"
+        });
+        if stopped["blocker"] == "qualification_revoked" && revoked_child_interrupted {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -482,14 +491,9 @@ async fn revocation_mid_turn_interrupts_before_recording_a_new_spawned_worker() 
 
     assert_eq!(stopped["state"], "BLOCKED");
     assert_eq!(stopped["blocker"], "qualification_revoked");
-    assert!(
-        !stopped["owned_threads"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|thread| thread == "revoked-child")
-    );
-    let interrupted = calls(&fixture.dir)
+    assert_eq!(stopped["owned_workers"], 0);
+    let native_calls = calls(&fixture.dir);
+    let interrupted = native_calls
         .iter()
         .filter(|call| call["method"] == "turn/interrupt")
         .map(|call| call["params"]["threadId"].as_str().unwrap())
@@ -749,7 +753,7 @@ fn operator_cli_refuses_missing_mismatched_and_unproved_evidence() {
         json!({"profile_fingerprint":fingerprint(&fixture.config)}).to_string(),
     )
     .unwrap();
-    let granted = record("qualification_only").unwrap();
+    assert_eq!(record("qualification_only").unwrap()["status"], "current");
     let listed: Value =
         serde_json::from_slice(&cli(&["qualifications", "--config", &config]).stdout).unwrap();
     assert_eq!(listed[0]["scope"], "qualification_only");
@@ -821,7 +825,15 @@ fn canary_refuses_missing_grants_and_non_disposable_workspaces_without_native_co
         refusal(&fixture.config, Path::new("relative/canary")),
         "canary_workspace_must_be_absolute"
     );
-    // A disposable workspace passes preconditions, but the harness refuses honestly.
+    std::fs::write(workspace.join("uncommitted.txt"), "not disposable\n").unwrap();
+    assert_eq!(
+        refusal(&fixture.config, &workspace),
+        "canary_workspace_not_clean"
+    );
+    std::fs::remove_file(workspace.join("uncommitted.txt")).unwrap();
+    assert!(qualification::canary_preconditions(&fixture.config, "default", &workspace).is_ok());
+
+    // The operator command requires a real interactive confirmation before native contact.
     let config = write_config(&fixture);
     let output = fixture.dir.path().join("canary-evidence.json");
     let run = cli(&[
@@ -835,7 +847,7 @@ fn canary_refuses_missing_grants_and_non_disposable_workspaces_without_native_co
         "--output",
         &output.to_string_lossy(),
     ]);
-    refused(&run, "qualification_canary_not_yet_implemented");
+    refused(&run, "qualification_operator_tty_required");
     assert!(!output.exists(), "canary wrote evidence without running");
     assert!(calls(&fixture.dir).is_empty(), "canary contacted native");
     // The qualification_only grant still cannot start ordinary work.
@@ -855,4 +867,206 @@ fn canary_refuses_missing_grants_and_non_disposable_workspaces_without_native_co
         );
     });
     assert!(calls(&fixture.dir).is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn canary_refuses_a_committed_dangling_target_symlink_before_native_contact() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = fixture("fake_qualification_canary.py");
+    let workspace = fixture.dir.path().join("canary");
+    repository(&workspace);
+    symlink(
+        fixture.dir.path().join("outside-canary-target"),
+        workspace.join(qualification::CANARY_FILENAME),
+    )
+    .unwrap();
+    git(&workspace, &["add", qualification::CANARY_FILENAME]);
+    git(
+        &workspace,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "tracked dangling canary target",
+        ],
+    );
+    support::qualified_with(fixture.config.clone(), Scope::QualificationOnly, 1);
+
+    assert_eq!(
+        qualification::canary_preconditions(&fixture.config, "default", &workspace)
+            .unwrap_err()
+            .to_string(),
+        "canary_workspace_target_exists"
+    );
+    assert!(calls(&fixture.dir).is_empty());
+}
+
+#[tokio::test]
+async fn qualification_canary_runs_one_guarded_turn_and_emits_an_independent_hash() {
+    let fixture = fixture("fake_qualification_canary.py");
+    let workspace = fixture.dir.path().join("canary");
+    repository(&workspace);
+    support::qualified_with(fixture.config.clone(), Scope::QualificationOnly, 8);
+
+    let evidence = qualification::run_canary(
+        &fixture.config,
+        "default",
+        &workspace,
+        &qualification::test_operator_confirmation(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        evidence["profile_fingerprint"],
+        fingerprint(&fixture.config)
+    );
+    assert_eq!(
+        evidence["qualification_run"]["harness"],
+        qualification::HARNESS
+    );
+    assert_eq!(evidence["qualification_run"]["outcome"], "passed");
+    assert_eq!(
+        evidence["qualification_run"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["name"] == "file_sha256")
+            .unwrap()["sha256"],
+        "fcb3c02ff15f7186a9bf1accaf1732f68130e0182f182b96d766105c75e02c0f"
+    );
+    assert!(evidence["qualification_run"]["cessation"]["verified"] == true);
+    assert_eq!(
+        evidence["qualification_run"]["cessation"]["scope"],
+        qualification::CANARY_CESSATION_SCOPE
+    );
+    assert_eq!(
+        evidence["qualification_run"]["cessation"]["process_tree"],
+        "unverified"
+    );
+    assert!(
+        evidence["qualification_run"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|check| check["passed"] == true)
+    );
+    assert!(!evidence.to_string().contains('/'));
+    assert!(
+        !workspace
+            .join("luna-factory-qualification-canary.txt")
+            .exists()
+    );
+    assert!(
+        Command::new("git")
+            .args([
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+                "--ignored"
+            ])
+            .current_dir(&workspace)
+            .output()
+            .unwrap()
+            .stdout
+            .is_empty()
+    );
+
+    let invocation: Value =
+        serde_json::from_slice(&std::fs::read(fixture.dir.path().join("invocation.json")).unwrap())
+            .unwrap();
+    assert_eq!(invocation["argv"], json!(["app-server", "--stdio"]));
+    assert_eq!(count(&fixture.dir, "thread/start"), 1);
+    assert_eq!(count(&fixture.dir, "turn/start"), 1);
+    assert_eq!(count(&fixture.dir, "thread/resume"), 0);
+    assert_eq!(count(&fixture.dir, "turn/steer"), 0);
+    assert_eq!(count(&fixture.dir, "turn/interrupt"), 0);
+    let native_calls = calls(&fixture.dir);
+    let start = native_calls
+        .iter()
+        .find(|call| call["method"] == "thread/start")
+        .unwrap();
+    assert_eq!(
+        start["params"]["config"]["agents.max_concurrent_threads_per_session"],
+        1
+    );
+    assert!(
+        luna_factoryd::store::Store::open(&fixture.config)
+            .unwrap()
+            .list(10)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn qualification_canary_rechecks_its_scoped_grant_at_each_native_write() {
+    for (mode, expected_thread_starts) in
+        [("revoke_on_model/list", 0), ("revoke_on_thread/start", 1)]
+    {
+        let fixture = fixture("fake_qualification_canary.py");
+        let workspace = fixture.dir.path().join("canary");
+        repository(&workspace);
+        support::qualified_with(fixture.config.clone(), Scope::QualificationOnly, 1);
+        std::fs::write(fixture.dir.path().join("mode"), mode).unwrap();
+
+        let evidence = qualification::run_canary(
+            &fixture.config,
+            "default",
+            &workspace,
+            &qualification::test_operator_confirmation(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(evidence["qualification_run"]["outcome"], "failed", "{mode}");
+        assert_eq!(
+            evidence["qualification_run"]["cessation"]["verified"], true,
+            "{mode}"
+        );
+        assert_eq!(count(&fixture.dir, "thread/start"), expected_thread_starts);
+        assert_eq!(count(&fixture.dir, "turn/start"), 0);
+        assert!(
+            luna_factoryd::store::Store::open(&fixture.config)
+                .unwrap()
+                .list(10)
+                .unwrap()
+                .is_empty()
+        );
+    }
+}
+
+#[tokio::test]
+async fn qualification_canary_does_not_pass_when_native_writes_extra_files() {
+    let fixture = fixture("fake_qualification_canary.py");
+    let workspace = fixture.dir.path().join("canary");
+    repository(&workspace);
+    support::qualified_with(fixture.config.clone(), Scope::QualificationOnly, 1);
+    std::fs::write(fixture.dir.path().join("mode"), "write_extra_file").unwrap();
+
+    let evidence = qualification::run_canary(
+        &fixture.config,
+        "default",
+        &workspace,
+        &qualification::test_operator_confirmation(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(evidence["qualification_run"]["outcome"], "failed");
+    assert_eq!(
+        evidence["qualification_run"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["name"] == "workspace_changes")
+            .unwrap()["passed"],
+        false
+    );
+    assert_eq!(evidence["qualification_run"]["cessation"]["verified"], true);
 }

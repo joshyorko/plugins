@@ -14,12 +14,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     io::{BufRead, IsTerminal, Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use tokio::time::Instant;
 
 pub const NOT_QUALIFIED: &str = "execution_not_qualified";
 pub const PROFILE_MISMATCH: &str = "execution_profile_mismatch";
@@ -30,16 +31,26 @@ pub const CAPACITY: &str = "execution_capacity_not_qualified";
 pub const PROVIDER_MISMATCH: &str = "qualification_provider_mismatch";
 pub const STORE_EXPOSED: &str = "qualification_store_exposed";
 pub const CLOCK_SKEW: &str = "qualification_clock_skew";
-/// The evidence producer an ordinary grant requires. The canary harness that emits it is
-/// not implemented yet; see docs/execution-qualification.md.
+/// The evidence producer an ordinary grant requires.
 pub const HARNESS: &str = "luna-factory.qualification-canary.v1";
+pub const CANARY_CESSATION_SCOPE: &str = "native_owner_descendants_and_reported_terminals";
 pub const UNAVAILABLE: &str = "unavailable";
+pub const CANARY_FILENAME: &str = "luna-factory-qualification-canary.txt";
+const CANARY_CONTENT: &[u8] = b"Luna Factory qualification canary v1\n";
+const CANARY_OBJECTIVE: &str = "In this disposable repository, create the file `luna-factory-qualification-canary.txt` in the repository root containing exactly `Luna Factory qualification canary v1` followed by one newline. Do not modify any other file, use the network, or spawn subagents. Do not report success unless the file is written.";
+const CANARY_WORK_BUDGET: Duration = Duration::from_secs(20);
+const CANARY_TOTAL_BUDGET: Duration = Duration::from_secs(30);
+const CANARY_REQUEST_TIMEOUT: Duration = Duration::from_secs(6);
 const MAX_BINARY_HASH_BYTES: u64 = 512 * 1024 * 1024;
 const CLOCK_SKEW_TOLERANCE_SECONDS: u64 = 60;
 
 #[cfg(test)]
 mod tests {
-    use super::{CLOCK_SKEW, TABLE_SQL, advance_high_water, binary_identity, sandbox_indicated};
+    use super::{
+        CANARY_CESSATION_SCOPE, CLOCK_SKEW, TABLE_SQL, UNIX_EPOCH, advance_high_water,
+        binary_identity, canary_command_items_stopped, effective_qualification_time,
+        qualification_timestamp, sandbox_indicated,
+    };
     use std::fs::File;
 
     #[test]
@@ -66,6 +77,31 @@ mod tests {
     }
 
     #[test]
+    fn binary_identity_rehashes_same_inode_after_mtime_is_restored() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("codex");
+        std::fs::write(&path, b"codex-build-a").unwrap();
+        let before = std::fs::metadata(&path).unwrap();
+        let identity = binary_identity(&path);
+
+        std::fs::write(&path, b"codex-build-b").unwrap();
+        std::fs::File::open(&path)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(before.modified().unwrap()))
+            .unwrap();
+        let after = std::fs::metadata(&path).unwrap();
+
+        assert_eq!(before.len(), after.len());
+        assert_eq!(before.modified().unwrap(), after.modified().unwrap());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(before.ino(), after.ino());
+        }
+        assert_ne!(identity, binary_identity(&path));
+    }
+
+    #[test]
     fn qualification_clock_rejects_rollbacks_over_sixty_seconds_and_keeps_high_water() {
         let connection = rusqlite::Connection::open_in_memory().unwrap();
         connection.execute_batch(TABLE_SQL).unwrap();
@@ -77,7 +113,7 @@ mod tests {
                 .to_string(),
             CLOCK_SKEW
         );
-        let high_water: u64 = connection
+        let high_water: i64 = connection
             .query_row(
                 "SELECT high_water FROM qualification_clock WHERE id=1",
                 [],
@@ -85,6 +121,16 @@ mod tests {
             )
             .unwrap();
         assert_eq!(high_water, 1000);
+    }
+
+    #[test]
+    fn expired_qualification_does_not_revive_after_a_tolerated_clock_rollback() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.execute_batch(TABLE_SQL).unwrap();
+        advance_high_water(&connection, 1000).unwrap();
+        let effective_now = effective_qualification_time(&connection, 970).unwrap();
+        assert_eq!(effective_now, 1000);
+        assert!(980 <= effective_now, "an expired grant must stay expired");
     }
 
     #[test]
@@ -104,8 +150,25 @@ mod tests {
     fn qualification_time_before_epoch_is_not_coerced_to_zero() {
         let before_epoch = UNIX_EPOCH - std::time::Duration::from_secs(1);
         assert_eq!(
-            qualification_timestamp(before_epoch).unwrap_err().to_string(),
+            qualification_timestamp(before_epoch)
+                .unwrap_err()
+                .to_string(),
             CLOCK_SKEW
+        );
+    }
+
+    #[test]
+    fn canary_cessation_rejects_nonterminal_command_items() {
+        assert!(canary_command_items_stopped(&[]));
+        assert!(canary_command_items_stopped(&[serde_json::json!({
+            "type":"commandExecution","status":"completed","exitCode":0
+        })]));
+        assert!(!canary_command_items_stopped(&[serde_json::json!({
+            "type":"commandExecution","status":"inProgress","exitCode":null
+        })]));
+        assert_eq!(
+            CANARY_CESSATION_SCOPE,
+            "native_owner_descendants_and_reported_terminals"
         );
     }
 }
@@ -186,6 +249,8 @@ struct BinaryCacheKey {
     size: u64,
     modified_seconds: u64,
     modified_nanos: u32,
+    changed_seconds: i64,
+    changed_nanos: i64,
 }
 
 fn binary_cache_key(metadata: &std::fs::Metadata) -> Option<BinaryCacheKey> {
@@ -197,6 +262,8 @@ fn binary_cache_key(metadata: &std::fs::Metadata) -> Option<BinaryCacheKey> {
         size: metadata.len(),
         modified_seconds: modified.as_secs(),
         modified_nanos: modified.subsec_nanos(),
+        changed_seconds: metadata.ctime(),
+        changed_nanos: metadata.ctime_nsec(),
     })
 }
 
@@ -323,13 +390,37 @@ pub(crate) fn dispatch_authorization_with(
     provider_identity: Option<NativeServerIdentity>,
     before_qualification: impl Fn() -> Result<()> + Send + Sync + 'static,
 ) -> DispatchAuthorization {
+    dispatch_authorization_for_scope_with(
+        config,
+        alias,
+        Scope::Ordinary,
+        capacity,
+        provider_identity,
+        before_qualification,
+    )
+}
+
+fn dispatch_authorization_for_scope_with(
+    config: &Config,
+    alias: &str,
+    scope: Scope,
+    capacity: u32,
+    provider_identity: Option<NativeServerIdentity>,
+    before_qualification: impl Fn() -> Result<()> + Send + Sync + 'static,
+) -> DispatchAuthorization {
     let config = config.clone();
     let alias = alias.to_owned();
     DispatchAuthorization {
         check: Arc::new({
             move || {
                 before_qualification()?;
-                require_with_identity(&config, &alias, capacity, provider_identity.as_ref())
+                require_scope_with_identity(
+                    &config,
+                    &alias,
+                    scope,
+                    capacity,
+                    provider_identity.as_ref(),
+                )
             }
         }),
     }
@@ -411,6 +502,7 @@ fn load(connection: &Connection, fingerprint: &str) -> Result<Option<Qualificati
         .transpose()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn evaluate_with_identity(
     connection: &Connection,
     config: &Config,
@@ -425,7 +517,7 @@ fn evaluate_with_identity(
         return Evaluation::denied(NOT_QUALIFIED);
     };
     if profile.codex_binary_identity == UNAVAILABLE {
-        return Evaluation::denied(PROVIDER_MISMATCH);
+        return Evaluation::denied(NOT_QUALIFIED);
     }
     let fingerprint = profile.fingerprint();
     match load(connection, &fingerprint) {
@@ -436,13 +528,12 @@ fn evaluate_with_identity(
                 Evaluation::denied(PROFILE_MISMATCH)
             } else if now < record.recorded_at {
                 Evaluation::denied(CLOCK_SKEW)
-            } else if config.native_transport == "existing_daemon"
+            } else if (config.native_transport == "existing_daemon"
                 && (record.provider_identity.is_none()
                     || (compare_provider_identity
-                        && record.provider_identity.as_ref() != provider_identity))
+                        && record.provider_identity.as_ref() != provider_identity)))
+                || (config.native_transport == "stdio" && record.provider_identity.is_some())
             {
-                Evaluation::denied(PROVIDER_MISMATCH)
-            } else if config.native_transport == "stdio" && record.provider_identity.is_some() {
                 Evaluation::denied(PROVIDER_MISMATCH)
             } else if record.revoked_at.is_some() {
                 Evaluation::denied(REVOKED)
@@ -491,8 +582,7 @@ pub fn now_qualification() -> Result<u64> {
 }
 
 fn qualification_timestamp(time: SystemTime) -> Result<u64> {
-    time
-        .duration_since(UNIX_EPOCH)
+    time.duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .map_err(|_| anyhow::anyhow!(CLOCK_SKEW))
 }
@@ -513,6 +603,12 @@ pub(crate) fn validate_store_boundary(config: &Config, additional_roots: &[PathB
                 .cas_targets
                 .values()
                 .map(|target| PathBuf::from(&target.cwd)),
+        )
+        .chain(
+            config
+                .workspaces
+                .iter()
+                .map(|workspaces| workspaces.root.clone()),
         )
         .chain(additional_roots.iter().cloned())
         .collect::<Vec<_>>();
@@ -545,25 +641,31 @@ pub(crate) fn validate_store_boundary_from_connection(
     if has_registrations {
         let mut statement =
             connection.prepare("SELECT payload FROM repository_registrations LIMIT 101")?;
+        let mut registration_count = 0;
         for payload in statement.query_map([], |row| row.get::<_, String>(0))? {
+            registration_count += 1;
+            ensure!(
+                registration_count <= crate::repositories::MAX_REGISTRATIONS,
+                STORE_EXPOSED
+            );
             let registration: crate::repositories::Registration = serde_json::from_str(&payload?)?;
-            let repository = config
+            let Some(repository) = config
                 .repositories
                 .get(&registration.root_alias)
                 .or_else(|| config.discovery_roots.get(&registration.root_alias))
-                .context(STORE_EXPOSED)?;
+            else {
+                // A registration whose root alias was removed from operator config is
+                // revoked and has no remaining writable root to test against.
+                continue;
+            };
             roots.push(repository.root.join(&registration.relative));
         }
-        ensure!(
-            roots.len() <= crate::repositories::MAX_REGISTRATIONS,
-            STORE_EXPOSED
-        );
     }
     validate_store_boundary(config, &roots)
 }
 
 fn advance_high_water(connection: &Connection, now: u64) -> Result<()> {
-    let high_water: Option<u64> = connection
+    let high_water: Option<i64> = connection
         .query_row(
             "SELECT high_water FROM qualification_clock WHERE id=1",
             [],
@@ -571,21 +673,39 @@ fn advance_high_water(connection: &Connection, now: u64) -> Result<()> {
         )
         .optional()?;
     if let Some(high_water) = high_water {
+        let high_water = u64::try_from(high_water).context("qualification_clock_invalid")?;
         ensure!(
             now >= high_water.saturating_sub(CLOCK_SKEW_TOLERANCE_SECONDS),
             CLOCK_SKEW
         );
+        let updated =
+            i64::try_from(high_water.max(now)).context("qualification_clock_out_of_range")?;
         connection.execute(
             "UPDATE qualification_clock SET high_water=?1 WHERE id=1",
-            [high_water.max(now)],
+            [updated],
         )?;
     } else {
+        let now = i64::try_from(now).context("qualification_clock_out_of_range")?;
         connection.execute(
             "INSERT INTO qualification_clock(id,high_water) VALUES (1,?1)",
             [now],
         )?;
     }
     Ok(())
+}
+
+fn effective_qualification_time(connection: &Connection, now: u64) -> Result<u64> {
+    let high_water: i64 = connection.query_row(
+        "SELECT high_water FROM qualification_clock WHERE id=1",
+        [],
+        |row| row.get(0),
+    )?;
+    let high_water = u64::try_from(high_water).context(CLOCK_SKEW)?;
+    ensure!(
+        now >= high_water.saturating_sub(CLOCK_SKEW_TOLERANCE_SECONDS),
+        CLOCK_SKEW
+    );
+    Ok(now.max(high_water))
 }
 
 fn check_with_identity(
@@ -599,9 +719,53 @@ fn check_with_identity(
     if validate_store_boundary(config, &[]).is_err() {
         return Evaluation::denied(STORE_EXPOSED);
     }
-    let mut connection = match Connection::open_with_flags(
+    let mut clock_connection = match Connection::open_with_flags(
         &config.database,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) {
+        Ok(connection) => connection,
+        Err(_) => return Evaluation::denied(NOT_QUALIFIED),
+    };
+    if clock_connection
+        .busy_timeout(std::time::Duration::from_secs(2))
+        .is_err()
+    {
+        return Evaluation::denied(NOT_QUALIFIED);
+    }
+    let qualification_table: bool = match clock_connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_qualifications')",
+        [],
+        |row| row.get(0),
+    ) {
+        Ok(present) => present,
+        Err(_) => return Evaluation::denied(NOT_QUALIFIED),
+    };
+    if !qualification_table {
+        return Evaluation::denied(NOT_QUALIFIED);
+    }
+    if validate_store_boundary_from_connection(config, &clock_connection).is_err() {
+        return Evaluation::denied(STORE_EXPOSED);
+    }
+    let now = match now_qualification() {
+        Ok(now) => now,
+        Err(_) => return Evaluation::denied(CLOCK_SKEW),
+    };
+    let Ok(tx) = clock_connection.transaction_with_behavior(TransactionBehavior::Immediate) else {
+        return Evaluation::denied(NOT_QUALIFIED);
+    };
+    if advance_high_water(&tx, now).is_err() {
+        return Evaluation::denied(CLOCK_SKEW);
+    }
+    if tx.commit().is_err() {
+        return Evaluation::denied(NOT_QUALIFIED);
+    }
+    drop(clock_connection);
+
+    // Qualification rows and revocation state are always read from a new read-only
+    // connection. The separate clock write above only preserves rollback detection.
+    let connection = match Connection::open_with_flags(
+        &config.database,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     ) {
         Ok(connection) => connection,
         Err(_) => return Evaluation::denied(NOT_QUALIFIED),
@@ -615,18 +779,16 @@ fn check_with_identity(
     if validate_store_boundary_from_connection(config, &connection).is_err() {
         return Evaluation::denied(STORE_EXPOSED);
     }
-    let now = match now_qualification() {
+    let raw_now = match now_qualification() {
         Ok(now) => now,
         Err(_) => return Evaluation::denied(CLOCK_SKEW),
     };
-    let Ok(tx) = connection.transaction_with_behavior(TransactionBehavior::Immediate) else {
-        return Evaluation::denied(NOT_QUALIFIED);
+    let now = match effective_qualification_time(&connection, raw_now) {
+        Ok(now) => now,
+        Err(_) => return Evaluation::denied(CLOCK_SKEW),
     };
-    if advance_high_water(&tx, now).is_err() {
-        return Evaluation::denied(CLOCK_SKEW);
-    }
-    let result = evaluate_with_identity(
-        &tx,
+    evaluate_with_identity(
+        &connection,
         config,
         alias,
         scope,
@@ -634,11 +796,7 @@ fn check_with_identity(
         now,
         provider_identity,
         compare_provider_identity,
-    );
-    if tx.commit().is_err() {
-        return Evaluation::denied(NOT_QUALIFIED);
-    }
-    result
+    )
 }
 
 /// Current exact provider identity is required for status and effect-path checks.
@@ -668,25 +826,26 @@ pub fn require_scope(config: &Config, alias: &str, scope: Scope, capacity: u32) 
     }
 }
 
+pub fn require_scope_with_identity(
+    config: &Config,
+    alias: &str,
+    scope: Scope,
+    capacity: u32,
+    provider_identity: Option<&NativeServerIdentity>,
+) -> Result<()> {
+    match check_with_identity(config, alias, scope, capacity, provider_identity, true).status {
+        Status::Qualified => Ok(()),
+        Status::Denied(code) => Err(ExecutionDenied { code }.into()),
+    }
+}
+
 pub fn require_with_identity(
     config: &Config,
     alias: &str,
     capacity: u32,
     provider_identity: Option<&NativeServerIdentity>,
 ) -> Result<()> {
-    match check_with_identity(
-        config,
-        alias,
-        Scope::Ordinary,
-        capacity,
-        provider_identity,
-        true,
-    )
-    .status
-    {
-        Status::Qualified => Ok(()),
-        Status::Denied(code) => Err(ExecutionDenied { code }.into()),
-    }
+    require_scope_with_identity(config, alias, Scope::Ordinary, capacity, provider_identity)
 }
 
 /// Bounded, path-free per-profile status for capabilities.
@@ -754,6 +913,11 @@ fn validate_passed_run(run: &Value) -> Result<()> {
     ensure!(
         run["cessation"]["verified"] == true,
         "qualification_evidence_cessation_unverified"
+    );
+    ensure!(
+        run["cessation"]["scope"] == CANARY_CESSATION_SCOPE
+            && run["cessation"]["process_tree"] == "unverified",
+        "qualification_evidence_cessation_scope_unverified"
     );
     Ok(())
 }
@@ -967,7 +1131,8 @@ pub fn record(
         params![fingerprint, request.alias, serde_json::to_string(&record)?],
     )?;
     tx.commit()?;
-    Ok(public(&fingerprint, &record, Some(config)))
+    let public_now = effective_qualification_time(&connection, recorded_at).ok();
+    Ok(public(&fingerprint, &record, Some(config), public_now))
 }
 
 pub fn profile_alias(config: &Config, fingerprint: &str) -> Result<String> {
@@ -998,11 +1163,17 @@ pub fn revoke(
         )?;
     }
     tx.commit()?;
-    Ok(public(fingerprint, &record, Some(config)))
+    let public_now = now_qualification()
+        .ok()
+        .and_then(|now| effective_qualification_time(&connection, now).ok());
+    Ok(public(fingerprint, &record, Some(config), public_now))
 }
 
 pub fn list(config: &Config) -> Result<Vec<Value>> {
     let connection = open_write(config)?;
+    let public_now = now_qualification()
+        .ok()
+        .and_then(|now| effective_qualification_time(&connection, now).ok());
     let mut statement = connection.prepare(
         "SELECT fingerprint,payload FROM execution_qualifications ORDER BY profile_alias,fingerprint LIMIT 256",
     )?;
@@ -1015,7 +1186,7 @@ pub fn list(config: &Config) -> Result<Vec<Value>> {
         .into_iter()
         .map(
             |(fingerprint, payload)| match serde_json::from_str::<Qualification>(&payload) {
-                Ok(record) => public(&fingerprint, &record, Some(config)),
+                Ok(record) => public(&fingerprint, &record, Some(config), public_now),
                 Err(_) => json!({"fingerprint":fingerprint,"status":"unreadable"}),
             },
         )
@@ -1023,8 +1194,12 @@ pub fn list(config: &Config) -> Result<Vec<Value>> {
 }
 
 /// Bounded operator view. Evidence content is never echoed; only its digest and path.
-fn public(fingerprint: &str, record: &Qualification, config: Option<&Config>) -> Value {
-    let now = now_qualification().ok();
+fn public(
+    fingerprint: &str,
+    record: &Qualification,
+    config: Option<&Config>,
+    now: Option<u64>,
+) -> Value {
     let current = config
         .and_then(|config| ExecutionProfile::from_config(config, &record.profile.profile).ok())
         .is_some_and(|profile| profile == record.profile);
@@ -1105,6 +1280,31 @@ pub fn canary_preconditions(config: &Config, alias: &str, workspace: &Path) -> R
             );
         }
     }
+    if let Some(workspaces) = &config.workspaces {
+        let configured = workspaces.root.canonicalize()?;
+        ensure!(
+            !root.starts_with(&configured) && !configured.starts_with(&root),
+            "canary_workspace_overlaps_configured_repository"
+        );
+    }
+    match std::fs::symlink_metadata(root.join(CANARY_FILENAME)) {
+        Ok(_) => anyhow::bail!("canary_workspace_target_exists"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => anyhow::bail!("canary_workspace_target_unavailable"),
+    }
+    ensure!(
+        crate::store::git(
+            &root,
+            &[
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+                "--ignored"
+            ],
+        )?
+        .is_empty(),
+        "canary_workspace_not_clean"
+    );
     let database = crate::config::canonical_destination(&config.database)?;
     ensure!(
         !database.starts_with(&root),
@@ -1112,4 +1312,526 @@ pub fn canary_preconditions(config: &Config, alias: &str, workspace: &Path) -> R
     );
     let fingerprint = ExecutionProfile::from_config(config, alias)?.fingerprint();
     Ok(json!({"profile_fingerprint":fingerprint,"preconditions":"passed"}))
+}
+
+fn canary_check(name: &str, passed: bool) -> Value {
+    json!({"name":name,"passed":passed})
+}
+
+fn canary_evidence(
+    fingerprint: &str,
+    started_at: u64,
+    checks: Vec<Value>,
+    cessation: Value,
+) -> Value {
+    let passed = !checks.is_empty()
+        && checks.iter().all(|check| check["passed"] == true)
+        && cessation["verified"] == true;
+    let finished_at = now_qualification().unwrap_or(started_at).max(started_at);
+    json!({"profile_fingerprint":fingerprint,"qualification_run":{
+        "harness":HARNESS,"outcome":if passed {"passed"} else {"failed"},
+        "started_at":started_at,"finished_at":finished_at,"checks":checks,"cessation":cessation
+    }})
+}
+
+fn canary_cessation(
+    verified: bool,
+    owner_idle: bool,
+    descendants_idle: bool,
+    terminals_clear: bool,
+    owner_started: bool,
+    descendant_count: usize,
+) -> Value {
+    json!({"verified":verified,"scope":CANARY_CESSATION_SCOPE,
+        "owner_idle":owner_idle,"descendants_idle":descendants_idle,
+        "terminals_clear":terminals_clear,"owner_started":owner_started,
+        "descendant_count":descendant_count,"process_tree":"unverified",
+        "known_limitations":["Detached subprocesses outside native terminal observations are unverified."]})
+}
+
+fn canary_command_items_stopped(items: &[Value]) -> bool {
+    items.iter().all(|item| {
+        item["type"] != "commandExecution"
+            || item["status"] == "declined"
+            || (matches!(item["status"].as_str(), Some("completed" | "failed"))
+                && item["exitCode"].is_i64())
+    })
+}
+
+fn canary_file_result(root: &Path) -> (bool, Option<String>) {
+    let path = root.join(CANARY_FILENAME);
+    let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+        return (false, None);
+    };
+    if !metadata.file_type().is_file() || metadata.len() > 256 {
+        return (false, None);
+    }
+    let Ok(bytes) = std::fs::read(&path) else {
+        return (false, None);
+    };
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    (bytes == CANARY_CONTENT, Some(digest))
+}
+
+fn canary_workspace_changes_match(root: &Path, initial_head: &str) -> bool {
+    let Ok(head) = crate::store::git(root, &["rev-parse", "HEAD"]) else {
+        return false;
+    };
+    let Ok(remotes) = crate::store::git(root, &["remote"]) else {
+        return false;
+    };
+    let Ok(status) = crate::store::git(
+        root,
+        &[
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignored",
+        ],
+    ) else {
+        return false;
+    };
+    head == initial_head && remotes.is_empty() && status == format!("?? {CANARY_FILENAME}")
+}
+
+fn cleanup_canary_file(root: &Path) -> bool {
+    let path = root.join(CANARY_FILENAME);
+    match std::fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(_) => false,
+        Ok(metadata) if metadata.file_type().is_file() && metadata.len() <= 256 => {
+            std::fs::read(&path)
+                .is_ok_and(|bytes| bytes == CANARY_CONTENT && std::fs::remove_file(&path).is_ok())
+        }
+        Ok(_) => false,
+    }
+}
+
+fn canary_workspace_restored(root: &Path, initial_head: &str) -> bool {
+    let Ok(head) = crate::store::git(root, &["rev-parse", "HEAD"]) else {
+        return false;
+    };
+    let Ok(remotes) = crate::store::git(root, &["remote"]) else {
+        return false;
+    };
+    let Ok(status) = crate::store::git(
+        root,
+        &[
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignored",
+        ],
+    ) else {
+        return false;
+    };
+    head == initial_head && remotes.is_empty() && status.is_empty()
+}
+
+async fn wait_canary_turn(
+    events: &mut tokio::sync::broadcast::Receiver<Value>,
+    owner: &str,
+    turn: &str,
+    deadline: Instant,
+) -> bool {
+    let wait = tokio::time::timeout_at(deadline, async {
+        loop {
+            match events.recv().await {
+                Ok(event) if event["method"] == "turn/completed" => {
+                    if event["params"]["threadId"].as_str() != Some(owner)
+                        || event["params"]["turn"]["id"].as_str() != Some(turn)
+                    {
+                        continue;
+                    }
+                    return Ok(event["params"]["turn"]["status"] == "completed");
+                }
+                Ok(_) => {}
+                Err(_) => anyhow::bail!("canary_event_stream_unavailable"),
+            }
+        }
+    })
+    .await;
+    matches!(wait, Ok(Ok(true)))
+}
+
+async fn verify_canary_cessation(
+    client: &crate::native::NativeClient,
+    owner: Option<&str>,
+    turn: Option<&str>,
+    turn_completed: bool,
+    deadline: Instant,
+) -> Value {
+    let Some(owner) = owner else {
+        return canary_cessation(true, true, true, true, false, 0);
+    };
+    let mut threads = BTreeSet::from([owner.to_owned()]);
+    let mut last_owner_idle = false;
+    let mut last_descendants_idle = false;
+    let mut last_terminals_clear = false;
+
+    while Instant::now() < deadline {
+        let descendants = match tokio::time::timeout_at(deadline, client.descendants(owner)).await {
+            Ok(Ok(descendants)) => descendants,
+            _ => break,
+        };
+        for thread in descendants {
+            if let Some(id) = thread["id"].as_str() {
+                threads.insert(id.to_owned());
+            }
+        }
+
+        let mut states_known = true;
+        let mut idle_threads = BTreeSet::new();
+        let mut clear_threads = BTreeSet::new();
+        let mut commands_stopped = BTreeSet::new();
+        for id in threads.clone() {
+            let active = match tokio::time::timeout_at(deadline, client.active_turn_ids(&id)).await
+            {
+                Ok(Ok(active)) => active,
+                _ => {
+                    states_known = false;
+                    Vec::new()
+                }
+            };
+            let mut turns_to_interrupt = active.clone();
+            if id == owner
+                && !turn_completed
+                && let Some(turn) = turn
+                && !turns_to_interrupt.iter().any(|active| active == turn)
+            {
+                turns_to_interrupt.push(turn.to_owned());
+            }
+            for turn_id in turns_to_interrupt {
+                let interrupted =
+                    tokio::time::timeout_at(deadline, client.interrupt_turn(&id, &turn_id))
+                        .await
+                        .is_ok_and(|result| result.is_ok());
+                states_known &= interrupted;
+            }
+
+            let terminals =
+                match tokio::time::timeout_at(deadline, client.background_terminals(&id)).await {
+                    Ok(Ok(terminals)) => terminals,
+                    _ => {
+                        states_known = false;
+                        Vec::new()
+                    }
+                };
+            for terminal in &terminals {
+                let stopped = match tokio::time::timeout_at(
+                    deadline,
+                    client.prepare_terminal_stop(&id, terminal),
+                )
+                .await
+                {
+                    Ok(Ok(target)) => tokio::time::timeout_at(
+                        deadline,
+                        client.terminate_background_terminal(target),
+                    )
+                    .await
+                    .is_ok_and(|result| result.is_ok_and(|terminated| terminated)),
+                    _ => false,
+                };
+                states_known &= stopped;
+            }
+
+            let thread = match tokio::time::timeout_at(deadline, client.read_thread(&id)).await {
+                Ok(Ok(thread)) => Some(thread),
+                _ => {
+                    states_known = false;
+                    None
+                }
+            };
+            if thread.as_ref().is_some_and(crate::native::thread_is_idle) && active.is_empty() {
+                idle_threads.insert(id.clone());
+            }
+            if terminals.is_empty() {
+                clear_threads.insert(id.clone());
+            }
+            let items = match tokio::time::timeout_at(deadline, client.thread_items(&id)).await {
+                Ok(Ok(items)) => items,
+                _ => {
+                    states_known = false;
+                    Vec::new()
+                }
+            };
+            if canary_command_items_stopped(&items) {
+                commands_stopped.insert(id.clone());
+            }
+        }
+
+        last_owner_idle = idle_threads.contains(owner);
+        last_descendants_idle = threads
+            .iter()
+            .filter(|id| id.as_str() != owner)
+            .all(|id| idle_threads.contains(id));
+        last_terminals_clear = threads.iter().all(|id| clear_threads.contains(id));
+        let command_items_stopped = threads.iter().all(|id| commands_stopped.contains(id));
+        if states_known
+            && last_owner_idle
+            && last_descendants_idle
+            && last_terminals_clear
+            && command_items_stopped
+        {
+            return canary_cessation(
+                true,
+                true,
+                true,
+                true,
+                true,
+                threads.len().saturating_sub(1),
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    canary_cessation(
+        false,
+        last_owner_idle,
+        last_descendants_idle,
+        last_terminals_clear,
+        true,
+        threads.len().saturating_sub(1),
+    )
+}
+
+/// Run one isolated, qualification-only owner turn through the native client.
+/// The caller must have obtained an operator confirmation; MCP exposes no path here.
+pub async fn run_canary(
+    config: &Config,
+    alias: &str,
+    workspace: &Path,
+    _confirmation: &OperatorConfirmation,
+) -> Result<Value> {
+    let preconditions = canary_preconditions(config, alias, workspace)?;
+    let fingerprint = preconditions["profile_fingerprint"]
+        .as_str()
+        .context("canary_profile_fingerprint_missing")?
+        .to_owned();
+    let profile = ExecutionProfile::from_config(config, alias)?;
+    ensure!(
+        config.profiles[alias].codex_profile.is_none(),
+        "native_profile_override_unsupported"
+    );
+    let root = workspace.canonicalize()?;
+    let initial_head = crate::store::git(&root, &["rev-parse", "HEAD"])?;
+    let started_at = now_qualification()?;
+    let started = Instant::now();
+    let work_deadline = started + CANARY_WORK_BUDGET;
+    let stop_deadline = started + CANARY_TOTAL_BUDGET;
+    let options = crate::native::NativeOptions {
+        request_timeout: CANARY_REQUEST_TIMEOUT,
+        ..crate::native::NativeOptions::default()
+    };
+    let connection = tokio::time::timeout_at(work_deadline, async {
+        if config.native_transport == "existing_daemon" {
+            crate::native::NativeClient::connect_existing_with_options(
+                &config.codex_binary,
+                config.native_socket.as_deref(),
+                options,
+            )
+            .await
+        } else {
+            crate::native::NativeClient::spawn_with_options(
+                &config.codex_binary,
+                &["app-server".into(), "--stdio".into()],
+                options,
+            )
+            .await
+        }
+    })
+    .await;
+    let client = match connection {
+        Ok(Ok(client)) => client,
+        _ => {
+            return Ok(canary_evidence(
+                &fingerprint,
+                started_at,
+                vec![
+                    canary_check("qualification_scope", true),
+                    canary_check("native_owner_turn", false),
+                    json!({"name":"file_sha256","passed":false,"sha256":null}),
+                    canary_check("workspace_changes", false),
+                    canary_check(
+                        "workspace_restored",
+                        canary_workspace_restored(&root, &initial_head),
+                    ),
+                    canary_check("verified_cessation", true),
+                    canary_check("native_transport_closed", false),
+                ],
+                canary_cessation(true, true, true, true, false, 0),
+            ));
+        }
+    };
+    let provider_identity = client.provider_identity();
+    if require_scope_with_identity(
+        config,
+        alias,
+        Scope::QualificationOnly,
+        1,
+        provider_identity.as_ref(),
+    )
+    .is_err()
+    {
+        let closed = client.shutdown().await.is_ok();
+        return Ok(canary_evidence(
+            &fingerprint,
+            started_at,
+            vec![
+                canary_check("qualification_scope", false),
+                canary_check("native_owner_turn", false),
+                json!({"name":"file_sha256","passed":false,"sha256":null}),
+                canary_check("workspace_changes", false),
+                canary_check(
+                    "workspace_restored",
+                    canary_workspace_restored(&root, &initial_head),
+                ),
+                canary_check("verified_cessation", true),
+                canary_check("native_transport_closed", closed),
+            ],
+            canary_cessation(true, true, true, true, false, 0),
+        ));
+    }
+
+    let guard_config = config.clone();
+    let guard_alias = alias.to_owned();
+    let guard_root = root.clone();
+    let guard_fingerprint = fingerprint.clone();
+    let authorization = dispatch_authorization_for_scope_with(
+        config,
+        alias,
+        Scope::QualificationOnly,
+        1,
+        provider_identity.clone(),
+        move || {
+            let latest = canary_preconditions(&guard_config, &guard_alias, &guard_root)?;
+            ensure!(
+                latest["profile_fingerprint"].as_str() == Some(guard_fingerprint.as_str()),
+                PROFILE_MISMATCH
+            );
+            Ok(())
+        },
+    );
+    let mut events = client.subscribe();
+    let thread_start = tokio::time::timeout_at(
+        work_deadline,
+        client.start_thread_guarded(&root, &profile.effort, 1, &authorization),
+    )
+    .await;
+    let mut owner = None;
+    let mut thread_start_refused = false;
+    match thread_start {
+        Ok(Ok(response)) => owner = response["thread"]["id"].as_str().map(str::to_owned),
+        Ok(Err(error)) => thread_start_refused = denied_code(&error).is_some(),
+        Err(_) => {}
+    }
+    let Some(owner_id) = owner else {
+        let closed = client.shutdown().await.is_ok();
+        let workspace_restored = canary_workspace_restored(&root, &initial_head);
+        return Ok(canary_evidence(
+            &fingerprint,
+            started_at,
+            vec![
+                canary_check("qualification_scope", thread_start_refused),
+                canary_check("native_owner_turn", false),
+                json!({"name":"file_sha256","passed":false,"sha256":null}),
+                canary_check("workspace_changes", false),
+                canary_check("workspace_restored", workspace_restored),
+                canary_check("verified_cessation", thread_start_refused),
+                canary_check("native_transport_closed", closed),
+            ],
+            canary_cessation(
+                thread_start_refused,
+                thread_start_refused,
+                thread_start_refused,
+                thread_start_refused,
+                false,
+                0,
+            ),
+        ));
+    };
+
+    let dispatch_id = uuid::Uuid::new_v4().to_string();
+    let turn_response = tokio::time::timeout_at(
+        work_deadline,
+        client.start_skill_turn_with_id_guarded(
+            &owner_id,
+            &config.skill_path,
+            CANARY_OBJECTIVE,
+            &profile.effort,
+            None,
+            Some(&dispatch_id),
+            &authorization,
+        ),
+    )
+    .await;
+    let mut turn_id = None;
+    let mut turn_completed = false;
+    let mut turn_start_refused = false;
+    match turn_response {
+        Ok(Ok(response)) => {
+            turn_id = response["turn"]["id"].as_str().map(str::to_owned);
+            if let Some(turn_id) = turn_id.as_deref() {
+                turn_completed =
+                    wait_canary_turn(&mut events, &owner_id, turn_id, work_deadline).await;
+            }
+        }
+        Ok(Err(error)) => turn_start_refused = denied_code(&error).is_some(),
+        Err(_) => {}
+    }
+    if turn_id.is_none()
+        && !turn_start_refused
+        && let Ok(Ok(Some(turn))) = tokio::time::timeout_at(
+            stop_deadline,
+            client.find_dispatch_turn(&owner_id, &dispatch_id),
+        )
+        .await
+    {
+        turn_id = turn["id"].as_str().map(str::to_owned);
+    }
+
+    let cessation = verify_canary_cessation(
+        &client,
+        Some(&owner_id),
+        turn_id.as_deref(),
+        turn_completed,
+        stop_deadline,
+    )
+    .await;
+    let (file_passed, file_hash) = canary_file_result(&root);
+    let workspace_changes = file_passed && canary_workspace_changes_match(&root, &initial_head);
+    let cleanup_passed = cleanup_canary_file(&root);
+    let workspace_restored = cleanup_passed && canary_workspace_restored(&root, &initial_head);
+    let qualification_current = require_scope_with_identity(
+        config,
+        alias,
+        Scope::QualificationOnly,
+        1,
+        provider_identity.as_ref(),
+    )
+    .is_ok();
+    let closed = client.shutdown().await.is_ok();
+    let mut file_check = json!({"name":"file_sha256","passed":file_passed});
+    if let Some(hash) = file_hash {
+        file_check["sha256"] = json!(hash);
+    } else {
+        file_check["sha256"] = Value::Null;
+    }
+    Ok(canary_evidence(
+        &fingerprint,
+        started_at,
+        vec![
+            canary_check(
+                "qualification_scope",
+                qualification_current && !turn_start_refused && !thread_start_refused,
+            ),
+            canary_check("native_owner_turn", turn_completed),
+            file_check,
+            canary_check("workspace_changes", workspace_changes),
+            canary_check("workspace_restored", workspace_restored),
+            canary_check("verified_cessation", cessation["verified"] == true),
+            canary_check("native_transport_closed", closed),
+        ],
+        cessation,
+    ))
 }

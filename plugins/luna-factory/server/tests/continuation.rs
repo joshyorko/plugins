@@ -78,10 +78,13 @@ fn report(run: &Value) -> Value {
 }
 async fn finish(dir: &tempfile::TempDir, factory: &Factory, run: &Value, report: Value) {
     std::fs::write(dir.path().join("report.json"), report.to_string()).unwrap();
+    let turn_id = run["turn_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("finish requires a started owner turn: {run}"));
     factory
         .steer(
             run["id"].as_str().unwrap(),
-            run["turn_id"].as_str().unwrap(),
+            turn_id,
             "Return the fixture result",
         )
         .await

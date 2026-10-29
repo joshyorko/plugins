@@ -126,7 +126,9 @@ pub fn passed_evidence(fingerprint: &str) -> serde_json::Value {
         "profile_fingerprint":fingerprint,
         "qualification_run":{"harness":luna_factoryd::qualification::HARNESS,"outcome":"passed",
             "started_at":1,"finished_at":2,"checks":[{"id":"fixture","passed":true}],
-            "cessation":{"verified":true}}
+            "cessation":{"verified":true,
+                "scope":luna_factoryd::qualification::CANARY_CESSATION_SCOPE,
+                "process_tree":"unverified"}}
     })
 }
 
@@ -141,7 +143,7 @@ pub fn qualified_with(
     max_capacity: u32,
 ) -> Config {
     use luna_factoryd::qualification::{
-        ExecutionProfile, RecordRequest, record, test_operator_confirmation,
+        ExecutionProfile, NativeServerIdentity, RecordRequest, record, test_operator_confirmation,
     };
     let base = config
         .database
@@ -155,6 +157,13 @@ pub fn qualified_with(
         .filter(|(_, profile)| profile.codex_profile.is_none())
         .map(|(alias, _)| alias.clone())
         .collect::<Vec<_>>();
+    let provider_identity =
+        (config.native_transport == "existing_daemon").then(|| NativeServerIdentity {
+            name: "codex-fixture".into(),
+            version: "1.0".into(),
+            build_hash: Some("fixture-sha256".into()),
+            binary_hash: None,
+        });
     for alias in aliases {
         let Ok(profile) = ExecutionProfile::from_config(&config, &alias) else {
             continue;
@@ -173,7 +182,7 @@ pub fn qualified_with(
                 scope,
                 max_capacity,
                 expires_in_days: None,
-                provider_identity: None,
+                provider_identity: provider_identity.clone(),
             },
             &test_operator_confirmation(),
         )

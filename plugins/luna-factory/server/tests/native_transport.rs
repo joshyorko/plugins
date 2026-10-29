@@ -1,8 +1,5 @@
 //! Synthetic process tests. These never invoke Codex or inference.
-#[allow(dead_code)]
-#[path = "../src/native.rs"]
-mod native;
-use native::{NativeClient, NativeOptions};
+use luna_factoryd::native::{NativeClient, NativeOptions};
 use serde_json::{Value, json};
 use std::{path::Path, time::Duration};
 
@@ -237,7 +234,7 @@ async fn cancelling_partial_write_invalidates_transport() {
         .test_request("echo", json!({"text":"x".repeat(100 * 1024)}))
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("timed out"));
+    assert!(err.to_string().contains("native_write_timeout"), "{err}");
     let next = c.test_request("echo", json!({})).await.unwrap_err();
     assert!(
         next.to_string().contains("closed"),
