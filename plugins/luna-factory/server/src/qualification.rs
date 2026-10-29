@@ -49,7 +49,7 @@ mod tests {
     use super::{
         CANARY_CESSATION_SCOPE, CLOCK_SKEW, TABLE_SQL, UNIX_EPOCH, advance_high_water,
         binary_identity, canary_command_items_stopped, effective_qualification_time,
-        qualification_timestamp, sandbox_indicated,
+        observe_qualification_time, qualification_timestamp, sandbox_indicated,
     };
     use std::fs::File;
 
@@ -131,6 +131,27 @@ mod tests {
         let effective_now = effective_qualification_time(&connection, 970).unwrap();
         assert_eq!(effective_now, 1000);
         assert!(980 <= effective_now, "an expired grant must stay expired");
+    }
+
+    #[test]
+    fn status_observation_persists_expiry_before_a_tolerated_clock_rollback() {
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.execute_batch(TABLE_SQL).unwrap();
+        advance_high_water(&connection, 1000).unwrap();
+        let observed = observe_qualification_time(&mut connection, 1200).unwrap();
+        assert_eq!(observed, 1200);
+        let tolerated_rollback = effective_qualification_time(&connection, 1150).unwrap();
+        assert_eq!(tolerated_rollback, 1200);
+        assert!(
+            1100 <= tolerated_rollback,
+            "an observed expiry must not revive"
+        );
+        assert_eq!(
+            effective_qualification_time(&connection, 1070)
+                .unwrap_err()
+                .to_string(),
+            CLOCK_SKEW
+        );
     }
 
     #[test]
@@ -708,6 +729,13 @@ fn effective_qualification_time(connection: &Connection, now: u64) -> Result<u64
     Ok(now.max(high_water))
 }
 
+fn observe_qualification_time(connection: &mut Connection, now: u64) -> Result<u64> {
+    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    advance_high_water(&tx, now)?;
+    tx.commit()?;
+    effective_qualification_time(connection, now)
+}
+
 fn check_with_identity(
     config: &Config,
     alias: &str,
@@ -1170,10 +1198,10 @@ pub fn revoke(
 }
 
 pub fn list(config: &Config) -> Result<Vec<Value>> {
-    let connection = open_write(config)?;
+    let mut connection = open_write(config)?;
     let public_now = now_qualification()
         .ok()
-        .and_then(|now| effective_qualification_time(&connection, now).ok());
+        .and_then(|now| observe_qualification_time(&mut connection, now).ok());
     let mut statement = connection.prepare(
         "SELECT fingerprint,payload FROM execution_qualifications ORDER BY profile_alias,fingerprint LIMIT 256",
     )?;

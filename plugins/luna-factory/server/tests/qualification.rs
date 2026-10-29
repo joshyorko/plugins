@@ -784,6 +784,52 @@ fn operator_cli_refuses_missing_mismatched_and_unproved_evidence() {
 }
 
 #[test]
+fn qualifications_listing_persists_an_expiry_observation_in_the_clock_floor() {
+    let fixture = fixture("fake_factory.py");
+    let config = support::qualified(fixture.config.clone());
+    let now = qualification::now_qualification().unwrap();
+    let connection = rusqlite::Connection::open(&config.database).unwrap();
+    let fingerprint = fingerprint(&config);
+    let payload: String = connection
+        .query_row(
+            "SELECT payload FROM execution_qualifications WHERE fingerprint=?1",
+            [fingerprint.as_str()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let mut record: Value = serde_json::from_str(&payload).unwrap();
+    record["expires_at"] = json!(now.saturating_sub(1));
+    connection
+        .execute(
+            "UPDATE execution_qualifications SET payload=?1 WHERE fingerprint=?2",
+            rusqlite::params![record.to_string(), fingerprint],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE qualification_clock SET high_water=?1 WHERE id=1",
+            [i64::try_from(now.saturating_sub(30)).unwrap()],
+        )
+        .unwrap();
+    drop(connection);
+
+    let listed = qualification::list(&config).unwrap();
+    assert_eq!(listed[0]["status"], "expired");
+    let connection = rusqlite::Connection::open(&config.database).unwrap();
+    let high_water: i64 = connection
+        .query_row(
+            "SELECT high_water FROM qualification_clock WHERE id=1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        u64::try_from(high_water).unwrap() >= now,
+        "status observation must advance the rollback floor"
+    );
+}
+
+#[test]
 fn canary_refuses_missing_grants_and_non_disposable_workspaces_without_native_contact() {
     let fixture = fixture("fake_factory.py");
     let workspace = fixture.dir.path().join("canary");
