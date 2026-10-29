@@ -122,6 +122,12 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/docs/research/plans/79-per-attempt-proof-then-two-workers.md",
     "plugins/luna-factory/docs/research/plans/80-route-policy-then-verified-escalation.md",
     "plugins/luna-factory/docs/research/plans/81-certified-delivery-then-authorized-merge.md",
+    # #71 execution source follow-up. These files still require independent review.
+    "plugins/luna-factory/server/src/peer_identity.rs",
+    "plugins/luna-factory/server/tests/campaign_promotion.rs",
+    "plugins/luna-factory/server/tests/native_paths.rs",
+    "plugins/luna-factory/tests/test_execution_paths.py",
+    "plugins/luna-factory/docs/execution-canary-runbook.md",
     # #71: persisted exact-profile execution qualification.
     "plugins/luna-factory/docs/execution-qualification.md",
     "plugins/luna-factory/server/src/native.rs",

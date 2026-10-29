@@ -1274,9 +1274,9 @@ fn public(
 /// profile and a disposable git repository distinct from every configured root. Uses no
 /// repository alias and admits nothing.
 pub fn canary_preconditions(config: &Config, alias: &str, workspace: &Path) -> Result<Value> {
-    config.validate_execution_paths(workspace)?;
     require_scope(config, alias, Scope::QualificationOnly, 1)?;
     ensure!(workspace.is_absolute(), "canary_workspace_must_be_absolute");
+    config.validate_execution_paths(workspace)?;
     let root = workspace
         .canonicalize()
         .context("canary_workspace_unavailable")?;
@@ -1759,6 +1759,7 @@ pub async fn run_canary(
     let thread_start = tokio::time::timeout_at(
         work_deadline,
         client.start_thread_guarded(
+            &root,
             &config.native_path(&root)?,
             &profile.effort,
             1,
@@ -1804,6 +1805,7 @@ pub async fn run_canary(
         work_deadline,
         client.start_skill_turn_with_id_guarded(
             &owner_id,
+            &config.skill_path,
             &config.native_path(&config.skill_path)?,
             CANARY_OBJECTIVE,
             &profile.effort,

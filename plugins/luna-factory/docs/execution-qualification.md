@@ -16,6 +16,7 @@ An execution profile is derived from the operator config plus a profile alias:
 | `codex_binary` | Absolute, symlink-resolved `codex_binary` path |
 | `codex_binary_identity` | SHA-256 of the bounded executable read, cached by device, inode, size, mtime and ctime |
 | `native_socket` | Optional configured socket path |
+| `native_paths` | Explicit Factory-to-daemon path mappings, omitted when empty |
 | `model` | `gpt-6-luna` (`native::LUNA_MODEL`) |
 | `profile` | Profile alias |
 | `effort` | The profile's configured effort |
@@ -30,8 +31,16 @@ created with `CREATE TABLE IF NOT EXISTS`. `user_version` is unchanged, so older
 binaries still open the database. They never read the table, and they keep their own
 behavior. The payload is
 `{profile, provider_identity?, scope, max_capacity, evidence_sha256, evidence_ref, recorded_at, expires_at?, revoked_at?, recorded_by_uid, tty_name}`.
-For `existing_daemon`, `provider_identity` includes the `serverInfo` name and version and
-any build or binary hash reported by `initialize`.
+For `existing_daemon`, `provider_identity` prefers the Linux kernel peer binding:
+SO_PEERCRED UID, SO_PEERPIDFD lifetime, matching procfs/PID namespace and the SHA-256
+of the peer executable matching the configured Codex executable. Its name is
+`linux-unix-peer-executable`, version `1`; its binary hash is not an inferred Codex
+version. The preexisting `serverInfo` name/version/hash parser remains available
+for protocol versions reporting it. Client-influenced user-agent text, Codex home
+and platform fields never participate in identity. Kernel binding requires Linux
+6.5+ and same-namespace visibility. Missing/inaccessible host PIDs fail closed.
+Kernel identity is refreshed at each guarded first-write poll and by the monitor.
+It attests the executable, not daemon launch arguments or account entitlement.
 
 - `scope` is `ordinary` (may authorize Factory runs) or `qualification_only` (may
   authorize only the operator canary; never `start_factory`, continuation, repair,
@@ -117,8 +126,9 @@ luna-factoryd qualification-canary --config C --profile A --workspace DIR [--out
 - Its `profile_fingerprint` equals the current fingerprint.
 - The profile has no `codex_profile` override.
 - The executable SHA-256 is available.
-- For `existing_daemon`, `initialize` reports `serverInfo.name` and `serverInfo.version`;
-  any reported build or binary hash is included in the grant.
+- For `existing_daemon`, a current kernel peer binding or the existing protocol
+  `serverInfo` binding is available. A Codex 0.165.0 response lacking `serverInfo`
+  requires the kernel binding; userAgent is never a substitute.
 - The state directory is outside configured repositories, discovery roots, CAS working
   directories, `CODEX_HOME`, and `CODEX_WORKSPACES_ROOT` when configured.
 - The command has TTY stdin and stdout, can open `/dev/tty`, and has no `CODEX_*`
@@ -174,17 +184,22 @@ background terminals, including active command items. It explicitly records
 observations remain unverified. It does not claim operating-system process-tree
 cessation. A failed or uncertain check produces failed evidence, never a grant.
 
-For an existing daemon, the native initialization response must identify the
-provider before the CLI can record a grant or the canary can execute. Dakota's
-Codex 0.165.0 response currently lacks `serverInfo`. Connection, catalog reads and
-targeted stop-only containment can remain available, but qualification refuses
-with `qualification_provider_mismatch`. The user-agent string is not a trusted
-replacement for server identity.
+For existing-daemon execution every repository/worktree, canonical skill, subject
+CLI binary and disposable canary path requires explicit `native_paths` mapping,
+including same-path deployments. Local files are validated in Factory's namespace;
+only the declared daemon paths enter native frames. The mapping is profile-bound,
+not proof of host visibility. See the prepared [operator canary runbook](execution-canary-runbook.md)
+and `container/execution_paths.py` for a read-only comparison in both namespaces.
+Cloud fixtures cannot prove Dakota's host view. The current private-PID-namespace
+OCI service remains unqualified unless an operator separately approves and proves
+a compatible process placement. This source change does not alter deployment.
 
 ## Remaining for full #71
 
-- Campaign promotion remains a separate static refusal. A persisted grant does
-  not enable `promote_factory_campaign` or turn a planning record into execution.
+- Campaign promotion now admits a new executable snapshot from one approved
+  revision, with a durable digest and atomic claim/link. It never upgrades a
+  planning record. Its ordinary execution grant and all original effect guards
+  still apply; source fixtures do not qualify a real campaign.
 - Live subscription inference through the canary on the operator runtime, with recorded evidence.
 - Real callback ownership: proof that native events are bound to the owned thread and turn.
 - Crash windows between intent, send and acknowledgement under qualification.

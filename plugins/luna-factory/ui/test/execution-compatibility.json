@@ -1,0 +1,5 @@
+{
+  "evidence_kind": "Nonvisual promotion parser compatibility; no new browser captures",
+  "ui_source_sha256": "1a0e925dab392435be0470f097a0a7be928435e5bea672d596b0702a2cc8ef1a",
+  "dist_sha256": "7a4eadb336746ba222abdcce93220ec58eb7cdbf28cc2ab5e2975a6893601abf"
+}

@@ -281,6 +281,7 @@ describe("Home plans", () => {
   });
   it("accepts the server projection shape and rejects contradictory counts", () => {
     expect(campaignListSchema.safeParse({ campaigns: [fixtureCampaign()] }).success).toBe(true);
+    expect(campaignListSchema.safeParse({ campaigns: [{ ...fixtureCampaign(), promotion: { allowed: true, reason: "explicit_revision_approval_required" } }] }).success).toBe(true);
     const counts = fixtureCampaign();
     counts.planning.tasks.total += 1;
     expect(campaignListSchema.safeParse({ campaigns: [counts] }).success).toBe(false);

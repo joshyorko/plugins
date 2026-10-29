@@ -29,7 +29,7 @@ METADATA = (
     "docs/graph-backend-evidence.md", "docs/continuation-verification.md",
     "docs/continuation-verification-results.txt",
     "docs/native-transport-verification.md", "docs/github-app.md",
-    "docs/execution-qualification.md",
+    "docs/execution-qualification.md", "docs/execution-canary-runbook.md",
     "assets/logo.svg", "assets/logo.png",
 )
 SKILL_FILES = (

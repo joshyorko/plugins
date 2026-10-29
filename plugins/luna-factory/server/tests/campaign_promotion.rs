@@ -48,8 +48,8 @@ fn fixture() -> (tempfile::TempDir, Config, CreateCampaign) {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
-    let skill = temp.path().join("skill/SKILL.md");
-    std::fs::create_dir(skill.parent().unwrap()).unwrap();
+    let skill = temp.path().join("skill/luna-factory/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
     std::fs::write(&skill, "Synthetic fixture only").unwrap();
     let config: Config = serde_json::from_value(json!({"listen":"127.0.0.1:8787","database":temp.path().join("state/runs.sqlite"),"codex_binary":binary,"skill_path":skill,
         "repositories":{"test":{"root":repo,"max_finish":"local_candidate"}},"profiles":{"default":{"effort":"high"}},"limits":{"capacity":1,"repair_attempts":1,"wall_seconds":300}})).unwrap();
@@ -247,4 +247,86 @@ async fn qualified_promotion_reuses_launch_and_duplicate_never_replays_native_ef
             .unwrap()
             .is_valid(&replay)
     );
+}
+
+#[tokio::test]
+async fn promotion_checks_effective_budget_capacity_before_committing_the_approval() {
+    let (_temp, mut config, create) = fixture();
+    config.limits.capacity = 2;
+    let config = support::qualified_with(config, luna_factoryd::qualification::Scope::Ordinary, 1);
+    let factory = Factory::new(config.clone()).unwrap();
+    let created = factory.create_campaign(create).await.unwrap();
+    let mut request = promote(
+        created["campaign"]["id"].as_str().unwrap(),
+        0,
+        "over-capacity",
+    );
+    request.budget = Some(
+        serde_json::from_value(json!({"capacity":2,"repair_attempts":0,"wall_seconds":30}))
+            .unwrap(),
+    );
+    assert_eq!(
+        factory
+            .promote_campaign(request)
+            .await
+            .unwrap_err()
+            .to_string(),
+        luna_factoryd::qualification::CAPACITY
+    );
+    assert_eq!(rows(&config), (1, 0, 0));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn mapped_daemon_dispatch_uses_host_paths_while_validating_local_files() {
+    let (temp, mut config, create) = fixture();
+    config.native_transport = "existing_daemon".into();
+    let _daemon = support::DaemonFixture::start(&mut config);
+    let repository = config.repositories["test"].root.clone();
+    config
+        .native_paths
+        .insert(repository, "/operator-shared/repo".into());
+    config.native_paths.insert(
+        config.skill_path.clone(),
+        "/operator-shared/skills/luna-factory/SKILL.md".into(),
+    );
+    config.native_paths.insert(
+        std::env::current_exe().unwrap(),
+        "/operator-shared/bin/luna-factoryd".into(),
+    );
+    let config = support::qualified(config);
+    let factory = Factory::new(config.clone()).unwrap();
+    let created = factory.create_campaign(create).await.unwrap();
+    factory
+        .promote_campaign(promote(
+            created["campaign"]["id"].as_str().unwrap(),
+            0,
+            "mapped",
+        ))
+        .await
+        .unwrap();
+    let calls: Vec<serde_json::Value> = std::fs::read_to_string(temp.path().join("calls.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let thread = calls
+        .iter()
+        .find(|call| call["method"] == "thread/start")
+        .unwrap();
+    assert_eq!(thread["params"]["cwd"], "/operator-shared/repo");
+    let turn = calls
+        .iter()
+        .find(|call| call["method"] == "turn/start")
+        .unwrap();
+    assert_eq!(
+        turn["params"]["input"][0]["path"],
+        "/operator-shared/skills/luna-factory/SKILL.md"
+    );
+    let prompt = turn["params"]["input"][1]["text"].as_str().unwrap();
+    assert!(
+        prompt.contains("/operator-shared/bin/luna-factoryd")
+            && prompt.contains("/operator-shared/repo")
+    );
+    // These are framing fixtures. No actual host path or inference is exercised.
 }

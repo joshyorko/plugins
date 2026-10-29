@@ -550,6 +550,9 @@ async fn codex_0165_fields_use_kernel_executable_binding_and_recheck_before_effe
                 request["method"], "thread/start",
                 "changed executable must refuse before a native effect"
             );
+            if request["method"] == "model/list" {
+                ws.send(Message::Text(json!({"id":request["id"],"result":{"data":[{"model":"gpt-6-luna","supportedReasoningEfforts":[{"reasoningEffort":"high"}]}]}}).to_string().into())).await.unwrap();
+            }
         }
     });
     let client = NativeClient::connect_existing(&binary, Some(&socket))

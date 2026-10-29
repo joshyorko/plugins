@@ -230,7 +230,8 @@ fn validate_planning_run(run: &Run) -> Result<()> {
     if run.planning_only {
         let control = run.control.as_ref().context("control_missing")?;
         ensure!(
-            !run.claim_held
+            run.approved_plan.is_none()
+                && !run.claim_held
                 && run.thread_id.is_none()
                 && run.turn_id.is_none()
                 && run.dispatch_id.is_none()
@@ -1317,6 +1318,18 @@ impl Store {
                     .ok()
                     .filter(|campaign| {
                         campaign.validate().is_ok()
+                            && campaign.run_ids.iter().all(|id| {
+                                let linked: Result<(String,String),_> = connection.query_row(
+                                    "SELECT runs.payload,campaign_promotions.request FROM runs JOIN campaign_promotions ON runs.id=campaign_promotions.run_id WHERE runs.id=?1",[id],|row|Ok((row.get(0)?,row.get(1)?)));
+                                linked.ok().and_then(|(payload,request)| {
+                                    let run=decode_run(&payload).ok()?;
+                                    let request:crate::campaign::PromoteCampaign=serde_json::from_str(&request).ok()?;
+                                    let binding=run.approved_plan.as_ref()?;
+                                    Some(!run.planning_only && run.id == *id && binding.campaign_id == campaign.id
+                                        && binding.planning_run_id == campaign.planning_run_id && binding.revision == request.expected_revision
+                                        && request.campaign_id == campaign.id)
+                                }) == Some(true)
+                            })
                             // Indexed columns must agree with the payload they constrain.
                             && columns
                                 == [
@@ -1501,12 +1514,35 @@ impl Store {
             });
         }
         let campaign = self.campaign(&request.campaign_id)?;
-        ensure!(campaign.run_ids.is_empty(), "campaign_already_promoted");
+        if !campaign.run_ids.is_empty() {
+            // Another connection may have committed between the initial replay
+            // lookup and this read. Resolve the same key rather than report failure.
+            if let Some(run) = self.promotion_replay(request)? {
+                return Ok(Admission {
+                    run,
+                    created: false,
+                });
+            }
+            bail!("campaign_already_promoted");
+        }
         let planning = self.get(&campaign.planning_run_id)?;
         let executable = crate::campaign::execution_request(&planning, request)?;
         let binding = crate::campaign::approve_plan(&campaign, &planning, request)?;
         self.admit_linked(config, &executable, false, |tx, run, created| {
-            ensure!(created, "campaign_promotion_idempotency_conflict");
+            if !created {
+                let saved: Option<(String, String)> = tx
+                    .query_row(
+                        "SELECT request,run_id FROM campaign_promotions WHERE idem=?1",
+                        [&request.idempotency_key],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                ensure!(
+                    saved == Some((serde_json::to_string(request)?, run.id.clone())),
+                    "campaign_promotion_idempotency_conflict"
+                );
+                return Ok(());
+            }
             let current = Self::one_campaign(tx, "WHERE id=?1", [&campaign.id])?
                 .context("campaign_not_found")?;
             ensure!(current == campaign, "campaign_changed");

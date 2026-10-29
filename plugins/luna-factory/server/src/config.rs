@@ -114,7 +114,12 @@ impl Config {
             .iter()
             .find(|(local, _)| path.starts_with(local))
             .context("native_execution_path_unmapped")?;
-        Ok(native.join(path.strip_prefix(local)?))
+        let suffix = path.strip_prefix(local)?;
+        Ok(if suffix.as_os_str().is_empty() {
+            native.clone()
+        } else {
+            native.join(suffix)
+        })
     }
     pub fn validate_execution_paths(&self, root: &Path) -> Result<()> {
         self.native_path(root)?;

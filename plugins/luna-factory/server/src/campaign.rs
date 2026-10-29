@@ -335,8 +335,7 @@ impl Campaign {
                 && self.created_at <= self.updated_at,
             "campaign_record_corrupt"
         );
-        // No promotion transition exists yet, so a recorded execution link is corrupt, and
-        // nothing in this version fetches parents, so a non-supplied provenance is forged.
+        // Only explicit promotion produces execution links. Source metadata stays supplied.
         ensure!(
             matches!(
                 (self.status, self.run_ids.is_empty()),
@@ -505,6 +504,12 @@ pub fn initialize_execution(run: &mut Run, plan: &Run, binding: &ApprovedPlan) -
     for id in ready {
         control.tasks.get_mut(&id).unwrap().state = TaskState::Ready;
     }
+    // Leave room for the fixed policy/output contract inside the native 64 KiB
+    // owner prompt. Oversized plans fail inside admission, before claim commit.
+    ensure!(
+        serde_json::to_vec(&(&run.request, &control.tasks))?.len() <= 48 * 1024,
+        "approved_plan_prompt_too_large"
+    );
     control.validate()?;
     run.approved_plan = Some(binding.clone());
     Ok(())

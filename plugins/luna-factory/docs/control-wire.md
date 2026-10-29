@@ -372,15 +372,15 @@ are not emitted, because the server has no detection for them yet.
 ## Campaign entity (#77)
 
 This slice adds four model-and-app tools. For the current counts, see [Tool catalog](#tool-catalog).
-App-only tools are unchanged. Nothing here dispatches native work, acquires a
-claim or qualifies execution.
+App-only tools are unchanged. Create/read remain planning-only. Explicit qualified
+promotion can now admit a separate execution run; no campaign tool records grants.
 
 | Tool | Input | Result |
 | --- | --- | --- |
 | `create_factory_campaign` | `repository`, `parent:{forge:{provider,repository,number,node_id?},revision,display?:{url?}}`, `title`, `objective`, `acceptance` (1 to 32), `non_goals`, `finish`, `profile`, `idempotency_key` | `{campaign, graph}`. The graph is created by the same planning admission as `create_factory_graph` and is planning-only. |
 | `list_factory_campaigns` | optional `limit` (1 to 100, default 20) | `{campaigns, skipped}`, newest first. Read-only. |
 | `get_factory_campaign` | `campaign_id` | `{campaign}`. Read-only. |
-| `promote_factory_campaign` | `campaign_id`, `expected_revision`, `idempotency_key` | Input is validated first; a valid request is then always an `execution_not_qualified` tool error in this version. |
+| `promote_factory_campaign` | `campaign_id`, `expected_revision`, `idempotency_key`, optional `budget:{capacity,repair_attempts,wall_seconds}` | `{campaign}` linked to one new qualified executable run from that exact approved snapshot. Replays never dispatch again. |
 
 ### Identity
 
@@ -444,12 +444,13 @@ forge key) unique.
 
 The record is a thin reference: the parent assertion, the physical identity, the
 title, `planning_run_id` (the canonical plan) and `run_ids` (at most 64 execution
-runs, empty today). Plan content (objective, criteria, finish, tasks) lives only in
-the planning run and is read from there.
+runs). Plan content lives in the planning run; a promoted run retains a separate
+execution snapshot and `approved_plan` approval lineage.
 
-`status` is `planned | promoted | finished | stopped`. Only `planned` is reachable.
-Because no promotion transition exists, this version treats a record with another
-status, with `run_ids`, or with `github_app` provenance as `campaign_record_corrupt`.
+`status` is `planned | promoted | finished | stopped`. The implemented transitions
+are `planned` and one explicit `promoted` link. Other states, forged execution
+links lacking their atomic promotion/run records, or `github_app` provenance are
+`campaign_record_corrupt`.
 So is a payload that does not decode (including a newer or unknown shape) or whose
 indexed columns disagree with it. `get_factory_campaign` and a replayed create fail
 with that typed reason, never a raw decode error. `list_factory_campaigns` skips the
@@ -492,32 +493,49 @@ the planning run), `status`, `planning_run_id`, `run_ids`, `created_at` and
 - `planning`: `{run_id, revision, planning_only: true, tasks:{total, candidate, ready, running, verify, done, blocked}}`,
   read from the recorded ledger. A campaign read never writes and never refreshes the source.
 - `runs`: `{id, state, updated_at}` for each linked run.
-- `promotion`: `{allowed: false, reason}`.
+- `promotion`: `{allowed: boolean, reason}` reports current local profile-grant
+  eligibility. It is advisory: the command rechecks the effective execution budget,
+  source, revision, repository, claim and authority. Reads make no native probe.
 
-The output schema pins `planning.planning_only` to `true` and `promotion.allowed`
-to `false`, so the projection cannot claim execution. The title goes through
-`safe_summary` redaction.
+The output schema pins `planning.planning_only` to `true`. Eligibility is not a
+claim that a job executed. The title goes through `safe_summary` redaction.
 
 ### Promotion
 
-Promotion stays a fail-closed stub. The command first validates its input (a schema
-error, or `invalid_campaign_promotion` for a blank key or an out-of-range
-revision). A valid request then fails with `execution_not_qualified` while
-`capabilities.execution.eligible` is false; one shared function feeds both values,
-and that is always the case in this version. No campaign, graph or journal state is
-read or written: promotion writes no event, changes no revision and records no key.
-It never upgrades the planning graph. If eligibility were enabled without a
-promotion transition, the command would still fail closed with
-`campaign_promotion_unavailable`.
+Promotion is an explicit approval of one exact reviewed planning revision. It
+validates the source subject, physical repository stamp, finish authority, profile
+and effective execution budget, then requires a current ordinary grant before
+admitting anything. Native-local is the only executable target preference.
+Unapplied proposals and plans with execution history are refused. A structurally
+valid plan whose request/task prompt exceeds 48 KiB is refused inside admission
+before committing a claim. This reserves space within the native bounded prompt.
 
-Deferred to #71, which qualifies execution:
+One IMMEDIATE transaction creates a new executable run and claim, stores
+`approved_plan:{campaign_id,planning_run_id,revision,subject,snapshot_sha256}`, and
+links the campaign and `campaign_promotions` idempotency row. The planning payload
+and revision remain unchanged. The execution snapshot copies exact canonical task
+titles, dependencies, source assertions and preferences, preserves mandatory
+criteria, resets acceptance/evidence and native ownership, and selects a
+structurally READY task. Operator approval authorizes the reviewed candidates;
+supplied source metadata still proves no acceptance.
 
-- a successful promotion that creates a NEW executable run from one exact approved
-  plan revision, never flipping the planning run;
-- duplicate-promotion replay;
-- stale-revision rejection (`expected_revision` is the planning graph's
-  `planning.revision`);
-- acceptance-contract references on the promoted run.
+`budget` is optional and capped by operator limits and the qualification capacity.
+If omitted, the inert plan's capacity 1, zero repairs and 30 seconds are reused.
+A named budget never changes the planning record. A duplicate key with the exact
+same request returns the recorded run without a new native connection or effect,
+including after restart and uncertain dispatch. Changed payloads conflict. Another
+key cannot repromote an already linked campaign. Admission or link failure rolls
+back run, claim and all new links. Native launch, writer qualification, callback,
+crash-window, reconciliation and cessation guards remain the shared start path.
+
+Promoted records require this runtime or a newer compatible one. An older binary
+cannot deserialize their approval lineage; do not roll it back onto the newer DB.
+The UI accepts the additive boolean eligibility projection with no layout/action
+change. Original browser captures retain their original source/bundle hashes;
+`ui/test/execution-compatibility.json` records only the exact nonvisual parser
+change and rebuilt bundle. Its regression reconstructs the captured source hash
+by reversing that one predicate, so no other render/style change is accepted.
+No new browser or authenticated host acceptance is claimed.
 
 Revision fencing, claims, evidence and the run and replay contracts are unchanged.
 A campaign's graph is an ordinary planning graph: `propose_factory_change` and

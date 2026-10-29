@@ -615,7 +615,7 @@ async fn corrupt_or_newer_campaign_records_fail_closed() {
             .unwrap();
     };
     let mut forged: Value = serde_json::from_str(&payload).unwrap();
-    // This version has no promotion transition, so an execution link cannot be trusted.
+    // An execution link without its atomic promotion record cannot be trusted.
     forged["status"] = json!("promoted");
     forged["run_ids"] = json!(["forged-run"]);
     let promoted = forged.to_string();

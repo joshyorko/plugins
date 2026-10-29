@@ -702,11 +702,9 @@ impl Factory {
                 "stale_graph_subject"
             );
             crate::campaign::approve_plan(&campaign, &plan, &request)?;
-            crate::qualification::require(
-                &self.config,
-                &plan.request.profile,
-                plan.request.capacity,
-            )?;
+            let executable = crate::campaign::execution_request(&plan, &request)?;
+            crate::store::validate_request(&config, &executable)?;
+            crate::qualification::require(&self.config, &executable.profile, executable.capacity)?;
             config.validate_execution_paths(Path::new(&plan.canonical_root))?;
             store.admit_promotion(&config, &request)?
         };
@@ -1885,6 +1883,7 @@ impl Factory {
         .await?;
         let started = match client
             .start_thread_guarded(
+                Path::new(&run.canonical_root),
                 &self.config.native_path(Path::new(&run.canonical_root))?,
                 effort,
                 run.request.capacity as usize,
@@ -1963,6 +1962,7 @@ impl Factory {
         let result = client
             .start_skill_turn_with_id_guarded(
                 run.thread_id.as_deref().unwrap(),
+                &self.config.skill_path,
                 &self.config.native_path(&self.config.skill_path)?,
                 &self.owner_prompt(run)?,
                 effort,
@@ -2713,6 +2713,7 @@ impl Factory {
         let result = client
             .start_skill_turn_with_id_guarded(
                 &thread,
+                &self.config.skill_path,
                 &self.config.native_path(&self.config.skill_path)?,
                 &prompt,
                 &self.config.profiles[&run.request.profile].effort,
