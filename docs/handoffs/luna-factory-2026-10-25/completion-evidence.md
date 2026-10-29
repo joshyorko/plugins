@@ -34,14 +34,16 @@ Each approved slice received PASS:
 5. Activity, inline cards, exclusive error/loading, offline and mobile states.
 
 The captured UI source SHA-256 is
-`9ce6743a5119b8c867837e43f71948c0b53a1d6ab1e74da2c0afb6c65d6bdc28`.
+`c3c5c1b0cc99bc7986ddadf2166ccf0df20e65fa2d9bc42fd77704e6ac81cdfa`.
 The bundle SHA-256 is
-`ef54cd45350a9d1bee2ac0f426d3743ffbdd6fa4bc8b658ef31f494131b9a36c`.
+`55337e0a686a958ecd7e8ce102c96c0b4ce807eb6a5ba6e50eb0af96b7a9b56a`.
 The manifest is `plugins/luna-factory/ui/test/dogfood-visual-snapshots/manifest.json`.
 
-Typecheck and production build passed. Vitest passed 281 tests with one opt-in
+Typecheck and production build passed. Vitest passed 282 tests with one opt-in
 integration skipped; the compiled integration was run separately and passed.
-The basic-host capture suite passed 35/35 with zero automatic messages, mutation
+Map geometry follows host text size; browser checks retain at least 8px between
+card rows at 16px and 20px root sizes. The basic-host capture suite passed 35/35
+with zero automatic messages, mutation
 calls, or clipped controls. These are synthetic MCP Apps host captures, not
 authenticated ChatGPT Desktop acceptance. Fit controls are not added in this
 checkpoint; the explicit five-slice acceptance criteria remain satisfied.

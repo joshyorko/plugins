@@ -49,6 +49,40 @@ const cases = [
   { file: "plan-new-repo-invalid-light.png", width: 760, height: 900, params: { surface: "global", scenario: "plan" }, editor: "start", newRepo: "Moon Garden", submit: true },
   { file: "plan-approved-only-dark.png", width: 480, height: 760, params: { surface: "global", theme: "dark", scenario: "plan-basic" }, editor: "start" },
 ];
+const requestedCaptures = process.env.LUNA_CAPTURE_ONLY?.split(",").map(name => name.trim()).filter(Boolean);
+const captureCases = requestedCaptures ? cases.filter(item => requestedCaptures.includes(item.file)) : cases;
+assert(captureCases.length > 0, "LUNA_CAPTURE_ONLY did not match a capture filename");
+async function inspectCampaignMap(frame) {
+  return frame.evaluate(() => {
+    const columns = new Map();
+    for (const element of Array.from(document.querySelectorAll(".map-node"))) {
+      const bounds = element.getBoundingClientRect();
+      const title = element.querySelector(".node-title");
+      const meta = element.querySelector(".node-meta");
+      const pr = element.querySelector(".pr-meta");
+      if (!title || !meta) continue;
+      const lineHeight = Number.parseFloat(getComputedStyle(title).lineHeight) || 0;
+      const column = Math.round(bounds.left);
+      const cards = columns.get(column) ?? [];
+      cards.push({ id: element.dataset.nodeId ?? "unknown", top: bounds.top, bottom: bounds.bottom, titleHeight: title.getBoundingClientRect().height, titleLineHeight: lineHeight, metaHeight: meta.getBoundingClientRect().height, prHeight: pr?.getBoundingClientRect().height ?? 0 });
+      columns.set(column, cards);
+    }
+    const gaps = Array.from(columns, ([left, cards]) => {
+      const ordered = cards.sort((a, b) => a.top - b.top);
+      return ordered.slice(1).map((card, index) => {
+        const previous = ordered[index];
+        return { column: left, previous: previous.id, next: card.id, previousBottom: Math.round(previous.bottom * 10) / 10, nextTop: Math.round(card.top * 10) / 10, gap: Math.round((card.top - previous.bottom) * 10) / 10 };
+      });
+    }).flat();
+    const fullCards = Array.from(columns.values()).flat().filter(card => card.titleHeight >= card.titleLineHeight * 1.8 && card.metaHeight > 0 && card.prHeight > 0);
+    return { rootFontSize: Number.parseFloat(getComputedStyle(document.documentElement).fontSize), gaps, metaWhiteSpaces: Array.from(document.querySelectorAll(".map-node .node-meta"), element => getComputedStyle(element).whiteSpace), fullCards: fullCards.map(({ id, titleHeight, metaHeight, prHeight }) => ({ id, titleHeight, metaHeight, prHeight })) };
+  });
+}
+function assertCampaignMapGeometry(result, label) {
+  assert(result.metaWhiteSpaces.every(value => value === "nowrap"), `${label} map status metadata wrapped: ${JSON.stringify(result.metaWhiteSpaces)}`);
+  assert(result.fullCards.length > 0, `${label} map fixture did not exercise a two-line title, one-line status and PR row: ${JSON.stringify(result)}`);
+  assert(result.gaps.every(entry => entry.gap >= 8), `${label} map cards touch or overlap within a wave: ${JSON.stringify(result.gaps.filter(entry => entry.gap < 8))}`);
+}
 /** Read-only tools a capture may call. GitHub reads are display-only and never mutate. */
 const readOnlyTools = ["get_factory_run", "get_factory_graph", "get_factory_backends", "refresh_factory", "open_factory", "list_factory_campaigns", "read_factory_agent_timeline", "read_factory_delivery", "inspect_factory_issue_graph", "list_factory_github_repositories"];
 const server = await createServer({ root: ui, configFile: join(ui, "vite.config.ts"), server: { host: "127.0.0.1", port: 0, strictPort: true } });
@@ -60,7 +94,7 @@ try {
   browser = await chromium.launch({ headless: true, ...(process.env.LUNA_CHROMIUM_EXECUTABLE ? { executablePath: process.env.LUNA_CHROMIUM_EXECUTABLE } : {}), args: ["--disable-dev-shm-usage"] });
   await mkdir(directory, { recursive: true });
   const captures = [];
-  for (const item of cases) {
+  for (const item of captureCases) {
     const page = await browser.newPage({ viewport: { width: item.width, height: item.height } });
     try {
       await page.goto(`${url}test/dogfood-host.html?${new URLSearchParams(item.params)}`);
@@ -164,6 +198,34 @@ try {
         await frame.locator(".graph-inspector .github-report").waitFor();
         if (item.inspect) await frame.locator(".graph-inspector .github-report").evaluate(element => element.scrollIntoView({ block: "center" }));
       }
+      const mapChecks = [];
+      if (item.width >= 1400 && item.params.scenario === "campaign" && item.params.graph && !item.noTask) {
+        const mapCopy = await frame.evaluate(() => ({
+          mapHasWaitCounts: Array.from(document.querySelectorAll(".map-node .node-meta")).some(element => element.textContent?.includes("Waits on")),
+          drawerShowsDependencies: Array.from(document.querySelectorAll(".graph-inspector .drawer-section h4")).some(element => element.textContent?.trim() === "Waits on"),
+        }));
+        assert.equal(mapCopy.mapHasWaitCounts, false, "Map cards repeated dependency counts already shown by edges and task details");
+        if (item.params.node === "issue-109") assert.equal(mapCopy.drawerShowsDependencies, true, "Selected task drawer hid its dependency list");
+        const defaultSize = await inspectCampaignMap(frame);
+        assertCampaignMapGeometry(defaultSize, `${defaultSize.rootFontSize}px`);
+        mapChecks.push(defaultSize);
+        if (item.file === "campaign-map-light.png") {
+          const largePage = await browser.newPage({ viewport: { width: item.width, height: item.height } });
+          try {
+            const params = new URLSearchParams({ ...item.params, font: "large" });
+            await largePage.goto(`${url}test/dogfood-host.html?${params}`);
+            await largePage.waitForFunction(() => window.lunaDogfoodHost?.initialized);
+            const largeFrame = largePage.frames().find(candidate => candidate.url().endsWith("/index.html"));
+            assert(largeFrame, "Large-font App iframe did not mount");
+            await largeFrame.locator(".map-node").first().waitFor();
+            await largeFrame.locator(".graph-inspector .github-report").waitFor();
+            const largeSize = await inspectCampaignMap(largeFrame);
+            assert.equal(largeSize.rootFontSize, 20, `Large-font fixture did not apply a 20px root: ${JSON.stringify(largeSize)}`);
+            assertCampaignMapGeometry(largeSize, "20px");
+            mapChecks.push(largeSize);
+          } finally { await largePage.close(); }
+        }
+      }
       if (item.params.proposal === "applied") {
         await frame.locator(".plan-updated").waitFor();
         const visible = await frame.locator("main").evaluate(element => { const copy = element.cloneNode(true); copy.querySelector(".technical-details")?.remove(); return copy.textContent ?? ""; });
@@ -225,12 +287,12 @@ try {
       const composerSafe = await page.evaluate(() => document.querySelector("iframe").getBoundingClientRect().bottom <= document.querySelector("footer").getBoundingClientRect().top + 1);
       assert(composerSafe, "App overlaps the synthetic host composer");
       await page.screenshot({ path: join(directory, item.file) });
-      captures.push({ file: item.file, width: item.width, height: item.height, params: item.params, layout, read_only_tool_calls: host.calls, automatic_messages: host.messages });
+      captures.push({ file: item.file, width: item.width, height: item.height, params: item.params, layout, map_geometry_checks: mapChecks, read_only_tool_calls: host.calls, automatic_messages: host.messages });
     } finally { await page.close(); }
   }
   const hash = createHash("sha256");
   for (const name of (await readdir(join(ui, "src"))).sort()) { hash.update(name); hash.update(await readFile(join(ui, "src", name))); }
   const distHash = createHash("sha256").update(await readFile(join(ui, "dist/index.html"))).digest("hex");
-  await writeFile(join(directory, "manifest.json"), JSON.stringify({ expected_ui_version: "0.2.1", evidence_kind: "Real browser + MCP Apps AppBridge with synthetic fixtures; not authenticated ChatGPT Desktop acceptance", ui_source_sha256: hash.digest("hex"), dist_sha256: distHash, captures }, null, 2) + "\n");
-  console.log(`PASS ${captures.length} real basic-host captures; zero execution/mutation calls or automatic messages`);
+  await writeFile(join(directory, "manifest.json"), JSON.stringify({ expected_ui_version: "0.2.1", evidence_kind: "Real browser + MCP Apps AppBridge with synthetic fixtures; not authenticated ChatGPT Desktop acceptance", capture_set_complete: !requestedCaptures, ui_source_sha256: hash.digest("hex"), dist_sha256: distHash, captures }, null, 2) + "\n");
+  console.log(`PASS ${captures.length} real basic-host captures${requestedCaptures ? " (partial set)" : ""}; zero execution/mutation calls or automatic messages`);
 } finally { await browser?.close(); await server.close(); }

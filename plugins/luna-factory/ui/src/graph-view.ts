@@ -39,7 +39,9 @@ export function renderMission(state: ViewState, run: RunView, followUps: (task?:
   const selectedTask = state.selectedNodeId && tasks.some(task => task.id === state.selectedNodeId);
   const selectedAgent = state.selectedAgent && agents.some(agent => agent.thread === state.selectedAgent);
   const tab = `<nav class="plan-tabs" role="tablist" aria-label="Plan sections"><button type="button" role="tab" id="view-map" data-action="view-mode" data-mode="map" aria-selected="${!lanes && !showingDetails}" aria-pressed="${!lanes && !showingDetails}">Tasks</button>${activityAvailable ? `<button type="button" role="tab" id="view-lanes" data-action="view-mode" data-mode="lanes" aria-selected="${lanes}" aria-pressed="${lanes}">Activity</button>` : ""}<button type="button" role="tab" id="view-details" data-action="view-mode" data-mode="details" aria-selected="${showingDetails}" aria-pressed="${showingDetails}">Details</button></nav>`;
-  const content = showingDetails ? details : lanes ? renderLanes(run, agents, state) : loading ? '<div class="canvas-empty" role="status">Loading tasks…</div>' : tasks.length ? renderMap(tasks, layout, agents, state, fitGeometry(layout.waves.length, canvasWidth)) : '<div class="canvas-empty"><h3>No tasks yet</h3><p>Ask in chat to add tasks to this plan.</p></div>';
+  const rootFontSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+  const fontScale = Number.isFinite(rootFontSize) && rootFontSize > 0 ? rootFontSize / 16 : 1;
+  const content = showingDetails ? details : lanes ? renderLanes(run, agents, state) : loading ? '<div class="canvas-empty" role="status">Loading tasks…</div>' : tasks.length ? renderMap(tasks, layout, agents, state, fitGeometry(layout.waves.length, canvasWidth, fontScale)) : '<div class="canvas-empty"><h3>No tasks yet</h3><p>Ask in chat to add tasks to this plan.</p></div>';
   const activeTab = showingDetails ? "view-details" : lanes ? "view-lanes" : "view-map";
   return `<section class="mission${selectedTask || selectedAgent ? " has-inspector" : ""}" aria-label="Plan tasks">
     <div class="mission-main">${tab}${state.graphStale && state.connected ? '<div class="notice error" role="status">This plan changed. Refresh to see the latest version.</div>' : ""}<div class="mission-panel" id="plan-panel" role="tabpanel" aria-labelledby="${activeTab}">${content}</div></div>
@@ -71,15 +73,19 @@ function renderMap(tasks: MapTask[], layout: WaveLayout, agents: Agent[], state:
       seenStates.set(key, `${task.state}:${task.owner_thread}`);
       const owner = agents.find(agent => agent.thread === task.owner_thread);
       const missing = layout.missing.get(id)?.length ?? 0;
+      const displayNumber = task.source ? sourceNumber(task.source) : null;
+      const reference = displayNumber ?? "";
+      const missingLabel = missing ? `${missing} task${missing === 1 ? " isn't" : "s aren't"} in this plan` : "";
+      const nodeMeta = [reference, taskToneLabel[tone], missingLabel].filter(Boolean).join(" · ");
       return `<li><button type="button" id="node-${esc(id)}" class="map-node tone-${tone}${changed ? " changed" : ""}${id === selected ? " selected" : ""}${chain.has(id) ? " chain" : ""}${layout.prerequisitesMet.has(id) ? " met" : ""}" style="--x:${position.x}px;--y:${position.y + 24}px" data-action="graph-node" data-node-id="${esc(id)}" aria-pressed="${id === selected}" aria-describedby="node-state-${esc(id)}">
         <span class="node-top">${taskGlyph(tone)}<span class="node-title">${esc(task.title || id)}</span></span>
-        <span class="node-meta" id="node-state-${esc(id)}">${task.source && sourceNumber(task.source) ? `<span class="node-ref">${esc(sourceNumber(task.source)!)}</span> · ` : ""}${esc(taskToneLabel[tone])}${task.dependencies.length ? ` · Waits on ${task.dependencies.length}` : ""}${missing ? ` · ${missing} task${missing === 1 ? " isn't" : "s aren't"} in this plan` : ""}</span>
+        <span class="node-meta" id="node-state-${esc(id)}" title="${esc(nodeMeta)}">${reference ? `<span class="node-ref">${esc(reference)}</span> · ` : ""}${esc(taskToneLabel[tone])}${missingLabel ? ` · ${esc(missingLabel)}` : ""}</span>
         ${deliveryChip(state, state.selectedId ?? undefined, id)}
         ${owner ? `<span class="dock" title="${esc(owner.label)} · ${esc(livenessLabel[owner.liveness])}">${agentToken(owner, 20)}<span class="sr-only">Worked on by ${esc(owner.label)}</span></span>` : ""}
       </button></li>`;
     }).join("")}</ol></li>`;
   }).join("");
-  return `<div class="map-scroll"><div class="map-canvas" style="--map-w:${size.width}px;--map-h:${size.height + 24}px;--node-w:${g.nodeWidth}px">
+  return `<div class="map-scroll"><div class="map-canvas" style="--map-w:${size.width}px;--map-h:${size.height + 24}px;--node-w:${g.nodeWidth}px;--node-h:${g.nodeHeight}px">
     <svg class="map-edges" width="${size.width}" height="${size.height + 24}" viewBox="0 0 ${size.width} ${size.height + 24}" aria-hidden="true" focusable="false">${edges}</svg>
     <ol class="map-waves" aria-label="Tasks by step">${waves}</ol>
   </div></div>${layout.cyclic ? '<p class="notice">Some tasks wait on each other in a loop, so the waves are approximate.</p>' : ""}`;

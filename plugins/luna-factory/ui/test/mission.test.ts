@@ -31,6 +31,7 @@ describe("campaign map layout", () => {
   });
   it("fits wave columns to the pane before panning", () => {
     expect(fitGeometry(2, 1040).nodeWidth).toBe(208);
+    expect(fitGeometry(2, 1040, 1.25)).toEqual({ nodeWidth: 260, nodeHeight: 120, columnGap: 95, rowGap: 20, padX: 25, padY: 28 });
     expect(fitGeometry(12, 600).nodeWidth).toBe(208);
     expect(fitGeometry(12, 600).columnGap).toBe(36);
   });

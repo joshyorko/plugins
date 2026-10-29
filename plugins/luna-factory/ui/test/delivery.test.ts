@@ -90,6 +90,17 @@ describe("GitHub-reported delivery contract", () => {
     expect(root.querySelector(".pr-meta .needs, .pr-meta [class*='needs']")).toBeNull();
   });
 
+  it("keeps dependency counts off map cards while retaining the relationship in task details", async () => {
+    const { controller } = await campaign();
+    const root = render(controller, "issue-105");
+    const card = root.querySelector<HTMLElement>('.map-node[data-node-id="issue-105"]');
+    expect(card?.querySelector(".node-meta")?.textContent).toContain("#105 · Planned");
+    expect(card?.querySelector(".node-meta")?.textContent).not.toContain("Waits on");
+    expect(card?.querySelector(".node-meta")?.getAttribute("title")).toBe("#105 · Planned");
+    const waitsOn = Array.from(root.querySelectorAll<HTMLElement>(".drawer-section")).find(section => section.querySelector("h4")?.textContent === "Waits on");
+    expect(waitsOn?.textContent).toContain("Add uv lockfile support to the package builder");
+  });
+
   it("separates Ready for review from merge and never changes proof or attention", async () => {
     const { controller, plan } = await campaign();
     const ready = render(controller, "issue-103").querySelector<HTMLElement>(".github-report")!;
