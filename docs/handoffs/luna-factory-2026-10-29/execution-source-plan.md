@@ -13,11 +13,11 @@ No live service access, real grants, credentials, inference, deployment or merge
 
 | Task | Gap | Owner | State | Proof required |
 | --- | --- | --- | --- | --- |
-| Trusted identity | Codex 0.165 initialize lacks serverInfo | integration writer; Luna read-only design review | investigating | peer identity and mismatch regressions |
-| Promotion | static refusal | integration writer | ready | atomic new-run lineage, retry/fence/claim regressions |
-| Shared paths | host and OCI namespaces differ | integration writer | ready | explicit mapping validation and fixture checks |
-| Operator canary | no live grant or execution | integration writer | prepare only | bounded runbook; live evidence remains operator-only |
-| Acceptance | changed source | fresh Luna reviewer | pending implementation | changed-path checks and exact-head CI |
+| Trusted identity | Codex 0.165 initialize lacks serverInfo | integration writer; Luna read-only design review | source verified | Linux peer binding; same-namespace/mismatch fixtures; host visibility unproved |
+| Promotion | static refusal | integration writer | source verified | atomic snapshot, capacity, concurrent replay, rollback and framing fixtures |
+| Shared paths | host and OCI namespaces differ | integration writer | source verified | mapping fingerprint, local/daemon framing, private comparison probe |
+| Operator canary | no live grant or execution | integration writer | operator boundary | prepared bounded runbook; no live grant or inference |
+| Acceptance | changed source | fresh Luna reviewer | source accepted; final CI pending | independent review; 344 Rust, 282 UI, 84 package and 79 repo tests; compiled integration |
 
 Use pinned repository container images; serialize Rust builds and captures; Vitest
 one worker if needed. Preserve existing UX evidence. Keep source, CI, deployment and
