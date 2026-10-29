@@ -64,6 +64,7 @@ ALLOWED_RELEASE_DELTA = {
     "plugins/luna-factory/server/src/campaign.rs",
     "plugins/luna-factory/server/src/cas.rs",
     "plugins/luna-factory/server/src/config.rs",
+    "plugins/luna-factory/server/src/control.rs",
     "plugins/luna-factory/server/src/github.rs",
     "plugins/luna-factory/server/src/lib.rs",
     "plugins/luna-factory/server/src/lifecycle.rs",

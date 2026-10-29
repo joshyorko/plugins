@@ -93,26 +93,39 @@ fn every_tool_has_a_concrete_valid_schema() {
 #[tokio::test]
 async fn update_task_proposal_response_matches_the_output_schema() {
     let (_temp, server) = setup(true);
+    let objective_title = "O".repeat(8000);
     let graph = invoke(
         &server,
         "create_factory_graph",
-        json!({"repository":"test","objective":"Planning snapshot","acceptance":["A1: preserve the plan"],
+        json!({"repository":"test","objective":objective_title,"acceptance":["A1: preserve the plan"],
             "non_goals":[],"finish":"local_candidate","profile":"default","capacity":1,
             "repair_attempts":0,"wall_seconds":60,"idempotency_key":"update-task-output"}),
     )
     .await;
+    let objective = graph["graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == "objective")
+        .unwrap();
+    assert_eq!(objective["editor_title"], objective_title);
+    assert_eq!(
+        objective["title"].as_str().unwrap().encode_utf16().count(),
+        1000
+    );
     let proposal = invoke(
         &server,
         "propose_factory_change",
         json!({"run_id":graph["graph"]["run_id"],
             "expected_revision":graph["graph"]["revision"],
             "idempotency_key":"full-task-snapshot",
-            "change":{"kind":"update_task","node_id":"objective","title":"Updated planning title",
-                "dependencies":[],"target_id":null}}),
+            "change":{"kind":"update_task","node_id":"objective","title":null,
+                "dependencies":[],"target_id":"native-local"}}),
     )
     .await;
     assert_eq!(proposal["proposal"]["change"]["kind"], "update_task");
-    assert!(proposal["proposal"]["change"]["target_id"].is_null());
+    assert!(proposal["proposal"]["change"]["title"].is_null());
+    assert_eq!(proposal["proposal"]["change"]["target_id"], "native-local");
 }
 #[tokio::test]
 async fn read_settings_onboarding_and_graph_responses_match_their_contracts() {

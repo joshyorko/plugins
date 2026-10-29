@@ -190,7 +190,7 @@ pub fn tool_definitions() -> Vec<Tool> {
         object(json!({"kind":{"const":"import_candidates"},"nodes":{"type":"array","minItems":1,"maxItems":32,"items":candidate}}), &["kind","nodes"]),
         object(json!({"kind":{"const":"set_dependencies"},"node_id":node_id,"dependencies":deps}), &["kind","node_id","dependencies"]),
         object(json!({"kind":{"const":"set_target"},"node_id":node_id,"target_id":node_id}), &["kind","node_id","target_id"]),
-        object(json!({"kind":{"const":"update_task"},"node_id":node_id,"title":{"type":"string","minLength":1,"maxLength":4000},"dependencies":deps,"target_id":{"type":["string","null"],"minLength":1,"maxLength":256}}), &["kind","node_id","title","dependencies","target_id"])
+        object(json!({"kind":{"const":"update_task"},"node_id":node_id,"title":{"type":["string","null"],"minLength":1,"maxLength":8000},"dependencies":deps,"target_id":{"type":["string","null"],"minLength":1,"maxLength":256}}), &["kind","node_id","title","dependencies","target_id"])
     ]});
     let revision = json!({"type":"integer","minimum":0,"maximum":9_007_199_254_740_991_u64});
     tools.extend([

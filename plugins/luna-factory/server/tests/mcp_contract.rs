@@ -543,13 +543,21 @@ fn update_task_schema_requires_a_full_snapshot_and_nullable_target() {
     let validator = jsonschema::validator_for(&schema).unwrap();
     let request = json!({
         "run_id":"run","expected_revision":1,"idempotency_key":"update",
-        "change":{"kind":"update_task","node_id":"objective","title":"New title",
+        "change":{"kind":"update_task","node_id":"objective","title":null,
             "dependencies":["prerequisite"],"target_id":null}
     });
     assert!(validator.is_valid(&request));
+    let mut explicit_title = request.clone();
+    explicit_title["change"]["title"] = json!("New title");
+    assert!(validator.is_valid(&explicit_title));
     let mut target = request.clone();
     target["change"]["target_id"] = json!("native-local");
     assert!(validator.is_valid(&target));
+    let mut objective_limit = request.clone();
+    objective_limit["change"]["title"] = json!("O".repeat(8000));
+    assert!(validator.is_valid(&objective_limit));
+    objective_limit["change"]["title"] = json!("O".repeat(8001));
+    assert!(!validator.is_valid(&objective_limit));
 
     for field in ["node_id", "title", "dependencies", "target_id"] {
         let mut missing = request.clone();

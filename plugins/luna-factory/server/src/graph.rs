@@ -91,7 +91,7 @@ pub struct CandidateNode {
     pub source: SourceBinding,
 }
 
-fn required_nullable_target<'de, D>(
+fn required_nullable_string<'de, D>(
     deserializer: D,
 ) -> std::result::Result<Option<String>, D::Error>
 where
@@ -116,9 +116,10 @@ pub enum GraphChange {
     },
     UpdateTask {
         node_id: String,
-        title: String,
+        #[serde(deserialize_with = "required_nullable_string")]
+        title: Option<String>,
         dependencies: Vec<String>,
-        #[serde(deserialize_with = "required_nullable_target")]
+        #[serde(deserialize_with = "required_nullable_string")]
         target_id: Option<String>,
     },
 }
@@ -196,14 +197,18 @@ fn editable(control: &Control, id: &str) -> Result<()> {
     Ok(())
 }
 fn validate_task_snapshot(
-    title: &str,
+    node_id: &str,
+    title: Option<&str>,
     dependencies: &[String],
     target_id: Option<&str>,
 ) -> Result<()> {
-    ensure!(
-        !title.trim().is_empty() && title.len() <= 4000,
-        "invalid_graph_task_title"
-    );
+    let title_limit = if node_id == "objective" { 8000 } else { 4000 };
+    if let Some(title) = title {
+        ensure!(
+            !title.trim().is_empty() && title.len() <= title_limit,
+            "invalid_graph_task_title"
+        );
+    }
     ensure!(
         dependencies.len() <= 128
             && dependencies.iter().collect::<BTreeSet<_>>().len() == dependencies.len(),
@@ -329,12 +334,19 @@ fn apply_change_inner(control: &mut Control, change: &GraphChange) -> Result<()>
             target_id,
         } => {
             editable(control, node_id)?;
-            validate_task_snapshot(title, dependencies, target_id.as_deref())?;
+            validate_task_snapshot(
+                node_id,
+                title.as_deref(),
+                dependencies,
+                target_id.as_deref(),
+            )?;
             let task = control
                 .tasks
                 .get_mut(node_id)
                 .context("graph_node_missing")?;
-            task.title = title.clone();
+            if let Some(title) = title {
+                task.title = title.clone();
+            }
             task.dependencies = dependencies.clone();
             match target_id {
                 Some(target_id) => {
@@ -381,12 +393,17 @@ pub fn ensure_meaningful(control: &Control, change: &GraphChange) -> Result<()> 
             target_id,
         } => {
             editable(control, node_id)?;
-            validate_task_snapshot(title, dependencies, target_id.as_deref())?;
+            validate_task_snapshot(
+                node_id,
+                title.as_deref(),
+                dependencies,
+                target_id.as_deref(),
+            )?;
             let task = &control.tasks[node_id];
             let requested_dependencies: BTreeSet<_> = dependencies.iter().collect();
             let current_dependencies: BTreeSet<_> = task.dependencies.iter().collect();
             ensure!(
-                title != &task.title
+                title.as_ref().is_some_and(|title| title != &task.title)
                     || requested_dependencies != current_dependencies
                     || control.target_preferences.get(node_id) != target_id.as_ref(),
                 "graph_change_noop"
@@ -465,6 +482,8 @@ pub fn guard(run: &Run) -> Result<()> {
     Ok(())
 }
 
+const GRAPH_TITLE_DISPLAY_MAX: usize = 1000;
+
 fn projected_task_title<'a>(run: &'a Run, control: &'a Control, id: &str) -> &'a str {
     if id != "objective" {
         return control.tasks[id].title.as_str();
@@ -473,19 +492,36 @@ fn projected_task_title<'a>(run: &'a Run, control: &'a Control, id: &str) -> &'a
         .graph_changes
         .values()
         .filter_map(|proposal| match &proposal.change {
-            GraphChange::UpdateTask { node_id, title, .. }
-                if node_id == id && proposal.status == "applied" =>
-            {
-                Some((
-                    proposal.applied_revision.unwrap_or_default(),
-                    title.as_str(),
-                ))
-            }
+            GraphChange::UpdateTask {
+                node_id,
+                title: Some(title),
+                ..
+            } if node_id == id && proposal.status == "applied" => Some((
+                proposal.applied_revision.unwrap_or_default(),
+                title.as_str(),
+            )),
             _ => None,
         })
         .max_by_key(|(revision, _)| *revision)
         .map(|(_, title)| title)
         .unwrap_or(run.request.objective.as_str())
+}
+
+fn truncate_utf16(text: &str, max_units: usize) -> String {
+    let mut units = 0;
+    text.chars()
+        .take_while(|character| {
+            units += character.len_utf16();
+            units <= max_units
+        })
+        .collect()
+}
+
+fn graph_display_title(title: &str) -> String {
+    truncate_utf16(
+        &crate::lifecycle::safe_summary(title, GRAPH_TITLE_DISPLAY_MAX),
+        GRAPH_TITLE_DISPLAY_MAX,
+    )
 }
 
 pub fn envelope(run: &Run, proposal: Option<&Proposal>) -> Value {
@@ -494,7 +530,21 @@ pub fn envelope(run: &Run, proposal: Option<&Proposal>) -> Value {
     let mut nodes = public["tasks"].as_array().unwrap().clone();
     for node in &mut nodes {
         let id = node["id"].as_str().unwrap().to_owned();
-        node["title"] = json!(projected_task_title(run, control, &id));
+        let canonical_title = projected_task_title(run, control, &id);
+        let display_title = graph_display_title(canonical_title);
+        node["title"] = json!(display_title);
+        if canonical_title != display_title {
+            let editor_limit = if id == "objective" { 8000 } else { 4000 };
+            let safe_editor_title = truncate_utf16(
+                &crate::lifecycle::safe_summary(canonical_title, editor_limit),
+                editor_limit,
+            );
+            node["editor_title"] = if safe_editor_title == canonical_title {
+                json!(canonical_title)
+            } else {
+                Value::Null
+            };
+        }
         node["source"] = json!(control.graph_sources.get(&id));
         node["target_preference"] = json!(control.target_preferences.get(&id));
     }
