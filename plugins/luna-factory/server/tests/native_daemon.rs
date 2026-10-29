@@ -528,3 +528,51 @@ async fn doctor_uses_the_same_read_only_unix_websocket_connector() {
     assert_eq!(report["inference_calls"], 0);
     server.await.unwrap();
 }
+
+/// Real kernel credentials and procfs, synthetic protocol only. No Codex or inference.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn codex_0165_fields_use_kernel_executable_binding_and_recheck_before_effects() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = dir.path().join("pinned-peer");
+    std::fs::copy(std::env::current_exe().unwrap(), &binary).unwrap();
+    let socket = dir.path().join("daemon.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut ws = accept_async(stream).await.unwrap();
+        let request: Value =
+            serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+        ws.send(Message::Text(json!({"id":request["id"],"result":{"userAgent":"client-controlled codex/0.165.0","codexHome":"/never/inspect/credentials","platformFamily":"unix","platformOs":"linux"}}).to_string().into())).await.unwrap();
+        while let Some(Ok(Message::Text(text))) = ws.next().await {
+            let request: Value = serde_json::from_str(&text).unwrap();
+            assert_ne!(
+                request["method"], "thread/start",
+                "changed executable must refuse before a native effect"
+            );
+        }
+    });
+    let client = NativeClient::connect_existing(&binary, Some(&socket))
+        .await
+        .unwrap();
+    let identity = client
+        .provider_identity()
+        .expect("same-namespace kernel peer is attestable");
+    assert_eq!(identity.name, "linux-unix-peer-executable");
+    assert_eq!(identity.version, "1");
+    assert!(identity.binary_hash.unwrap().starts_with("sha256="));
+    let mut altered = std::fs::read(&binary).unwrap();
+    altered.push(0);
+    std::fs::write(&binary, altered).unwrap();
+    assert!(client.provider_identity().is_none());
+    let error = client
+        .test_start_thread_guarded(dir.path(), "high", 1, || Ok(()))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        luna_factoryd::qualification::denied_code(&error),
+        Some(luna_factoryd::qualification::PROVIDER_MISMATCH)
+    );
+    client.shutdown().await.unwrap();
+    server.await.unwrap();
+}

@@ -338,8 +338,15 @@ impl Campaign {
         // No promotion transition exists yet, so a recorded execution link is corrupt, and
         // nothing in this version fetches parents, so a non-supplied provenance is forged.
         ensure!(
-            self.status == CampaignStatus::Planned
-                && self.run_ids.is_empty()
+            matches!(
+                (self.status, self.run_ids.is_empty()),
+                (CampaignStatus::Planned, true) | (CampaignStatus::Promoted, false)
+            ) && self
+                .run_ids
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                == self.run_ids.len()
                 && self.parent.provenance == Provenance::Supplied,
             "campaign_record_corrupt"
         );
@@ -353,6 +360,15 @@ pub struct PromoteCampaign {
     pub campaign_id: String,
     pub expected_revision: u64,
     pub idempotency_key: String,
+    #[serde(default)]
+    pub budget: Option<ExecutionBudget>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionBudget {
+    pub capacity: u32,
+    pub repair_attempts: u32,
+    pub wall_seconds: u64,
 }
 impl PromoteCampaign {
     pub fn validate(&self) -> Result<()> {
@@ -364,6 +380,134 @@ impl PromoteCampaign {
         );
         Ok(())
     }
+}
+
+/// Immutable approval lineage on the executable run, independent of later plan edits.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovedPlan {
+    pub campaign_id: String,
+    pub planning_run_id: String,
+    pub revision: u64,
+    pub subject: String,
+    pub snapshot_sha256: String,
+}
+
+pub fn execution_request(plan: &Run, request: &PromoteCampaign) -> Result<StartRequest> {
+    let mut executable = plan.request.clone();
+    // The exact plan's objective includes canonical task edits, never display text.
+    executable.objective = crate::graph::projected_task_title(
+        plan,
+        plan.control.as_ref().context("control_missing")?,
+        "objective",
+    )
+    .to_owned();
+    if let Some(budget) = &request.budget {
+        executable.capacity = budget.capacity;
+        executable.repair_attempts = budget.repair_attempts;
+        executable.wall_seconds = budget.wall_seconds;
+    }
+    executable.idempotency_key = format!(
+        "campaign-execute-{:x}",
+        Sha256::digest(serde_json::to_vec(request)?)
+    );
+    Ok(executable)
+}
+
+pub fn approve_plan(
+    campaign: &Campaign,
+    plan: &Run,
+    request: &PromoteCampaign,
+) -> Result<ApprovedPlan> {
+    ensure!(
+        plan.planning_only
+            && plan.id == campaign.planning_run_id
+            && plan.request.repository == campaign.repository
+            && crate::graph::repository_id(plan) == campaign.repository_identity,
+        "campaign_planning_run_invalid"
+    );
+    crate::graph::guard(plan)?;
+    let control = plan.control.as_ref().context("control_missing")?;
+    ensure!(
+        control.revision == request.expected_revision,
+        "stale_revision"
+    );
+    ensure!(
+        !plan.claim_held
+            && plan.thread_id.is_none()
+            && plan.owned_threads.is_empty()
+            && plan.active_threads.is_empty()
+            && plan.turn_id.is_none()
+            && control.attempts.is_empty()
+            && control.effects.is_empty()
+            && control.checks.is_empty()
+            && control.cas_requests.is_empty()
+            && control
+                .tasks
+                .values()
+                .all(|t| t.state == TaskState::Candidate && t.native_thread.is_none()),
+        "campaign_planning_run_invalid"
+    );
+    ensure!(
+        control
+            .graph_changes
+            .values()
+            .all(|p| p.applied_revision.is_some()),
+        "plan_has_unapplied_changes"
+    );
+    ensure!(
+        control
+            .target_preferences
+            .values()
+            .all(|target| target == "native-local"),
+        "campaign_target_not_executable"
+    );
+    Ok(ApprovedPlan {
+        campaign_id: campaign.id.clone(),
+        planning_run_id: plan.id.clone(),
+        revision: control.revision,
+        subject: plan.current_subject.clone(),
+        snapshot_sha256: format!("{:x}", Sha256::digest(serde_json::to_vec(plan)?)),
+    })
+}
+
+pub fn initialize_execution(run: &mut Run, plan: &Run, binding: &ApprovedPlan) -> Result<()> {
+    let source = plan.control.as_ref().context("control_missing")?;
+    let control = run.control.as_mut().context("control_missing")?;
+    control.tasks = source.tasks.clone();
+    // Keep the canonical edited objective independently of the proposal history.
+    control
+        .tasks
+        .get_mut("objective")
+        .context("objective_missing")?
+        .title = run.request.objective.clone();
+    control.graph_sources = source.graph_sources.clone();
+    control.target_preferences = source.target_preferences.clone();
+    control.assumptions = source.assumptions.clone();
+    for task in control.tasks.values_mut() {
+        task.necessity = "explicit_user_objective".into();
+        task.effects = vec!["native_owner_turn".into()];
+        task.claim = "owned".into();
+        task.reason = Some("approved_plan_revision".into());
+    }
+    let ready: Vec<_> = control
+        .tasks
+        .values()
+        .filter(|task| crate::control::admit_task(control, task).is_ok())
+        .map(|task| task.id.clone())
+        .collect();
+    ensure!(!ready.is_empty(), "plan_has_no_ready_task");
+    control.selected_task = if ready.iter().any(|id| id == "objective") {
+        "objective".into()
+    } else {
+        ready[0].clone()
+    };
+    for id in ready {
+        control.tasks.get_mut(&id).unwrap().state = TaskState::Ready;
+    }
+    control.validate()?;
+    run.approved_plan = Some(binding.clone());
+    Ok(())
 }
 
 /// The graph identity the planning graph will carry, computed before admission. Admission
@@ -438,16 +582,6 @@ pub fn project(campaign: &Campaign, planning: &Run, runs: &[Run]) -> Result<Valu
         "planning":{"run_id":planning.id,"revision":control.revision,"planning_only":planning.planning_only,
             "tasks":{"total":control.tasks.len(),"candidate":counts[0],"ready":counts[1],"running":counts[2],"verify":counts[3],"done":counts[4],"blocked":counts[5]}},
         "runs":runs.iter().map(|run|{let public=crate::lifecycle::public_run(run);json!({"id":run.id,"state":public["state"],"updated_at":run.updated_at})}).collect::<Vec<_>>(),
-        "promotion":{"allowed":false,"reason":promotion_blocker()}
+        "promotion":{"allowed":false,"reason":"execution_not_qualified"}
     }))
-}
-
-/// Why promotion is refused. Even qualified execution would not make promotion allowed:
-/// this version defines no promotion transition, so it fails closed either way.
-pub fn promotion_blocker() -> &'static str {
-    if crate::lifecycle::execution_qualification().0 {
-        "campaign_promotion_unavailable"
-    } else {
-        "execution_not_qualified"
-    }
 }

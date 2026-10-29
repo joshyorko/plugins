@@ -208,6 +208,8 @@ pub struct ExecutionProfile {
     pub codex_binary: String,
     pub codex_binary_identity: String,
     pub native_socket: Option<String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub native_paths: std::collections::BTreeMap<std::path::PathBuf, std::path::PathBuf>,
     pub model: String,
     pub profile: String,
     pub effort: String,
@@ -242,6 +244,7 @@ impl ExecutionProfile {
                 .native_socket
                 .as_ref()
                 .map(|socket| socket.to_string_lossy().into_owned()),
+            native_paths: config.native_paths.clone(),
             model: crate::native::LUNA_MODEL.into(),
             profile: alias.into(),
             effort: profile.effort.clone(),
@@ -289,7 +292,7 @@ fn binary_cache_key(metadata: &std::fs::Metadata) -> Option<BinaryCacheKey> {
 }
 
 /// SHA-256 of the executable, cached only for an unchanged filesystem identity.
-fn binary_identity(path: &Path) -> String {
+pub(crate) fn binary_identity(path: &Path) -> String {
     let Ok(file) = std::fs::File::open(path) else {
         return UNAVAILABLE.into();
     };
@@ -390,6 +393,19 @@ pub(crate) struct DispatchAuthorization {
 }
 
 impl DispatchAuthorization {
+    /// Add a transport-owned restriction without constructing new authority.
+    pub(crate) fn restrict(
+        &self,
+        restriction: impl Fn() -> Result<()> + Send + Sync + 'static,
+    ) -> Self {
+        let original = self.check.clone();
+        Self {
+            check: Arc::new(move || {
+                restriction()?;
+                original()
+            }),
+        }
+    }
     pub(crate) fn check(&self) -> Result<()> {
         (self.check)()
     }
@@ -1258,6 +1274,7 @@ fn public(
 /// profile and a disposable git repository distinct from every configured root. Uses no
 /// repository alias and admits nothing.
 pub fn canary_preconditions(config: &Config, alias: &str, workspace: &Path) -> Result<Value> {
+    config.validate_execution_paths(workspace)?;
     require_scope(config, alias, Scope::QualificationOnly, 1)?;
     ensure!(workspace.is_absolute(), "canary_workspace_must_be_absolute");
     let root = workspace
@@ -1741,7 +1758,12 @@ pub async fn run_canary(
     let mut events = client.subscribe();
     let thread_start = tokio::time::timeout_at(
         work_deadline,
-        client.start_thread_guarded(&root, &profile.effort, 1, &authorization),
+        client.start_thread_guarded(
+            &config.native_path(&root)?,
+            &profile.effort,
+            1,
+            &authorization,
+        ),
     )
     .await;
     let mut owner = None;
@@ -1782,7 +1804,7 @@ pub async fn run_canary(
         work_deadline,
         client.start_skill_turn_with_id_guarded(
             &owner_id,
-            &config.skill_path,
+            &config.native_path(&config.skill_path)?,
             CANARY_OBJECTIVE,
             &profile.effort,
             None,

@@ -477,9 +477,17 @@ async fn promotion_fails_closed_without_events_revisions_or_records() {
             json!({"campaign_id":campaign_id,"expected_revision":revision,"idempotency_key":key}),
         )
         .await;
-        assert_eq!(error, "execution_not_qualified", "revision {revision}");
+        assert_eq!(
+            error,
+            if revision == 2 {
+                "execution_not_qualified"
+            } else {
+                "stale_revision"
+            },
+            "revision {revision}"
+        );
     }
-    // An unknown campaign is refused at the same boundary, before any read.
+    // An unknown campaign is refused without any write.
     assert_eq!(
         rejected(
             &server,
@@ -487,7 +495,7 @@ async fn promotion_fails_closed_without_events_revisions_or_records() {
             json!({"campaign_id":"missing","expected_revision":0,"idempotency_key":"k"})
         )
         .await,
-        "execution_not_qualified"
+        "campaign_not_found"
     );
     for bad in [
         json!({"campaign_id":campaign_id,"expected_revision":2}),

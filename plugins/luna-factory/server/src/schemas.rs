@@ -120,6 +120,7 @@ fn definitions() -> Map<String, Value> {
         "id":id(),"repository":text(64),"objective":text(8000),"acceptance":array(text(1000),32),"non_goals":array(text(1000),32),
         "finish":finish(),"profile":text(64),"capacity":{"type":"integer","minimum":1,"maximum":8},
         "active_workers":count(),"owned_workers":count(),
+        "approved_plan":nullable(object(json!({"campaign_id":id(),"planning_run_id":id(),"revision":count(),"subject":id(),"snapshot_sha256":{"type":"string","pattern":"^[a-f0-9]{64}$"}}))),
         "state":enumeration(&["STARTING","RUNNING","NEEDS_INPUT","VERIFYING","BLOCKED","INTERRUPTED","CANCELLING","CANCELLED","QUIESCENT","CONVERGED","FAILED"]),
         "current_subject":id(),"owner_thread":nullable(id()),"turn_id":nullable(id()),"delta":string(),
         "remaining_gap":nullable(string()),"skill_sha256":nullable(string()),"blocker":nullable(string()),
@@ -128,7 +129,7 @@ fn definitions() -> Map<String, Value> {
         "created_at":count(),"activity_at":count(),
         "control":nullable(reference("control")),"presentation":nullable(reference("presentation")),"route":reference("route"),
         "receipts":array(object(json!({"subject":string(),"kind":string(),"summary":string(),"created_at":count(),"thread_id":nullable(id())})),20)
-    })),&["receipts"]));
+    })),&["receipts","approved_plan"]));
     defs.insert("settings_values".into(),optional(object(json!({
         "capacity":{"type":"integer","minimum":1,"maximum":8},"finish":finish(),"profile":text(64)
     })),&["profile"]));
@@ -217,7 +218,7 @@ fn definitions() -> Map<String, Value> {
         "planning":object(json!({"run_id":id(),"revision":count(),"planning_only":{"const":true},
             "tasks":object(json!({"total":count(),"candidate":count(),"ready":count(),"running":count(),"verify":count(),"done":count(),"blocked":count()}))})),
         "runs":array(object(json!({"id":id(),"state":string(),"updated_at":count()})),64),
-        "promotion":object(json!({"allowed":{"const":false},"reason":string()}))
+        "promotion":object(json!({"allowed":{"type":"boolean"},"reason":string()}))
     })));
     defs.insert("github_source".into(),object(json!({
         "provider":{"const":"github"},"repository_id":{"type":"string","pattern":"^[a-f0-9]{64}$"},

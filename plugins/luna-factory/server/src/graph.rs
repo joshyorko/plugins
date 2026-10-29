@@ -484,7 +484,7 @@ pub fn guard(run: &Run) -> Result<()> {
 
 const GRAPH_TITLE_DISPLAY_MAX: usize = 1000;
 
-fn projected_task_title<'a>(run: &'a Run, control: &'a Control, id: &str) -> &'a str {
+pub(crate) fn projected_task_title<'a>(run: &'a Run, control: &'a Control, id: &str) -> &'a str {
     if id != "objective" {
         return control.tasks[id].title.as_str();
     }

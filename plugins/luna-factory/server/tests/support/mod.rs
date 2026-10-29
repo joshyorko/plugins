@@ -41,6 +41,16 @@ impl DaemonFixture {
         let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         listener.set_nonblocking(true).unwrap();
         config.native_socket = Some(socket);
+        let executable = std::env::current_exe().unwrap();
+        config.native_paths.insert(executable.clone(), executable);
+        for repo in config.repositories.values() {
+            config
+                .native_paths
+                .insert(repo.root.clone(), repo.root.clone());
+        }
+        config
+            .native_paths
+            .insert(config.skill_path.clone(), config.skill_path.clone());
         let binary = config.codex_binary.clone();
         let stop = tokio_util::sync::CancellationToken::new();
         let cancelled = stop.clone();

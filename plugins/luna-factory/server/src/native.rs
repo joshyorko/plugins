@@ -250,6 +250,7 @@ struct Inner {
     next_id: AtomicU64,
     closed: AtomicBool,
     provider_identity: StdMutex<Option<crate::qualification::NativeServerIdentity>>,
+    peer_identity: Option<crate::peer_identity::PeerIdentity>,
     options: NativeOptions,
 }
 impl Inner {
@@ -326,6 +327,7 @@ impl NativeClient {
             next_id: AtomicU64::new(1),
             closed: AtomicBool::new(false),
             provider_identity: StdMutex::new(None),
+            peer_identity: None,
             options,
         });
         let weak = Arc::downgrade(&inner);
@@ -394,15 +396,17 @@ impl NativeClient {
                         anyhow!("native daemon socket unavailable; no daemon was started")
                     })?;
                 // Fixed root URL is framing metadata, never a TCP destination.
+                let peer = crate::peer_identity::PeerIdentity::capture(&stream, binary);
                 let (websocket, _) =
                     client_async_with_config("ws://localhost/", stream, Some(ws_config))
                         .await
                         .map_err(|_| anyhow!("native daemon WebSocket handshake failed"))?;
-                Ok::<_, anyhow::Error>(websocket)
+                Ok::<_, anyhow::Error>((websocket, peer))
             };
-            let websocket = timeout(options.request_timeout, connection)
-                .await
-                .map_err(|_| anyhow!("native daemon connection timed out"))??;
+            let (websocket, peer_identity) =
+                timeout(options.request_timeout, connection)
+                    .await
+                    .map_err(|_| anyhow!("native daemon connection timed out"))??;
             let socket = Arc::new(StdMutex::new(Some(websocket)));
             let (events, _) = broadcast::channel(options.event_capacity);
             let inner = Arc::new(Inner {
@@ -415,6 +419,7 @@ impl NativeClient {
                 next_id: AtomicU64::new(1),
                 closed: AtomicBool::new(false),
                 provider_identity: StdMutex::new(None),
+                peer_identity,
                 options,
             });
             let weak = Arc::downgrade(&inner);
@@ -429,7 +434,10 @@ impl NativeClient {
     async fn initialize(&self) -> Result<()> {
         let handshake = timeout(self.inner.options.request_timeout, async {
             let response = self.request("initialize", json!({"clientInfo":{"name":"luna_factory", "title":"Luna Factory", "version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}})).await?;
-            let identity = provider_identity(&response)?;
+            let identity = match &self.inner.peer_identity {
+                Some(peer) => peer.current(),
+                None => provider_identity(&response)?,
+            };
             // Some app-server builds omit serverInfo. Keep passive reads available;
             // qualification rejects a missing identity before every execution write.
             *self.inner.provider_identity.lock().expect("provider identity lock") = identity;
@@ -453,6 +461,9 @@ impl NativeClient {
     }
 
     pub fn provider_identity(&self) -> Option<crate::qualification::NativeServerIdentity> {
+        if let Some(peer) = &self.inner.peer_identity {
+            return peer.current();
+        }
         self.inner
             .provider_identity
             .lock()
@@ -557,6 +568,27 @@ impl NativeClient {
         message: Value,
         authorization: Option<&crate::qualification::DispatchAuthorization>,
     ) -> Result<()> {
+        // A cached grant never substitutes for current peer-process identity. Add
+        // this restriction to every first-write poll, including backpressure waits.
+        let restricted = authorization.map(|authorization| {
+            let client = self.clone();
+            let expected = self
+                .inner
+                .provider_identity
+                .lock()
+                .expect("provider identity lock")
+                .clone();
+            authorization.restrict(move || {
+                if client.inner.peer_identity.is_some() && client.provider_identity() != expected {
+                    return Err(crate::qualification::ExecutionDenied {
+                        code: crate::qualification::PROVIDER_MISMATCH,
+                    }
+                    .into());
+                }
+                Ok(())
+            })
+        });
+        let authorization = restricted.as_ref();
         let qualified_write = authorization.is_some();
         let timeout_reason = if qualified_write {
             "qualification_write_timeout"

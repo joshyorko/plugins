@@ -43,6 +43,8 @@ pub struct Run {
     pub planning_only: bool,
     #[serde(default)]
     pub graph_repository_stamp: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_plan: Option<crate::campaign::ApprovedPlan>,
     pub request: StartRequest,
     pub canonical_root: String,
     pub repository_identity: String,
@@ -449,6 +451,7 @@ impl Store {
           CREATE TABLE IF NOT EXISTS repository_registrations (id TEXT PRIMARY KEY, alias TEXT NOT NULL UNIQUE, payload TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS workspace_repositories (id TEXT PRIMARY KEY, idem TEXT NOT NULL UNIQUE, alias TEXT NOT NULL UNIQUE, directory TEXT NOT NULL UNIQUE, payload TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS workspace_idempotency_keys (idem TEXT PRIMARY KEY, repository_key TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS campaign_promotions (idem TEXT PRIMARY KEY, request TEXT NOT NULL, run_id TEXT NOT NULL UNIQUE REFERENCES runs(id));
           CREATE TABLE IF NOT EXISTS campaigns (id TEXT PRIMARY KEY, idem TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL, repository_identity TEXT NOT NULL, forge_key TEXT NOT NULL, planning_run_id TEXT NOT NULL UNIQUE REFERENCES runs(id), payload TEXT NOT NULL, UNIQUE(repository_identity, forge_key));")?;
         // Additive, idempotent; user_version unchanged (see crate::qualification).
         connection.execute_batch(crate::qualification::TABLE_SQL)?;
@@ -764,7 +767,7 @@ impl Store {
         config: &Config,
         request: &StartRequest,
         planning_only: bool,
-        link: impl FnOnce(&rusqlite::Transaction<'_>, &Run, bool) -> Result<T>,
+        link: impl FnOnce(&rusqlite::Transaction<'_>, &mut Run, bool) -> Result<T>,
     ) -> Result<(Admission, T)> {
         validate_request(config, request)?;
         // Preserve legacy executable fingerprints; planning uses a distinct domain.
@@ -801,7 +804,7 @@ impl Store {
             .optional()?
         {
             ensure!(old_fingerprint == fingerprint, "idempotency_conflict");
-            let run = decode_run(&old)?;
+            let mut run = decode_run(&old)?;
             ensure!(run.planning_only == planning_only, "idempotency_conflict");
             ensure!(
                 run.canonical_root == root_text && run.repository_identity == identity,
@@ -813,7 +816,7 @@ impl Store {
                     "repository_identity_changed"
                 );
             }
-            let linked = link(&tx, &run, false)?;
+            let linked = link(&tx, &mut run, false)?;
             tx.commit()?;
             return Ok((
                 Admission {
@@ -840,6 +843,7 @@ impl Store {
             id: Uuid::new_v4().to_string(),
             planning_only,
             graph_repository_stamp: Some(crate::graph::repository_stamp(root, &identity)?),
+            approved_plan: None,
             request: request.clone(),
             canonical_root: root_text,
             repository_identity: identity.clone(),
@@ -924,7 +928,20 @@ impl Store {
         let snapshot = serde_json::to_string(&run)?;
         let digest = format!("{:x}", Sha256::digest(snapshot.as_bytes()));
         tx.execute("INSERT INTO control_events(run_id,event_id,revision,fingerprint,envelope,snapshot_sha256) VALUES (?1,'admission',0,?2,'{\"kind\":\"admission\"}',?2)",params![run.id,digest])?;
-        let linked = link(&tx, &run, true)?;
+        let linked = link(&tx, &mut run, true)?;
+        // A linked admission may initialize the new run. Persist its final snapshot in
+        // this same transaction; a failed initializer rolls back run, claim and link.
+        run.control
+            .as_ref()
+            .context("control_missing")?
+            .validate()?;
+        let payload = serde_json::to_string(&run)?;
+        let digest = format!("{:x}", Sha256::digest(payload.as_bytes()));
+        tx.execute(
+            "UPDATE runs SET payload=?1 WHERE id=?2",
+            params![payload, run.id],
+        )?;
+        tx.execute("UPDATE control_events SET fingerprint=?1,snapshot_sha256=?1 WHERE run_id=?2 AND event_id='admission'", params![digest,run.id])?;
         tx.commit()?;
         Ok((Admission { run, created: true }, linked))
     }
@@ -1430,6 +1447,105 @@ impl Store {
             )?;
             Ok(campaign)
         })
+    }
+    /// Replay is lookup-only: never reconnect or replay an uncertain native effect.
+    pub fn promotion_replay(
+        &self,
+        request: &crate::campaign::PromoteCampaign,
+    ) -> Result<Option<Run>> {
+        let saved: Option<(String, String)> = self
+            .connection
+            .query_row(
+                "SELECT request,run_id FROM campaign_promotions WHERE idem=?1",
+                [&request.idempotency_key],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        saved
+            .map(|(payload, id)| {
+                ensure!(
+                    payload == serde_json::to_string(request)?,
+                    "campaign_promotion_idempotency_conflict"
+                );
+                let run = self.get(&id)?;
+                let binding = run
+                    .approved_plan
+                    .as_ref()
+                    .context("campaign_promotion_corrupt")?;
+                let campaign = self.campaign(&request.campaign_id)?;
+                ensure!(
+                    !run.planning_only
+                        && binding.campaign_id == campaign.id
+                        && binding.planning_run_id == campaign.planning_run_id
+                        && binding.revision == request.expected_revision
+                        && campaign.run_ids.contains(&run.id),
+                    "campaign_promotion_corrupt"
+                );
+                Ok(run)
+            })
+            .transpose()
+    }
+    /// Creates a fresh executable snapshot and links it atomically to an approved plan.
+    /// This method has no native effects; the caller must qualify before admission.
+    pub fn admit_promotion(
+        &mut self,
+        config: &Config,
+        request: &crate::campaign::PromoteCampaign,
+    ) -> Result<Admission> {
+        request.validate()?;
+        if let Some(run) = self.promotion_replay(request)? {
+            validate_request(config, &run.request)?;
+            return Ok(Admission {
+                run,
+                created: false,
+            });
+        }
+        let campaign = self.campaign(&request.campaign_id)?;
+        ensure!(campaign.run_ids.is_empty(), "campaign_already_promoted");
+        let planning = self.get(&campaign.planning_run_id)?;
+        let executable = crate::campaign::execution_request(&planning, request)?;
+        let binding = crate::campaign::approve_plan(&campaign, &planning, request)?;
+        self.admit_linked(config, &executable, false, |tx, run, created| {
+            ensure!(created, "campaign_promotion_idempotency_conflict");
+            let current = Self::one_campaign(tx, "WHERE id=?1", [&campaign.id])?
+                .context("campaign_not_found")?;
+            ensure!(current == campaign, "campaign_changed");
+            let payload: String = tx.query_row(
+                "SELECT payload FROM runs WHERE id=?1",
+                [&planning.id],
+                |r| r.get(0),
+            )?;
+            let current_plan = decode_run(&payload)?;
+            ensure!(
+                crate::campaign::approve_plan(&current, &current_plan, request)? == binding,
+                "stale_plan_revision"
+            );
+            ensure!(
+                run.current_subject == planning.current_subject
+                    && run.graph_repository_stamp == planning.graph_repository_stamp,
+                "stale_graph_subject"
+            );
+            crate::campaign::initialize_execution(run, &planning, &binding)?;
+            let mut promoted = current;
+            promoted.run_ids.push(run.id.clone());
+            promoted.status = crate::campaign::CampaignStatus::Promoted;
+            promoted.updated_at = now();
+            promoted.validate()?;
+            tx.execute(
+                "UPDATE campaigns SET payload=?1 WHERE id=?2",
+                params![serde_json::to_string(&promoted)?, promoted.id],
+            )?;
+            tx.execute(
+                "INSERT INTO campaign_promotions(idem,request,run_id) VALUES(?1,?2,?3)",
+                params![
+                    request.idempotency_key,
+                    serde_json::to_string(request)?,
+                    run.id
+                ],
+            )?;
+            Ok(())
+        })
+        .map(|(admission, ())| admission)
     }
     pub fn settings(&self) -> Result<serde_json::Value> {
         let value: Option<String> = self
