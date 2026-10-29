@@ -138,6 +138,18 @@ Changes are a closed tagged union:
 - `import_candidates`: `nodes` with id, title, criterion_ids, dependencies and source.
 - `set_dependencies`: `node_id` and explicit prerequisite IDs.
 - `set_target`: `node_id` and `target_id`.
+- `update_task`: required `node_id`, `title`, `dependencies`, and `target_id`.
+  `title: null` keeps the exact canonical title. A string explicitly replaces it,
+  with a limit of 8,000 characters for the objective and 4,000 for other tasks.
+  `target_id: null` clears the planning preference. Dependencies are an explicit
+  set. The fields are validated and applied atomically.
+
+The public node `title` remains limited to 1,000 UTF-16 units. Optional
+`editor_title` supplies safe canonical text when the display projection differs;
+`null` withholds text that needs redaction or control filtering. The editor sends
+`title: null` when the field is unchanged, including a withheld title. Changing
+dependencies or location therefore never replaces a title with a display prefix
+or redacted placeholder.
 
 Imports remain CANDIDATE, without execution effects or owned claims. Dependency
 changes reject missing nodes, duplicate dependencies and cycles. Only unattempted
@@ -155,7 +167,7 @@ Neither proposal nor apply changes budgets, generations, acceptance or native
 identities. A planning run cannot later be converted into an executable run by
 changing preference or calling Resume.
 
-New `set_dependencies` and `set_target` commands reject unchanged values with
+New `set_dependencies`, `set_target`, and `update_task` commands reject unchanged values with
 `graph_change_noop`. Dependency order is not meaningful; reordering the same set
 is also unchanged. This rejection creates no proposal, event, or revision.
 Rejected keys are not reserved in the durable journal, as with other validation
@@ -171,6 +183,10 @@ The workbench separates task selection, proposal saving, and application. Task
 selection only changes app context. A proposal is a durable review draft; applying
 it requires explicit UI confirmation of that proposal and current revision. The
 server retains final authority and rechecks eligibility at both mutation boundaries.
+
+Persisted `update_task` proposals require a compatible runtime. An older binary
+cannot deserialize the new variant. Do not restore an older database backup over
+newer plans to roll back a deployment.
 
 ### Settings and app context
 

@@ -7,6 +7,7 @@ export type Tier = "needs" | "working" | "planned" | "finished" | "stopped" | "u
 export function runTier(run: RunView): Tier {
   if (needsOperatorDecision(run)) return "needs";
   if (run.planning_only) return "planned";
+  if (run.state === "BLOCKED") return "stopped";
   if (!run.control || !run.presentation) return "unverified";
   const kind = run.presentation.result.kind;
   return kind === "working" ? "working" : kind === "finished_verified" ? "finished" : kind === "stopped_unresolved" ? "stopped" : "unverified";
@@ -15,17 +16,25 @@ export function runTier(run: RunView): Tier {
 export function statusLabel(run: RunView): string {
   const tier = runTier(run);
   if (tier === "needs") return "Needs you";
-  if (tier === "planned") return "Planned · not started";
-  return run.control && run.presentation ? run.presentation.result.label : "Outcome unverified";
+  if (tier === "planned") return "Planned";
+  if (tier === "stopped") return run.state === "FAILED" ? "Failed" : run.state === "BLOCKED" ? "Blocked" : "Stopped";
+  if (!run.control || !run.presentation) return "Status unknown";
+  switch (run.presentation.result.kind) {
+    case "working": return "Running";
+    case "finished_verified": return "Done";
+    case "stopped_unresolved": return "Blocked";
+    case "needs_input": return "Needs you";
+    case "unverified": return "Status unknown";
+  }
 }
 
 /** The one sentence that answers "what is happening now". */
 export function nowSentence(run: RunView): string {
   const tier = runTier(run);
-  if (tier === "needs") return run.pending_decision?.question || "A native approval is waiting in Codex.";
+  if (tier === "needs") return run.pending_decision?.question || "An approval is waiting in Codex.";
   if (tier === "planned") {
     const tasks = run.control?.tasks.length ?? 0;
-    return `${tasks === 1 ? "1 planned task" : `${tasks} planned tasks`}${run.remaining_gap ? ` · ${run.remaining_gap}` : ""}.`;
+    return `${tasks} ${tasks === 1 ? "task" : "tasks"} in this plan.`;
   }
   if (tier === "finished") return run.delta || "Every mandatory criterion is proven.";
   return run.blocker || run.delta || run.remaining_gap || "No change has been reported yet.";
@@ -39,12 +48,12 @@ export function blockerCopy(run: RunView): string | null {
   const kind = run.control ? run.presentation?.blocker_kind : undefined;
   if (!kind) return null;
   switch (kind.kind) {
-    case "budget_exhausted": return kind.budget === "time" ? "Time budget used up" : "Repair budget used up";
+    case "budget_exhausted": return kind.budget === "time" ? "Time limit reached" : "Retry limit reached";
     case "diagnosis_required": return "A diagnosis is needed before another repair";
-    case "native_approval": return "Waiting on an approval in native Codex";
-    case "effect_outcome_unknown": return "An effect's outcome is unknown";
-    case "liveness_unknown": return "Status unknown";
-    case "unknown": return "Blocker not categorized by the server";
+    case "native_approval": return "Waiting for approval in Codex";
+    case "effect_outcome_unknown": return "Luna can't confirm whether the change happened";
+    case "liveness_unknown": return "Luna can't confirm the earlier run stopped.";
+    case "unknown": return "Luna can't check why this work is blocked";
     case "none": case "planning_only": return null;
   }
 }
@@ -61,11 +70,12 @@ export function clock(seconds: number, now = Date.now() / 1000): string {
   return sameDay ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 export function freshness(seconds: number | undefined, now = Date.now() / 1000): string {
-  if (seconds === undefined) return "Update time not reported";
+  if (seconds === undefined) return "Time unknown";
   const age = Math.max(0, Math.round(now - seconds));
-  if (age < 60) return "Updated just now";
-  if (age < 3600) return `Updated ${Math.round(age / 60)} min ago`;
-  return `Updated ${clock(seconds, now)}`;
+  if (age < 60) return "now";
+  if (age < 3600) return `${Math.round(age / 60)}m`;
+  if (age < 86_400) return `${Math.round(age / 3600)}h`;
+  return new Date(seconds * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 /** `updated` is the run's newest reported activity when first seen (see `activityAt`). */

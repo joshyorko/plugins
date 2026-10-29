@@ -139,11 +139,10 @@ try {
       assert(frame, "Production App iframe did not mount");
       await frame.locator(".workbench").waitFor();
       if (item.home) {
-        const row = frame.locator(`.group-campaigns .campaign-parent-row[data-run-id="${runId}"]`);
+        const row = frame.locator(`.plan-row[data-run-id="${runId}"]`);
         await row.waitFor();
-        assert((await row.textContent()).includes(`GitHub ${snapshot.repository.toLowerCase()}#67`), "Campaign row lost its parent label");
-        await frame.locator(`.group-campaigns .campaign-child[data-run-id="${runId}"]`).waitFor();
-        assert.equal(await frame.locator(`.group-planned [data-run-id="${runId}"]`).count(), 0, "Linked plan was also listed ungrouped");
+        assert((await row.textContent()).includes("from #67"), "Plan row lost its source issue");
+        assert.equal(await frame.locator(`.plan-row[data-run-id="${runId}"]`).count(), 1, "Plan was listed more than once");
       }
       if (item.params.node) {
         await frame.locator(`[data-node-id="${item.params.node}"][aria-pressed="true"]`).waitFor();
@@ -154,7 +153,7 @@ try {
         }
       }
       if (item.params.surface === "inline") await frame.locator('[data-action="chat-follow-up"]:enabled').waitFor();
-      if (item.lanes) { await frame.locator('[data-action="view-mode"][data-mode="lanes"]').click(); await frame.locator(".lanes").waitFor(); }
+      if (item.lanes) { await frame.locator('[data-action="view-mode"][data-mode="lanes"]').click(); await frame.locator(".activity-view").waitFor(); }
       if (item.width >= 1000) await frame.evaluate(() => window.scrollTo(0, 0));
       else if (item.params.node) await frame.locator(`[data-node-id="${item.params.node}"]`).scrollIntoViewIfNeeded();
       const host = await page.evaluate(() => ({ messages: window.lunaLiveHost.messages.length }));

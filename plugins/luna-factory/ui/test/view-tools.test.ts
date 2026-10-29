@@ -28,19 +28,19 @@ describe("model-callable view tools", () => {
     const { controller } = await opened();
     controller.selectAgent("child-1");
     const view = describeView(controller, "global");
-    expect(view).toMatchObject({ view: "map", run: { run_id: "swarm-fixture" }, task: { task_id: "child:child-1" }, agent: { label: "Worker 1", role: "worker" } });
+    expect(view).toMatchObject({ view: "map", run: { run_id: "swarm-fixture" }, task: { task_id: "child:child-1" }, agent: { label: "Agent 1", role: "worker" } });
     expect(JSON.stringify(view)).not.toMatch(/"(?:agent_)?thread/);
   });
   it("move only the view and never call a server mutation", async () => {
     const { controller, call, selectContext } = await opened();
     const tools = viewToolHandlers(controller, { surface: () => "global", readPlan: () => undefined });
-    expect((await tools.focusAgent({ label: "worker 2" })).isError).toBeUndefined();
+    expect((await tools.focusAgent({ label: "agent 2" })).isError).toBeUndefined();
     expect(controller.state.selectedAgent).toBe("child-2");
     expect(controller.state.selectedNodeId).toBe("child:child-2");
     expect((await tools.focusTask({ task_id: "objective" })).structuredContent).toMatchObject({ task: { task_id: "objective" } });
     expect((await tools.showView({ mode: "lanes" })).structuredContent).toMatchObject({ view: "lanes" });
     expect((await tools.focusTask({ task_id: "not-a-task" })).isError).toBe(true);
-    expect((await tools.focusAgent({ label: "Worker 9" })).isError).toBe(true);
+    expect((await tools.focusAgent({ label: "Agent 9" })).isError).toBe(true);
     expect((await tools.openRun({ run_id: "missing" })).isError).toBe(true);
     // Model-driven focus never reattaches context the user removed.
     expect(selectContext).not.toHaveBeenCalled();
@@ -65,7 +65,7 @@ describe("model-callable view tools", () => {
 
 describe("context chip title", () => {
   it("labels the selection from bounded fields only", () => {
-    expect(contextTitle({ run_id: "r", agent_label: "Worker 2", node_title: "Campaign entity grouping a parent issue, its plan and its runs" })).toBe("Worker 2 · Campaign entity grouping a parent issue, its pl…");
+    expect(contextTitle({ run_id: "r", agent_label: "Agent 2", node_title: "Campaign entity grouping a parent issue, its plan and its runs" })).toBe("Agent 2 · Campaign entity grouping a parent issue, its pl…");
     expect(contextTitle({ run_id: "r", objective: "Ship it", repository: "plugins" })).toBe("Ship it");
     expect(contextTitle({ run_id: "r", repository: "plugins" })).toBe("Luna Factory · plugins");
     expect(contextTitle({})).toBeNull();

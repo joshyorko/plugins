@@ -1,12 +1,11 @@
-import { allowedFinishes, campaignStatusLabel, finishLabels, needsOperatorDecision, parentLabel, planDefaults, planFinishLabels, repositoryReasonCopy, runPath, type CampaignView, type FollowUpKind, type FollowUpTask, type RunView } from "./domain";
+import { allowedFinishes, finishLabels, needsOperatorDecision, planDefaults, planFinishLabels, preserveCanonicalTaskTitle, repositoryReasonCopy, runPath, type CampaignView, type FollowUpKind, type FollowUpTask, type RunView } from "./domain";
 import type { ViewState } from "./controller";
-import { renderMission, renderProposalReview, renderTargets, missionTasks } from "./graph-view";
+import { renderMission, renderProposalReview } from "./graph-view";
 import { layoutWaves } from "./campaign-map";
-import { icon, lunaMark, phaseGlyph, taskTone } from "./lunar";
+import { icon, lunaMark, phaseGlyph, taskGlyph, taskTone } from "./lunar";
 import { activityAt, blockerCopy, freshness, nowSentence, runTier, statusLabel, clock, type SinceTracker, type Tier } from "./narrative";
-import { roster } from "./agents";
 import { isRepoMenuOpen, openRepoMenu } from "./repo-menu";
-import { receiptAgent } from "./lanes";
+import { plainSummary } from "./lanes";
 
 export type Editor = "start" | "settings" | "steer" | "stop" | "repositories" | null;
 export type WorkbenchSurface = "inline" | "global" | "thread";
@@ -26,40 +25,35 @@ export interface WorkbenchOptions {
 }
 const escape = (value: string | number): string => String(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
 const reasonCopy = (reason: string | null): string => {
-  if (!reason) return "No additional reason was reported.";
+  if (!reason) return "Open Details for more information.";
   const messages: Record<string, string> = {
-    planning_only: "The saved plan is ready to review.", evidence_missing: "Evidence has not been collected.", owned_execution_active: "Owned execution is active.", read_only_status: "Reads current status without inference.",
-    pending_owner_decision: "The completed owner decision needs an answer.", current_owned_turn: "Correction is fenced to the current turn.",
-    stop_requires_native_cessation_proof: "Check current running work before continuing.", same_goal_remaining_budget: "Continue the same objective within its remaining limits.",
-    effect_outcome_unknown: "Reconcile the existing effect before any new work.", owned_liveness_unknown: "Luna can't confirm the earlier run stopped.",
-    time_budget_exhausted: "The original time limit is exhausted.", repair_budget_exhausted: "The original repair limit is exhausted.",
-    diagnosis_required: "Two attempts made no progress; a diagnosis is required.", read_only_native_reconciliation: "Check current running work before continuing.",
-    inspect_native_evidence: "Inspect retained native evidence.", native_approval_requires_native_ui: "This approval can only be answered in native Codex.",
+    planning_only: "Your plan is ready to review.", evidence_missing: "Not checked yet.", owned_execution_active: "This run is still active.", read_only_status: "Luna is checking the latest status.",
+    pending_owner_decision: "A decision from you is needed.", current_owned_turn: "Reply in this conversation to continue.",
+    stop_requires_native_cessation_proof: "Check running work before continuing.", same_goal_remaining_budget: "Continue this plan within its remaining limits.",
+    effect_outcome_unknown: "Luna can't confirm whether the change happened.", owned_liveness_unknown: "Before starting new work, Luna needs to check what's still running in Codex.",
+    time_budget_exhausted: "The time limit has been reached.", repair_budget_exhausted: "The retry limit has been reached.",
+    diagnosis_required: "Luna needs a diagnosis before another retry.", read_only_native_reconciliation: "Check running work before continuing.",
+    inspect_native_evidence: "Open Details for the saved information.", native_approval_requires_native_ui: "Answer this approval in Codex.",
   };
-  // Unmapped codes are never shown raw; prose reasons from the server are already plain language.
-  return messages[reason] ?? (/\s/.test(reason) ? `${reason.replace(/[.!?]?$/, ".")}` : "The server reported this action without further detail.");
+  return messages[reason] ?? "Luna couldn't confirm this yet. Refresh to check again.";
 };
-const deliverableLabel = (kind: "local_candidate" | "push" | "pr_ready"): string => ({ local_candidate: "Local candidate", push: "Pushed branch", pr_ready: "PR ready" })[kind];
 const disabled = (value: boolean): string => value ? " disabled" : "";
-const button = (action: string, label: string, options: { primary?: boolean; disabled?: boolean; icon?: "plus" | "refresh" | "settings" | "close"; quiet?: boolean; iconOnly?: boolean } = {}): string => `<button type="button" id="action-${action}" data-action="${action}" class="button${options.primary ? " primary" : ""}${options.quiet ? " quiet" : ""}${options.iconOnly ? " icon-only" : ""}"${options.iconOnly ? ` aria-label="${escape(label)}" title="${escape(label)}"` : ""}${disabled(options.disabled ?? false)}>${options.icon ? icon(options.icon) : ""}${options.iconOnly ? "" : escape(label)}</button>`;
+const button = (action: string, label: string, options: { primary?: boolean; pagePrimary?: boolean; disabled?: boolean; icon?: "back" | "plus" | "refresh" | "settings" | "close"; quiet?: boolean; iconOnly?: boolean } = {}): string => `<button type="button" id="action-${action}" data-action="${action}" class="button${options.primary ? " primary" : ""}${options.pagePrimary ? " page-primary" : ""}${options.quiet ? " quiet" : ""}${options.iconOnly ? " icon-only" : ""}"${options.iconOnly ? ` aria-label="${escape(label)}" title="${escape(label)}"` : ""}${disabled(options.disabled ?? false)}>${options.icon ? icon(options.icon) : ""}${options.iconOnly ? "" : escape(label)}</button>`;
 type PresentedAction = NonNullable<RunView["presentation"]>["actions"][number];
 const actionButton = (action: PresentedAction, primary = false, busy = false): string => {
-  const label = action.kind === "reconcile" ? "Check running work" : action.kind === "steer" ? "Reply to Luna" : action.label;
+  const label = action.kind === "reconcile" ? "Check running work" : action.kind === "steer" ? "Reply to Luna" : action.kind === "answer" ? "Answer" : action.label;
   return `<button type="button" class="button${primary ? " primary" : ""}" id="control-${escape(action.kind)}" data-action="control" data-kind="${escape(action.kind)}" data-tool="${escape(action.tool ?? "")}"${disabled(busy || !action.allowed || !action.tool)} aria-describedby="action-reason">${escape(label)}</button>`;
 };
 const statusMark = (tier: Tier, label: string): string => `<span class="status tier-${tier}"><span class="status-shape" aria-hidden="true"></span>${escape(label)}</span>`;
 function proofLine(run: RunView): string {
   const counts = run.control ? run.presentation?.criteria : undefined;
-  if (!counts) return `<span class="proof unverified">${phaseGlyph(0, 0)}Proof unverified</span>`;
-  const progress = counts.failed ? `${counts.failed} need another look` : counts.proven === counts.mandatory ? "Done" : counts.proven ? `${counts.proven} of ${counts.mandatory} done` : "Not done yet";
+  if (!counts) return `<span class="proof unverified">${phaseGlyph(0, 0)}Not checked yet</span>`;
+  const progress = counts.failed ? `${counts.failed} need another look` : counts.proven === counts.mandatory ? "Done" : counts.proven ? `${counts.proven} of ${counts.mandatory} checks done` : "Not checked yet";
   return `<span class="proof">${phaseGlyph(counts.proven, counts.mandatory)}${progress}</span>`;
 }
-
 export function renderWorkbench(root: HTMLElement, state: ViewState, editor: Editor, preview: boolean, options: WorkbenchOptions = {}): void {
   options = { ...options, hostCanMessage: options.canSendFollowUps === true, canSendFollowUps: state.connected && options.canSendFollowUps === true && !state.pending && !state.refreshing && !state.graphLoading && !state.graphStale };
   options.since?.observe(state.runs);
-  const confirmed = root.querySelector<HTMLInputElement>("#confirm-graph-change");
-  const confirmationIdentity = confirmed?.checked ? confirmed.dataset.confirmIdentity : undefined;
   const oldForm = root.querySelector<HTMLFormElement>("form");
   const oldKind = oldForm?.dataset.form;
   const draft = oldForm ? new FormData(oldForm) : null;
@@ -76,20 +70,35 @@ export function renderWorkbench(root: HTMLElement, state: ViewState, editor: Edi
     if (focusId) findElementById(root, focusId)?.focus({ preventScroll: true });
     return;
   }
-  const canStart = Boolean(state.connected && state.capabilities?.profiles.length && canAddOrPick(state) && !state.pending);
   if (options.canvasWidth === undefined && root.clientWidth > 0) {
     // Mirrors the CSS: main max 1360px with 24px padding; the inspector column leaves at 861px+.
     const main = Math.min(root.clientWidth, 1360) - (root.clientWidth <= 520 ? 24 : 48);
     options.canvasWidth = (main > 860 ? main - 340 - 16 : main) - 2;
   }
+  const errorPage = Boolean(state.error && !state.initialized);
+  const offlineAt = run ? activityAt(run) : state.runs.map(activityAt).filter((value): value is number => value !== undefined).sort((a, b) => b - a)[0];
+  const status = state.error && !state.initialized ? ""
+    : state.error && state.connected
+    ? `<div class="toast" role="alert">Couldn't complete that. ${button("refresh", "Retry", { quiet: true }).replace('id="action-refresh"', 'id="action-retry"')}</div>`
+    : state.pending ? `<div class="notice pending"><span class="spinner" aria-hidden="true"></span>${state.pending.tool === "cancel_factory_run" ? "Stopping work and checking what remains…" : state.pending.tool === "connect_factory_github_repository" ? "Connecting the repo…" : state.pending.tool === "create_factory_local_repository" ? "Creating the repo…" : "Waiting for Luna…"}</div>`
+        : state.notice ? `<div class="notice success" role="status">${escape(state.notice)}</div>` : "";
+  const offline = !state.connected && state.initialized
+    ? `<div class="offline-banner" role="status"><span>Offline. Showing what Luna saw${offlineAt === undefined ? " in the last saved view" : ` at ${escape(clock(offlineAt, options.now))}`}.</span>${button("reconnect", "Reconnect", { quiet: true })}</div>`
+    : "";
+  const stopMenuAction = run && runTier(run) === "working" ? run.presentation?.actions.find(action => action.kind === "cancel" && action.tool === "cancel_factory_run" && action.allowed) : undefined;
+  const stopMenuItem = stopMenuAction ? actionButton(stopMenuAction, false, Boolean(state.pending)).replace("<button ", '<button role="menuitem" ') : "";
   root.innerHTML = `<div class="workbench" data-surface="${surface}" data-display-mode="${escape(options.displayMode ?? "inline")}" data-connection="${state.connectionStatus}">
     ${preview ? '<div class="preview-banner">Fixture visual preview · Synthetic run data · No live integration</div>' : ""}
-    <header class="appbar"><a class="brand" href="/" data-action="overview" aria-label="Luna Factory campaigns">${lunaMark(22)}<span>Luna Factory</span></a>${run && !editor ? `<nav class="breadcrumbs" aria-label="Breadcrumb">${icon("arrow", 12)}<a href="/" data-action="overview">Campaigns</a>${icon("arrow", 12)}<span>${escape(run.repository)}</span></nav>` : ""}
-      <div class="top-actions"><span class="connection" role="status"><i class="${state.connected ? "online" : ""}" aria-hidden="true"></i>${state.connectionStatus === "connected" ? "Connected" : state.connectionStatus === "disconnected" ? "Disconnected" : "Connecting"}</span>${button("refresh", "Refresh", { icon: "refresh", quiet: true, iconOnly: true, disabled: !state.connected || state.refreshing || Boolean(state.pending) })}${button("settings", "Settings", { icon: "settings", quiet: true, iconOnly: true, disabled: !state.capabilities || Boolean(state.pending) })}${editor === "start" ? "" : button("start", "Plan work", { icon: "plus", quiet: true, disabled: !canStart })}</div></header>
+    <header class="appbar${run && !editor ? " appbar-plan" : ""}">${run && !editor ? `<button type="button" id="action-overview" class="button quiet icon-only mobile-back" data-action="overview" aria-label="Back to plans" title="Back to plans">${icon("back")}</button>` : ""}<a class="brand" href="/" data-action="overview" aria-label="Luna Factory">${lunaMark(22)}<span>Luna Factory</span></a>${run && !editor ? `<nav class="breadcrumbs" aria-label="Breadcrumb"><span class="breadcrumb-separator">${icon("arrow", 12)}</span><a href="/" data-action="overview">Plans</a><span class="breadcrumb-separator">${icon("arrow", 12)}</span><span class="breadcrumb-title">${escape(run.objective)}</span></nav>` : ""}
+      <div class="top-actions">${button(state.connected ? "refresh" : "reconnect", state.connected ? "Refresh" : "Reconnect", { icon: "refresh", quiet: true, iconOnly: true, disabled: state.refreshing || Boolean(state.pending) })}<details class="header-menu"><summary class="button quiet icon-only" aria-label="More options" title="More options">${icon("more")}</summary><div class="header-menu-popover" role="menu" aria-label="More options">${stopMenuItem}${button("settings", "Settings").replace("<button ", '<button role="menuitem" ')}${state.capabilities?.workspaces?.connect_github ? button("connect-github", "Connect GitHub", { disabled: !state.connected || Boolean(state.pending) }).replace("<button ", '<button role="menuitem" ') : ""}</div></details></div></header>
     <main id="main" class="main">
-      <div class="status-area" aria-live="polite" aria-atomic="true">${state.pending ? `<div class="notice pending"><span class="spinner" aria-hidden="true"></span>${state.pending.tool === "cancel_factory_run" ? "Stopping owned execution. Waiting for verified status…" : state.pending.tool === "connect_factory_github_repository" ? "Connecting the repo…" : state.pending.tool === "create_factory_local_repository" ? "Creating the repo…" : "Waiting for the server…"}</div>` : state.refreshing ? '<div class="quiet-status">Reading persisted state…</div>' : ""}${state.notice ? `<div class="notice success">${escape(state.notice)}</div>` : ""}${state.error ? `<div class="notice error" role="alert"><span>${escape(state.error)}</span>${button("refresh", "Refresh", { disabled: !state.connected || Boolean(state.pending) }).replace('id="action-refresh"', 'id="action-refresh-error"')}</div>` : ""}${state.contextError ? `<div class="notice">${escape(state.contextError)}</div>` : ""}</div>
-      ${surface === "thread" ? '<div class="thread-inspector-label">This conversation</div>' : ""}${editor ? renderEditor(editor, state, run) : !state.initialized ? `<section class="empty welcome">${lunaMark(40)}<h1>Opening Luna Factory</h1><p>Waiting for the host's first snapshot.</p><p class="muted">Open Luna Factory from your MCP Apps host to connect.</p></section>` : state.selectedId ? run ? renderCampaign(run, state, options) : '<section class="empty"><h1>Opening this run</h1><p>The exact run is being read from the server.</p></section>' : renderHome(state, canStart, options)}
+      <div class="status-area" aria-live="polite" aria-atomic="true">${status}${offline}${state.contextError ? `<div class="notice">${escape(state.contextError)}</div>` : ""}</div>
+      ${surface === "thread" ? '<div class="thread-inspector-label">This conversation</div>' : ""}${errorPage ? `<section class="empty full-page-error" aria-labelledby="load-error-title">${lunaMark(40)}<h1 id="load-error-title">Couldn't reach Luna Factory</h1><p>The connection timed out.</p>${button("reconnect", "Try again", { primary: true })}</section>` : !state.initialized ? '<section class="empty loading-state" aria-label="Loading Luna"><div class="skeleton"><span></span><span></span><span></span></div></section>' : editor === "start" ? renderHome(state, options) : editor ? renderEditor(editor, state, run) : state.selectedId ? run ? renderCampaign(run, state, options) : '<section class="empty"><h1>Opening this plan</h1><p>Reading its latest state.</p></section>' : renderHome(state, options)}
     </main></div>`;
+  const taskTitle = root.querySelector<HTMLTextAreaElement>('form[data-form="graph-node"] #task-title');
+  const titleNode = state.graph?.nodes.find(node => node.id === state.selectedNodeId);
+  const canonicalTitle = titleNode?.editor_title === null ? null : titleNode?.editor_title ?? titleNode?.title ?? null;
+  if (taskTitle && titleNode) taskTitle.value = canonicalTitle === null ? "" : canonicalTitle;
   const newForm = root.querySelector<HTMLFormElement>("form");
   if (draft && newForm && oldKind === newForm.dataset.form && oldForm?.dataset.inputIdentity === newForm.dataset.inputIdentity) {
     for (const field of newForm.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input[name],textarea[name],select[name]")) {
@@ -102,15 +111,13 @@ export function renderWorkbench(root: HTMLElement, state: ViewState, editor: Edi
         for (const option of field.options) option.selected = values.includes(option.value);
       } else if (typeof value === "string") field.value = value;
     }
+    if (taskTitle && typeof draft.get("title") === "string") taskTitle.value = canonicalTitle === null ? String(draft.get("title")) : preserveCanonicalTaskTitle(String(draft.get("title")), canonicalTitle);
   }
+  const objective = root.querySelector<HTMLTextAreaElement>("#objective");
+  const planButton = root.querySelector<HTMLButtonElement>('button[type="submit"][value="plan"]');
+  if (objective && planButton) planButton.disabled = !objective.value.trim() || !state.connected || Boolean(state.pending);
   const repoFilter = root.querySelector<HTMLInputElement>("#repo_filter");
   if (repoFilter?.value) filterRepositories(root, repoFilter.value);
-  const nextConfirmation = root.querySelector<HTMLInputElement>("#confirm-graph-change");
-  if (confirmationIdentity && nextConfirmation?.dataset.confirmIdentity === confirmationIdentity) {
-    nextConfirmation.checked = true;
-    const apply = root.querySelector<HTMLButtonElement>('[data-action="apply-change"]');
-    if (apply) apply.disabled = !state.connected || !!state.pending || state.graphStale || state.graphLoading;
-  }
   for (const id of expanded) { const element = document.getElementById(id); if (element instanceof HTMLDetailsElement && root.contains(element)) element.open = true; }
   for (const id of disclosed) { const toggle = Array.from(root.querySelectorAll<HTMLElement>('[data-action="toggle-disclosure"]')).find(element => element.getAttribute("aria-controls") === id); if (toggle) toggleDisclosure(root, toggle, true); }
   if (repoMenuOpen) openRepoMenu(root, "none");
@@ -129,7 +136,6 @@ export function toggleDisclosure(root: HTMLElement, toggle: HTMLElement, open?: 
   const show = open ?? panel.hidden;
   panel.hidden = !show;
   toggle.setAttribute("aria-expanded", String(show));
-  toggle.textContent = show ? "Close editor" : "Edit";
 }
 
 function findElementById(root: HTMLElement, id: string): HTMLElement | undefined {
@@ -150,61 +156,88 @@ function miniMap(run: RunView): string {
   return `<svg class="mini-map" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-hidden="true" focusable="false">${dots}</svg>`;
 }
 
-function renderHome(state: ViewState, canStart: boolean, options: WorkbenchOptions): string {
-  const groups: Array<{ key: string; title: string; tiers: Tier[]; empty: string }> = [
-    { key: "needs", title: "Needs you", tiers: ["needs"], empty: "Nothing needs your decision." },
-    { key: "live", title: "In progress", tiers: ["working"], empty: "No owned work is in progress." },
-    { key: "planned", title: "Planned · not started", tiers: ["planned"], empty: "" },
-    { key: "history", title: "History", tiers: ["finished", "stopped", "unverified"], empty: "" },
-  ];
-  const campaigns = state.campaigns ?? [];
-  const linked = new Set(campaigns.flatMap(campaign => [campaign.planning_run_id, ...campaign.run_ids]));
-  // Linked runs move under their campaign, except that a real decision is never hidden there.
-  const members = (group: (typeof groups)[number]) => state.runs.filter(run => group.tiers.includes(runTier(run)) && (group.key === "needs" || !linked.has(run.id)));
-  const counts = new Map(groups.map(group => [group.key, members(group).length]));
-  const short: Record<string, [string, string]> = { needs: ["needs you", "need you"], live: ["in progress", "in progress"], planned: ["planned", "planned"], history: ["in history", "in history"] };
-  const summary = [...(campaigns.length ? [`${campaigns.length} ${campaigns.length === 1 ? "campaign" : "campaigns"}`] : []), ...groups.filter(group => counts.get(group.key)).map(group => { const count = counts.get(group.key) ?? 0; return `${count} ${short[group.key]![count === 1 ? 0 : 1]}`; })].join(" · ");
-  const row = (run: RunView): string => {
-    const tier = runTier(run);
-    const changes = options.since?.changes(run);
-    return `<li><a id="campaign-${escape(run.id)}" class="campaign-row tier-${tier}" href="${runPath(run.id)}" data-run-id="${escape(run.id)}">
-      <span class="row-sky">${miniMap(run) || phaseGlyph(run.presentation?.criteria.proven ?? 0, run.presentation?.criteria.mandatory ?? 0, 22)}</span>
-      <span class="row-main"><span class="row-repo">${escape(run.repository)}</span><strong>${escape(run.objective)}</strong><span class="row-now">${escape(tier === "needs" ? nowSentence(run) : changes?.lines[0] ?? nowSentence(run))}</span></span>
-      <span class="row-side">${statusMark(tier, statusLabel(run))}${proofLine(run)}<span class="row-fresh">${escape(freshness(activityAt(run), options.now))}</span></span>
-    </a></li>`;
-  };
-  const sections = groups.map(group => {
-    const runs = members(group);
-    const section = !runs.length && !group.empty ? "" : `<section class="home-group group-${group.key}" aria-labelledby="group-${group.key}"><h2 id="group-${group.key}">${group.key === "needs" ? icon("alert", 14) : ""}${group.title}<span>${runs.length}</span></h2>${runs.length ? `<ul class="campaign-list">${runs.map(row).join("")}</ul>` : `<p class="group-empty">${group.empty}</p>`}</section>`;
-    return group.key === "needs" ? section + renderCampaignGroup(state, campaigns, options) : section;
-  }).join("");
-  return `<section class="home-head"><h1>Campaigns</h1><p>${escape(summary || "No runs yet")}</p><p class="home-hint">${icon("chat")}Ask ChatGPT to plan work with Luna Factory. Plans appear here before anything runs.</p></section>
-    ${!state.capabilities?.repositories.length ? `<div class="notice repository-empty"><div><strong>No repositories yet</strong><p>${canAddOrPick(state) ? "Pick one from GitHub or start a new one when you plan work." : "Ask your operator to add a repository for Luna."}</p></div>${canAddOrPick(state) ? button("start", "Pick a repo", { icon: "plus", disabled: !canStart }).replace('id="action-start"', 'id="action-start-repository"') : ""}</div>` : ""}
-    ${state.runs.length || campaigns.length ? sections : `<section class="empty empty-sky">${lunaMark(40)}<h2>No runs yet</h2><p>Ask ChatGPT to plan an objective with Luna Factory, or plan one manually.<br>Every run keeps its progress and evidence here.</p>${button("start", "Plan work", { primary: true, icon: "plus", disabled: !canStart }).replace('id="action-start"', 'id="action-start-empty"')}</section>`}`;
+type HomePlan = { id: string; title: string; repository: string; tier: Tier; history: boolean; meta: string; at: number | undefined; run?: RunView };
+const campaignTier = (status: CampaignView["status"]): Tier => ({ planned: "planned", promoted: "unverified", finished: "finished", stopped: "stopped" } satisfies Record<CampaignView["status"], Tier>)[status];
+function confirmedTerminalHistory(run: RunView): boolean {
+  if (!(run.state === "CANCELLED" || run.state === "INTERRUPTED" || run.state === "FAILED") || run.active_workers > 0 || run.claim_held) return false;
+  const presentation = run.presentation;
+  if (!presentation) return true;
+  return !presentation.claim.held && presentation.claim.status === "released"
+    && presentation.owner.liveness === "idle" && presentation.workers.every(worker => worker.liveness === "idle");
+}
+function terminalStatusLabel(run: RunView): string {
+  return run.state === "FAILED" ? "Failed" : run.state === "INTERRUPTED" ? "Interrupted" : "Stopped";
 }
 
-const campaignTier = (status: CampaignView["status"]): Tier => ({ planned: "planned", promoted: "unverified", finished: "finished", stopped: "stopped" } satisfies Record<CampaignView["status"], Tier>)[status];
-const plannedTasks = (count: number): string => count === 1 ? "1 planned task" : `${count} planned tasks`;
-/** Campaign row, then its planning plan, then any linked runs. Every value is a named campaign or run field. */
-function renderCampaignGroup(state: ViewState, campaigns: CampaignView[], options: WorkbenchOptions): string {
-  if (!campaigns.length && !state.campaignsSkipped) return "";
-  const child = (id: string, kind: string, run: RunView | undefined, fallback: string): string => {
-    const tier = run ? runTier(run) : "unverified";
-    return `<li><a id="campaign-child-${escape(id)}" class="campaign-child tier-${tier}" href="${runPath(id)}" data-run-id="${escape(id)}"><span class="child-kind">${escape(kind)}</span><span class="child-main"><strong>${escape(run ? run.objective : fallback)}</strong>${run ? `<span class="row-now">${escape(nowSentence(run))}</span>` : ""}</span><span class="row-side">${run ? `${statusMark(tier, statusLabel(run))}${proofLine(run)}` : '<span class="row-fresh">Open to read its current state</span>'}</span></a></li>`;
-  };
-  const items = campaigns.map(campaign => {
-    const plan = state.runs.find(run => run.id === campaign.planning_run_id);
-    const tier = campaignTier(campaign.status);
-    const execution = campaign.run_ids.length ? `${campaign.run_ids.length} linked ${campaign.run_ids.length === 1 ? "run" : "runs"}` : campaign.status === "planned" ? "No runs yet" : "No linked runs reported";
-    const runs = campaign.run_ids.map(id => child(id, "Run", state.runs.find(run => run.id === id), "Linked run")).join("");
-    return `<li class="campaign-entity"><a id="campaign-entity-${escape(campaign.id)}" class="campaign-row campaign-parent-row tier-${tier}" href="${runPath(campaign.planning_run_id)}" data-run-id="${escape(campaign.planning_run_id)}">
-      <span class="row-sky">${plan ? miniMap(plan) || phaseGlyph(0, 0, 22) : phaseGlyph(0, 0, 22)}</span>
-      <span class="row-main"><span class="row-repo">${escape(campaign.repository.alias)} · ${escape(parentLabel(campaign))}</span><strong>${escape(campaign.title)}</strong><span class="row-now">${escape(`${plannedTasks(campaign.planning.tasks.total)} · ${execution}.`)}</span></span>
-      <span class="row-side">${statusMark(tier, campaignStatusLabel(campaign.status))}<span class="row-fresh">${escape(freshness(campaign.updated_at, options.now))}</span></span>
-    </a><ul class="campaign-children" aria-label="Plan and runs">${child(campaign.planning_run_id, "Plan", plan, `Planning graph · ${plannedTasks(campaign.planning.tasks.total)}`)}${runs || '<li class="campaign-child-empty">No execution runs yet</li>'}</ul></li>`;
-  }).join("");
-  return `<section class="home-group group-campaigns" aria-labelledby="group-campaigns"><h2 id="group-campaigns">Parent campaigns<span>${campaigns.length}</span></h2>${state.campaignsStale ? '<p class="group-empty" role="status">Campaign grouping could not be refreshed. Showing the last valid read.</p>' : ""}${state.campaignsSkipped ? `<p class="group-empty" role="status">${state.campaignsSkipped === 1 ? "1 campaign record could not be read and is not shown." : `${state.campaignsSkipped} campaign records could not be read and are not shown.`}</p>` : ""}${items ? `<ul class="campaign-list">${items}</ul>` : ""}</section>`;
+function githubUrl(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "github.com" ? url.toString() : null;
+  } catch { return null; }
 }
+
+function issueUrl(value: string | null): string | null {
+  const url = githubUrl(value);
+  if (!url) return null;
+  return /^https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+$/i.test(url) ? url : null;
+}
+
+function pullRequestUrl(value: string | null): string | null {
+  const url = githubUrl(value);
+  if (!url) return null;
+  return /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/i.test(url) ? url : null;
+}
+
+function homePlans(state: ViewState): HomePlan[] {
+  const campaigns = state.campaigns ?? [];
+  const linked = new Set(campaigns.flatMap(campaign => [campaign.planning_run_id, ...campaign.run_ids]));
+  const fromCampaigns = campaigns.map(campaign => {
+    const latestRun = [...campaign.runs].sort((a, b) => b.updated_at - a.updated_at).map(item => state.runs.find(run => run.id === item.id)).find((run): run is RunView => run !== undefined);
+    const planRun = state.runs.find(run => run.id === campaign.planning_run_id);
+    const run = latestRun ?? planRun;
+    const ready = campaign.planning.tasks.ready;
+    const parentUrl = issueUrl(campaign.parent.display?.url ?? null);
+    const provenance = parentUrl
+      ? `<a class="source-link" href="${escape(parentUrl)}" target="_blank" rel="noopener noreferrer">from #${campaign.parent.forge.number}</a>`
+      : `from #${campaign.parent.forge.number}`;
+    const meta = [escape(campaign.repository.alias), provenance, `${campaign.planning.tasks.total} ${campaign.planning.tasks.total === 1 ? "task" : "tasks"}`, `${ready} ready`, run?.pending_decision ? escape(plainSummary(run.pending_decision.question)) : ""].filter(Boolean).join(" · ");
+    const history = run ? confirmedTerminalHistory(run) : campaign.status === "stopped";
+    return { id: run?.id ?? campaign.planning_run_id, title: campaign.title, repository: campaign.repository.alias, tier: run ? history ? "stopped" : runTier(run) : campaignTier(campaign.status), history, meta, at: run ? activityAt(run) : campaign.updated_at, ...(run ? { run } : {}) };
+  });
+  const standalone = state.runs.filter(run => !linked.has(run.id)).map(run => {
+    const tasks = run.control?.tasks ?? [];
+    const ready = tasks.filter(task => task.state.toLowerCase() === "ready").length;
+    const history = confirmedTerminalHistory(run);
+    return { id: run.id, title: run.objective, repository: run.repository, tier: history ? "stopped" : runTier(run), history, meta: [escape(run.repository), `${tasks.length} ${tasks.length === 1 ? "task" : "tasks"}`, `${ready} ready`, run.pending_decision ? escape(plainSummary(run.pending_decision.question)) : ""].filter(Boolean).join(" · "), at: activityAt(run), run };
+  });
+  return [...fromCampaigns, ...standalone];
+}
+
+function renderHome(state: ViewState, options: WorkbenchOptions): string {
+  const plans = homePlans(state);
+  const row = (plan: HomePlan): string => `<li><div class="plan-row tier-${plan.tier}" data-run-id="${escape(plan.id)}">
+    <span class="plan-glyph">${plan.run ? miniMap(plan.run) || phaseGlyph(plan.run.presentation?.criteria.proven ?? 0, plan.run.presentation?.criteria.mandatory ?? 0, 22) : phaseGlyph(0, 0, 22)}</span>
+    <span class="plan-main"><a class="plan-open" href="${runPath(plan.id)}" data-run-id="${escape(plan.id)}">${escape(plan.title)}</a><span class="plan-meta">${plan.meta}</span></span>
+    <span class="plan-side">${statusMark(plan.tier, plan.history ? plan.run ? terminalStatusLabel(plan.run) : "Stopped" : plan.run ? statusLabel(plan.run) : plan.tier === "working" ? "Running" : plan.tier === "finished" ? "Done" : plan.tier === "planned" ? "Planned" : plan.tier === "needs" ? "Needs you" : plan.tier === "stopped" ? "Stopped" : "Status unknown")}<span class="plan-fresh">${escape(freshness(plan.at, options.now))}</span></span>
+  </div></li>`;
+  const sections = [
+    { key: "needs", title: "Needs you", tiers: ["needs", "stopped", "unverified"] as Tier[] },
+    { key: "running", title: "Running", tiers: ["working"] as Tier[] },
+    { key: "planned", title: "Planned", tiers: ["planned"] as Tier[] },
+    { key: "done", title: "Done", tiers: ["finished"] as Tier[] },
+    { key: "history", title: "History", tiers: [] as Tier[] },
+  ].map(group => {
+    const rows = group.key === "history" ? plans.filter(plan => plan.history) : plans.filter(plan => !plan.history && group.tiers.includes(plan.tier));
+    if (!rows.length) return "";
+    if (group.key === "done") return `<details class="home-done"><summary>Show ${rows.length} done</summary><ul class="plan-list">${rows.map(row).join("")}</ul></details>`;
+    if (group.key === "history") return `<details class="home-history"><summary>Show ${rows.length} from history</summary><ul class="plan-list">${rows.map(row).join("")}</ul></details>`;
+    return `<section class="home-group group-${group.key}" aria-labelledby="group-${group.key}"><h2 id="group-${group.key}">${group.title}<span>${rows.length}</span></h2><ul class="plan-list">${rows.map(row).join("")}</ul></section>`;
+  }).join("");
+  const readNote = state.campaignsStale ? '<p class="home-read-note" role="status">Some saved plans could not be refreshed. Showing the last version.</p>' : state.campaignsSkipped ? `<p class="home-read-note" role="status">${state.campaignsSkipped} ${state.campaignsSkipped === 1 ? "plan" : "plans"} could not be shown.</p>` : "";
+  return `<section class="home-page"><h1>Plans</h1><section class="plan-composer home-composer">${renderPlan(state)}</section>${readNote}<div class="home-plans">${sections}</div></section>`;
+}
+
 
 function renderCampaign(run: RunView, state: ViewState, options: WorkbenchOptions): string {
   const busy = !state.connected || Boolean(state.pending);
@@ -212,95 +245,108 @@ function renderCampaign(run: RunView, state: ViewState, options: WorkbenchOption
   const tier = runTier(run);
   const presentation = run.control ? run.presentation : undefined;
   const primary = presentation?.primary_action;
-  const action = primary ?? { kind: "refresh" as const, label: "Refresh current state", reason: "This older response has no authoritative action projection.", tool: "refresh_factory", allowed: true };
-  const secondary = presentation?.actions.filter(item => item.allowed && ["cancel", "steer"].includes(item.kind) && item.kind !== primary?.kind && item.tool) ?? [];
-  const changes = options.since?.changes(run);
-  // The typed category only names the blocker in plain language. Attention, tier and actions
-  // never read it; an uncategorized blocker keeps the generic label.
-  const category = presentation?.blocker_kind?.kind === "unknown" ? null : blockerCopy(run);
-  const eyebrow = attention ? "Needs you" : run.planning_only ? "Plan" : category ?? (run.blocker ? "Execution blocker" : "Next safe action");
-  const headline = attention ? run.pending_decision?.question || action.label : run.planning_only ? "" : presentation?.blocker_kind?.kind === "liveness_unknown" ? "Luna can't confirm the earlier run stopped." : run.blocker || action.label;
   const campaign = state.campaigns?.find(item => item.planning_run_id === run.id || item.run_ids.includes(run.id));
+  const livenessUnknown = presentation?.blocker_kind?.kind === "liveness_unknown";
+  const banner = attention || run.state === "BLOCKED";
+  const taskCount = campaign?.planning.tasks.total ?? state.graph?.nodes.length ?? run.control?.tasks.length ?? 0;
+  const readyCount = campaign?.planning.tasks.ready ?? state.graph?.nodes.filter(task => task.state.toLowerCase() === "ready").length ?? run.control?.tasks.filter(task => task.state.toLowerCase() === "ready").length ?? 0;
+  const taskLedger = state.graph?.run_id === run.id ? state.graph.nodes : run.control?.tasks ?? [];
+  const doneCount = taskLedger.filter(task => task.state.toLowerCase() === "done").length;
+  const waveCount = state.graph?.run_id === run.id ? layoutWaves(state.graph.nodes).waves.length : 0;
+  const executionReady = state.capabilities?.execution?.eligible === true;
+  const reviewingChange = state.proposal?.status === "proposed";
+  const currentCampaignGraph = campaign && state.graph?.run_id === campaign.planning_run_id && state.graph.revision === campaign.planning.revision && !state.graphStale;
+  const planPrimary = run.planning_only
+    ? reviewingChange ? "" : executionReady && currentCampaignGraph ? button("promote-campaign", "Start run", { primary: true, pagePrimary: true, disabled: busy || state.graphLoading }) : button("setup", "Set up running", { primary: true, pagePrimary: true, disabled: busy })
+    : "";
+  const attentionAction = livenessUnknown && !attention
+    ? presentation?.actions.find(item => item.kind === "reconcile" && item.allowed) ?? primary
+    : primary;
+  const attentionTitle = attention ? run.pending_decision?.question ?? blockerCopy(run) ?? "Luna needs your answer." : livenessUnknown ? "Luna can't confirm the earlier run stopped." : blockerCopy(run) ?? "Luna is blocked.";
+  const attentionBody = attention && run.pending_decision ? "Choose an answer to continue this plan." : !attention && livenessUnknown ? "Before starting new work, Luna needs to check what's still running in Codex." : reasonCopy(attentionAction?.reason ?? null);
+  const stopAction = livenessUnknown && !attention ? presentation?.actions.find(item => item.kind === "cancel" && item.allowed) : undefined;
+  const running = tier === "working";
+  const agents = (presentation?.workers.filter(worker => worker.liveness === "active").length ?? 0) + (presentation?.owner.liveness === "active" ? 1 : 0);
+  const runningMeta = running ? `Running · ${agents} ${agents === 1 ? "agent" : "agents"}${presentation?.budget.time_remaining_seconds === null || presentation?.budget.time_remaining_seconds === undefined ? "" : ` · ${Math.max(0, Math.ceil(presentation.budget.time_remaining_seconds / 60))}m left`}` : "";
+  const meta = [statusMark(tier, statusLabel(run)), escape(run.repository), campaign ? `from #${campaign.parent.forge.number}` : "", `${taskCount} ${taskCount === 1 ? "task" : "tasks"}`, `${readyCount} ready`, waveCount ? `${waveCount} ${waveCount === 1 ? "step" : "steps"}` : ""].filter(Boolean).join(" · ");
+  const safePullUrl = pullRequestUrl(presentation?.deliverable.reference ?? null);
+  const finishedPrimary = tier === "finished" && safePullUrl ? `<a class="button primary page-primary" href="${escape(safePullUrl)}" target="_blank" rel="noopener noreferrer">Open pull request ${icon("open", 14)}</a>` : "";
+  const serverPrimary = !run.planning_only && !reviewingChange && !banner && !running && tier !== "finished" && primary?.allowed && primary.tool ? actionButton(primary, true, busy).replace('class="button primary"', 'class="button primary page-primary"') : "";
   return `<section class="campaign-head">
-      <div class="eyebrow">${escape(run.repository)}</div>
-      <h1>${escape(run.objective)}</h1>
-      ${campaign ? `<p class="campaign-parent">from ${campaign.parent.display?.url ? `<a class="source-link" href="${escape(campaign.parent.display.url)}" target="_blank" rel="noopener noreferrer">#${campaign.parent.forge.number}</a>` : `#${campaign.parent.forge.number}`}</p>` : ""}
-      <p class="statusline">${statusMark(tier, statusLabel(run))}${run.planning_only ? "" : proofLine(run)}<span class="fresh">${escape(freshness(activityAt(run), options.now))}</span>${run.created_at !== undefined ? `<span class="started"><time datetime="${new Date(run.created_at * 1000).toISOString()}">${run.planning_only ? "Created" : "Started"} ${escape(clock(run.created_at, options.now))}</time></span>` : ""}</p>
-      <div class="story">${changes?.lines.length ? `<p class="story-kicker">Since you last looked at ${escape(clock(changes.since))}</p><ul>${changes.lines.map(line => `<li>${escape(line)}</li>`).join("")}</ul>` : `<p class="story-now">${escape(attention ? run.delta || "No new change was reported." : nowSentence(run))}</p>`}${run.remaining_gap && tier !== "planned" ? `<p class="story-gap">${escape(run.remaining_gap === "Owner acceptance of the current subject is still required." ? "Waiting for you to accept the result." : `Still needed: ${run.remaining_gap}`)}</p>` : ""}</div>
+      <div class="plan-title-row"><h1>${escape(run.objective)}</h1>${banner ? "" : planPrimary || serverPrimary || finishedPrimary}${running ? `<span class="running-meta">${escape(runningMeta)}</span>` : ""}</div>
+      <p class="plan-meta-line">${meta}</p>
+      ${run.planning_only || !taskCount ? "" : `<p class="plan-progress">${phaseGlyph(doneCount, taskCount, 18)}${doneCount} of ${taskCount} ${taskCount === 1 ? "task" : "tasks"} done</p>`}
+      ${running ? `<details class="plan-menu"><summary aria-label="More actions">⋯</summary>${presentation?.actions.filter(item => item.kind === "cancel" && item.allowed && item.tool).map(item => actionButton(item, false, busy)).join("") ?? ""}</details>` : ""}
     </section>
-    ${run.planning_only && !attention ? "" : `<section class="decision-panel tier-${attention ? "needs" : tier}${attention ? " needs-you" : " compact"}" aria-labelledby="decision-title"><div class="eyebrow"${category && !attention && !run.planning_only ? ` data-blocker-kind="${escape(presentation?.blocker_kind?.kind ?? "")}"` : ""}>${escape(eyebrow)}</div><h2 id="decision-title">${escape(headline)}</h2><p id="action-reason">${escape(reasonCopy(presentation ? action.reason : null))}${presentation ? "" : " Refresh to load the server's action and proof view."}</p><div class="run-controls">${actionButton(action, !run.planning_only || attention, busy)}${secondary.map(item => actionButton(item, false, busy)).join("")}</div></section>`}
+    ${banner ? `<section class="plan-banner tier-${attention ? "needs" : livenessUnknown ? "stopped" : tier}" aria-labelledby="decision-title"><h2 id="decision-title">${escape(attentionTitle)}</h2><p id="action-reason">${escape(attentionBody)}</p><div class="banner-actions">${attentionAction?.allowed && attentionAction.tool ? actionButton(attentionAction, true, busy) : button("refresh", "Refresh", { primary: true, disabled: busy })}${!attention && livenessUnknown && stopAction ? `<button type="button" class="button" data-action="control" data-kind="cancel" data-tool="${escape(stopAction.tool ?? "")}"${disabled(busy)}>Stop everything</button>` : `<button type="button" class="button quiet" data-action="chat-follow-up" data-kind="blocker"${disabled(!options.canSendFollowUps)}>Ask in chat</button>`}</div></section>` : ""}
     ${renderProposalReview(state)}
-    ${renderMission(state, run, task => renderFollowUpActions(run, options, task), options.canvasWidth)}
-    ${renderEvidence(run, state)}`;
+    ${renderMission(state, run, task => renderFollowUpActions(run, options, task), options.canvasWidth, renderEvidence(run, state))}`;
 }
 
 function renderEvidence(run: RunView, state: ViewState): string {
-  const presentation = run.control ? run.presentation : undefined;
-  const criteria = run.control?.criteria ?? run.acceptance.map((description, index) => ({ id: `A${index + 1}`, description, status: "unproved" as const, reason: null, check_refs: [] }));
-  const { tasks, graph } = missionTasks(state, run);
-  const agents = roster(run, graph);
-  const receipts = run.receipts.map(receipt => `<li class="receipt"><time datetime="${new Date(receipt.created_at * 1000).toISOString()}">${escape(clock(receipt.created_at))}</time><div><strong>${escape(receipt.kind.replaceAll("_", " "))}</strong><span>${escape(receipt.summary)}</span>${receipt.thread_id ? `<small>Recorded on ${escape(receiptAgent(receipt, agents)?.label ?? "an unlisted agent")}'s thread</small>` : ""}<small class="${receipt.subject === run.current_subject ? "" : "warn"}">${receipt.subject === run.current_subject ? "Matches the current subject" : "Different subject; re-verification may be needed"}</small></div></li>`).join("");
-  return `<details id="evidence-audit" class="evidence advanced"><summary>Evidence and audit<span>${criteria.length} ${criteria.length === 1 ? "completion check" : "completion checks"} · ${run.receipts.length} ${run.receipts.length === 1 ? "record" : "records"} · ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"}</span></summary>
-    <section><h3>Completion checks</h3><ol class="acceptance-list">${criteria.map(criterion => `<li><span class="criterion-state ${escape(criterion.status)}">${escape(criterion.status === "unproved" ? "Not done yet" : criterion.status === "proven" ? "Done" : "Needs attention")}</span><div><p>${escape(criterion.description)}</p>${criterion.reason ? `<small class="muted">${escape(reasonCopy(criterion.reason))}</small>` : ""}${criterion.check_refs.length ? `<small class="muted">Checks: ${criterion.check_refs.map(escape).join(", ")}</small>` : ""}</div></li>`).join("")}</ol><p class="muted small">Child-task policy: ${escape(run.control?.child_policy ?? "unverified")}.</p></section>
-    <section><h3>Execution and delivery</h3><div class="delivery-strip"><div><span>Owner</span><strong>${run.planning_only ? "No owner started" : escape(presentation?.owner.liveness ?? "unknown")}</strong><small>${run.planning_only ? "No native owner is assigned" : escape(agents.find(agent => agent.thread === presentation?.owner.thread_id)?.label ?? (presentation?.owner.thread_id ? "Owner thread recorded" : "Identity unknown"))}</small></div><div><span>Workers</span><strong>${presentation ? `${presentation.workers.filter(worker => worker.liveness === "active").length} active · ${presentation.workers.filter(worker => worker.liveness === "unknown").length} unknown` : "Unknown"}</strong><small>${presentation?.workers.map(worker => `${escape(agents.find(agent => agent.thread === worker.thread_id)?.label ?? "Unlisted worker")}: ${escape(worker.liveness)}`).join(", ") || "No worker identities reported"}</small></div><div><span>Time left</span><strong>${run.planning_only ? "Not running" : presentation?.result.kind !== "working" ? "Inactive" : presentation?.budget.time_remaining_seconds === null || presentation?.budget.time_remaining_seconds === undefined ? "Unverified" : `${Math.ceil(presentation.budget.time_remaining_seconds / 60)} min`}</strong><small>${presentation?.budget.repair_attempts_remaining ?? "?"} repairs remaining · ${presentation?.budget.repairs_used ?? "?"} used</small></div><div><span>Repository claim</span><strong>${presentation?.claim.status ?? "unknown"}</strong><small>${presentation?.claim.held ? "Retained" : presentation ? "Released" : "Status unknown"}</small></div><div><span>Deliverable</span><strong>${run.planning_only ? "No deliverable yet" : presentation ? `${presentation.deliverable.status} · ${deliverableLabel(presentation.deliverable.kind)}` : "unverified"}</strong><small class="mono">${escape(presentation?.deliverable.subject ?? "Subject unknown")}${presentation?.deliverable.reference ? ` · ${escape(presentation.deliverable.reference)}` : ""}</small></div></div></section>
-    <section><h3>Model route</h3><dl class="route-list"><dt>Requested</dt><dd>${escape(run.route.requested_model || "Not reported")}<small>${escape(run.route.requested_effort || "Effort not reported")}</small></dd><dt>Configured</dt><dd>${escape(run.route.configured_model || "Not reported")}<small>${escape(run.route.configured_effort || "Effort not reported")}</small></dd><dt>Observed</dt><dd>${escape(run.route.observed_model || "No execution-side model evidence")}<small>${escape(run.route.observed_effort || "Effort telemetry unavailable")}</small></dd><dt>Provider</dt><dd>${escape(run.route.configured_provider || "Configuration not reported")}<small>Downstream execution and billing unverified</small></dd></dl>${run.route.reroutes?.length ? `<div class="notice error">${run.route.reroutes.length} native model mismatch${run.route.reroutes.length === 1 ? "" : "es"} recorded. Execution was stopped for review. ${run.route.reroutes.map(route => `${escape(route.from_model)} → ${escape(route.to_model)} (${escape(route.thread_id)}, ${escape(route.turn_id)})`).join("; ")}</div>` : ""}</section>
-    <section><h3>Receipts</h3>${receipts ? `<ol class="receipt-list">${receipts}</ol>` : '<p class="muted small">No execution receipts retained. A state label alone is not proof.</p>'}</section>
-    <section><h3>Execution targets</h3>${renderTargets(state)}</section>
-    ${run.non_goals.length ? `<section><h3>Outside this run</h3><ul>${run.non_goals.map(goal => `<li>${escape(goal)}</li>`).join("")}</ul></section>` : ""}
-    <section><h3>Run identity</h3><dl class="identity-list"><dt>Run</dt><dd class="mono">${escape(run.id)}</dd><dt>Current subject</dt><dd class="mono">${escape(run.current_subject)}</dd><dt>Revision</dt><dd>${run.control?.revision ?? "unknown"}</dd><dt>Intent generation</dt><dd>${run.control?.intent_generation ?? "unknown"}</dd><dt>Dispatch generation</dt><dd>${run.control?.dispatch_generation ?? "unknown"}</dd><dt>Deadline</dt><dd>${run.planning_only ? "Not running" : new Date(run.deadline_at * 1000).toLocaleString()}</dd></dl></section>
-  </details>`;
+  const checks = run.control?.criteria ?? run.acceptance.map(description => ({ description, status: "unproved" as const }));
+  const checkSection = checks.length ? `<section class="detail-section"><h2>Done when</h2><ul class="detail-checks">${checks.map(check => `<li><span>${taskGlyph(check.status === "proven" ? "done" : check.status === "failed" ? "blocked" : "candidate", 16)}${escape(check.description)}</span><strong>${check.status === "proven" ? "Done" : check.status === "failed" ? "Needs attention" : "Not checked yet"}</strong></li>`).join("")}</ul></section>` : "";
+  const model = run.route.observed_model ?? run.route.requested_model;
+  const modelDetail = model ? `<section class="detail-section"><h2>Model</h2><p>${escape(model)}${run.route.observed_effort ? ` · ${escape(run.route.observed_effort)}` : ""}</p>${run.route.reroutes?.length ? '<p class="model-note">The model changed during this run. Luna stopped it for review.</p>' : ""}</section>` : "";
+  const updatedAt = activityAt(run);
+  const dates = [run.created_at === undefined ? "" : `${run.planning_only ? "Created" : "Started"} ${clock(run.created_at)}`, updatedAt === undefined ? "" : `Updated ${clock(updatedAt)}`].filter(Boolean);
+  const dateSection = dates.length ? `<section class="detail-section"><h2>Dates</h2><p>${dates.map(escape).join(" · ")}</p></section>` : "";
+  const remaining = run.presentation?.budget.time_remaining_seconds;
+  const time = remaining === null || remaining === undefined ? "" : `<section class="detail-section"><h2>Time left</h2><p>${Math.ceil(remaining / 60)} minutes</p></section>`;
+  const pullRequests = state.delivery?.run_id === run.id ? state.delivery.nodes.flatMap(node => node.pull_requests).flatMap(pull => {
+    const url = pullRequestUrl(pull.url);
+    return url ? [`<li><a href="${escape(url)}" target="_blank" rel="noopener noreferrer">Pull request #${pull.number} · ${escape(pull.state ?? "State unknown")}</a></li>`] : [];
+  }).join("") : "";
+  const pullRequest = pullRequests ? `<section class="detail-section"><h2>Pull request</h2><ul>${pullRequests}</ul></section>` : "";
+  const technical = `<details class="technical-details"><summary>Show technical details</summary><dl><dt>Plan ID</dt><dd class="mono">${escape(run.id)}</dd><dt>Current subject</dt><dd class="mono">${escape(run.current_subject)}</dd><dt>Revision</dt><dd>${run.control?.revision ?? "unknown"}</dd><dt>Intent generation</dt><dd>${run.control?.intent_generation ?? "unknown"}</dd><dt>Dispatch generation</dt><dd>${run.control?.dispatch_generation ?? "unknown"}</dd><dt>Deadline</dt><dd>${run.planning_only ? "Not running" : new Date(run.deadline_at * 1000).toLocaleString()}</dd></dl></details>`;
+  return `<section class="plan-details" aria-label="Plan details">${checkSection}${pullRequest}${modelDetail}${time}${dateSection}${technical}</section>`;
 }
 
 function renderInline(state: ViewState, run: RunView | undefined, options: WorkbenchOptions, preview: boolean): string {
-  const notes = `${preview ? '<div class="preview-banner">Fixture visual preview · Synthetic host data · No live integration</div>' : ""}${state.connectionStatus === "disconnected" && !state.error ? '<p class="connection-note" role="status">Disconnected · Reopen Luna Factory to refresh current state.</p>' : ""}${state.error ? `<p class="inline-feedback" role="alert">${escape(state.error)}</p>` : ""}${state.notice ? `<p class="inline-feedback" role="status">${escape(state.notice)}</p>` : ""}`;
+  const notes = `${preview ? '<div class="preview-banner">Fixture preview · Sample data</div>' : ""}${state.connectionStatus === "disconnected" ? '<p class="connection-note" role="status">Offline. Reopen Luna Factory to reconnect.</p>' : ""}${state.error && state.connected ? '<p class="inline-feedback" role="alert">Luna couldn\'t complete that.</p>' : ""}${state.notice ? `<p class="inline-feedback" role="status">${escape(state.notice)}</p>` : ""}`;
   const shell = (body: string) => `<div class="workbench inline-surface" data-surface="inline" data-display-mode="${escape(options.displayMode ?? "inline")}" data-connection="${state.connectionStatus}">${notes}${body}</div>`;
-  if (!run) return shell(`<article class="inline-card"><header class="inline-top">${lunaMark(18)}<span>Luna Factory</span></header><h2>No runs yet</h2><p class="inline-now">Ask ChatGPT to plan work with Luna Factory. Plans appear before anything runs.</p></article>`);
+  if (!run) return shell(`<article class="inline-card"><header class="inline-top">${lunaMark(18)}<span>Luna Factory</span></header><h2>No plans yet</h2><p class="inline-now">Open Luna Factory to describe what you want done.</p></article>`);
   const tier = runTier(run);
   const followKind: FollowUpKind = run.blocker || run.remaining_gap || run.pending_decision ? "blocker" : "summary";
-  const followLabel = followKind === "blocker" ? (tier === "needs" ? "Ask ChatGPT about this decision" : "Ask ChatGPT about this") : "Summarize in chat";
+  const summary = run.presentation?.blocker_kind?.kind === "liveness_unknown" ? "Luna can't confirm the earlier run stopped." : plainSummary(nowSentence(run));
+  const primaryLabel = tier === "needs" && run.pending_decision ? "Answer" : "Open";
+  const followLabel = "Ask in chat";
   return shell(`<article class="inline-card tier-${tier}" aria-labelledby="inline-title">
     <header class="inline-top">${lunaMark(18)}<span>${escape(run.repository)}</span>${statusMark(tier, statusLabel(run))}<span class="inline-fresh">${escape(freshness(activityAt(run), options.now))}</span></header>
-    <div class="inline-body"><span class="inline-sky">${miniMap(run) || phaseGlyph(run.presentation?.criteria.proven ?? 0, run.presentation?.criteria.mandatory ?? 0, 32)}</span><div><h2 id="inline-title">${escape(run.objective.slice(0, 300))}</h2><p class="inline-now">${escape(nowSentence(run))}</p><p class="inline-proof">${proofLine(run)}</p></div></div>
-    ${tier === "needs" ? `<p class="inline-attention">${icon("alert", 14)}<span>${run.pending_decision ? "Answer in Luna Factory or in this chat." : "Answer this approval in native Codex."}</span></p>` : ""}
-    <div class="inline-actions"><button id="follow-up-${followKind}-${escape(run.id)}" type="button" class="button quiet" data-action="chat-follow-up" data-kind="${followKind}"${disabled(!options.canSendFollowUps)}${options.messagePending ? ' aria-disabled="true"' : ""}>${icon("chat")}${escape(followLabel)}</button><button class="button primary" type="button" id="action-expand-mode" data-action="expand-mode"${disabled(!options.canExpand || !state.connected)}>Open Luna Factory</button></div>
-    ${!options.hostCanMessage ? '<p class="inline-hint" role="status">ChatGPT message sending is unavailable in this host.</p>' : options.messagePending ? '<p class="inline-hint" role="status">Sending your message…</p>' : !options.canSendFollowUps ? '<p class="inline-hint" role="status">Available once the current read finishes.</p>' : ""}
+    <div class="inline-body"><span class="inline-sky">${miniMap(run) || phaseGlyph(run.presentation?.criteria.proven ?? 0, run.presentation?.criteria.mandatory ?? 0, 32)}</span><div><h2 id="inline-title">${escape(run.objective.slice(0, 300))}</h2><p class="inline-now">${escape(summary)}</p><p class="inline-proof">${proofLine(run)}</p></div></div>
+    <div class="inline-actions"><button id="follow-up-${followKind}-${escape(run.id)}" class="button quiet" type="button" data-action="chat-follow-up" data-kind="${followKind}"${disabled(!options.canSendFollowUps)}${options.messagePending ? ' aria-disabled="true"' : ""}>${icon("chat")}${followLabel}</button><button class="button primary" type="button" id="action-expand-mode" data-action="expand-mode"${disabled(!options.canExpand || !state.connected)}>${primaryLabel}</button></div>
+    ${options.messagePending ? '<p class="inline-hint" role="status">Sending your message…</p>' : ""}
   </article>`);
 }
 
-/** One plain "Ask ChatGPT about this" action. It only sends after a click and never starts work. */
 function renderFollowUpActions(run: RunView, options: WorkbenchOptions, task?: FollowUpTask): string {
   const kind: FollowUpKind = task ? "choose" : run.blocker || run.remaining_gap || run.pending_decision ? "blocker" : "summary";
-  const note = !options.hostCanMessage ? "ChatGPT message sending is unavailable in this host." : options.messagePending ? "Sending your message…" : !options.canSendFollowUps ? "Available once the current read finishes." : "Sends only after your click. Nothing starts.";
-  return `<div class="chat-followups"><button id="follow-up-${kind}-${escape(task?.id ?? run.id)}" type="button" class="ask" data-action="chat-follow-up" data-kind="${kind}"${task ? ` data-task-id="${escape(task.id)}"` : ""}${disabled(!options.canSendFollowUps)}${options.messagePending ? ' aria-disabled="true"' : ""} aria-describedby="follow-up-note">${icon("chat", 14)}Ask ChatGPT about this</button><p class="small muted" id="follow-up-note" role="status">${escape(note)}</p></div>`;
+  return `<div class="chat-followups"><button id="follow-up-${kind}-${escape(task?.id ?? run.id)}" type="button" class="ask" data-action="chat-follow-up" data-kind="${kind}"${task ? ` data-task-id="${escape(task.id)}"` : ""}${disabled(!options.canSendFollowUps)}${options.messagePending ? ' aria-disabled="true"' : ""}>${icon("chat", 14)}Ask in chat</button></div>`;
 }
 
 const field = (name: string, label: string, control: string, hint = ""): string => `<div class="field"><label for="${name}">${label}</label>${control}${hint ? `<p class="field-hint" id="${name}-hint">${hint}</p>` : ""}</div>`;
 function renderEditor(editor: Exclude<Editor, null>, state: ViewState, run: RunView | undefined): string {
-  const title = { start: "Plan work", settings: "Factory settings", repositories: "Add from an operator folder", steer: run?.pending_decision ? "Answer the owner" : "Steer this run", stop: "Stop this run?" }[editor];
+  const title = { start: "Plans", settings: "Settings", repositories: "Repos", steer: run?.pending_decision ? "Answer Luna" : "Reply to Luna", stop: "Stop this run?" }[editor];
   const locked = !state.connected || Boolean(state.pending);
   const header = `<div class="editor-heading"><div>${editor === "start" ? "" : '<span class="eyebrow">Luna Factory</span>'}<h1>${title}</h1></div>${button("close-editor", "Close", { icon: "close", disabled: Boolean(state.pending) })}</div>`;
-  if (editor === "repositories") return header + renderRepositories(state);
+  if (editor === "repositories") return `${header}<section class="editor-card"><p>Connect GitHub or create a repo from the plan composer.</p></section>`;
   if (editor === "steer" || editor === "stop") {
     if (!run) return `${header}<p>Select a run first.</p>`;
-    if (editor === "stop") return `${header}<section class="editor-card"><p class="lead">${escape(run.objective)}</p><p>The server interrupts the owned execution and checks its descendants before releasing the repository claim. Unknown survivors leave the run blocked.</p><p>The objective, evidence, and history stay with this run. A later resume keeps its original authority and remaining limits.</p><form data-form="stop"><div class="form-actions"><button class="button danger" type="submit"${disabled(locked)}>Stop owned execution</button>${button("close-editor", "Keep running", { disabled: Boolean(state.pending) }).replace('id="action-close-editor"', 'id="action-keep-running"')}</div></form></section>`;
-    return `${header}<section class="editor-card">${run.pending_decision || run.blocker ? `<div class="decision-quote">${escape(run.pending_decision?.question || run.blocker || "")}</div>` : `<p>Send a correction to the current owner of <strong>${escape(run.repository)}</strong>.</p>`}<form data-form="steer" data-input-identity="${escape(run.pending_decision?.id || run.turn_id || run.id)}">${field("message", "Your answer or correction", '<textarea id="message" name="message" rows="6" required maxlength="4000" placeholder="What should the owner do differently?" aria-describedby="message-hint"></textarea>', run.pending_decision ? "Continues the same run and owner thread with your answer. Existing limits stay in place. Security approvals must be handled in native Codex." : "Sent to the current turn only. This cannot expand permissions or approve a security prompt.")}<div class="form-actions"><button class="button primary" type="submit"${disabled(locked || !run.pending_decision && !run.turn_id)}>Send to owner</button><span>Existing scope and finish authority stay in place</span></div></form></section>`;
+    if (editor === "stop") return `${header}<section class="editor-card"><p class="lead">${escape(run.objective)}</p><p>Luna will stop this run and check whether its agents have stopped too. If any are still active or cannot be checked, the plan stays blocked.</p><form data-form="stop"><div class="form-actions"><button class="button danger" type="submit"${disabled(locked)}>Stop run</button>${button("close-editor", "Keep running", { disabled: Boolean(state.pending) }).replace('id="action-close-editor"', 'id="action-keep-running"')}</div></form></section>`;
+    return `${header}<section class="editor-card">${run.pending_decision || run.blocker ? `<div class="decision-quote">${escape(run.pending_decision?.question || blockerCopy(run) || "")}</div>` : `<p>Reply to Luna about <strong>${escape(run.repository)}</strong>.</p>`}<form data-form="steer" data-input-identity="${escape(run.pending_decision?.id || run.turn_id || run.id)}">${field("message", "Your reply", '<textarea id="message" name="message" rows="6" required maxlength="4000" placeholder="What should Luna do next?" aria-describedby="message-hint"></textarea>', run.pending_decision ? "Your answer goes to Luna in this conversation." : "Your reply goes to Luna in this conversation.")}<div class="form-actions"><button class="button primary" type="submit"${disabled(locked || !run.pending_decision && !run.turn_id)}>Send reply</button></div></form></section>`;
   }
   if (editor === "start") return `<section class="plan-composer">${header}${renderPlan(state)}</section>`;
   const cap = state.capabilities;
-  const repositories = `<section class="editor-card"><div class="section-heading"><h2>Repositories</h2></div>${cap?.repositories.length ? `<ul class="repository-list">${cap.repositories.map(repo => `<li><strong>${escape(repo.alias)}</strong><span>${finishLabels[repo.max_finish]}</span></li>`).join("")}</ul>` : '<p class="muted">No repositories yet. Add one when you plan work.</p>'}</section>`;
-  if (!cap || !cap.profiles.length) return `${header}${renderRunningSetup(state)}${repositories}<div class="notice">No approved runtime profile is available. Check the trusted server configuration.</div>`;
+  if (!cap || !cap.profiles.length) return `${header}${renderRunningSetup(state)}<div class="notice">No model is available. Check Luna's setup.</div>`;
   const profileOptions = cap.profiles.map(profile => `<option value="${escape(profile.alias)}"${profile.alias === state.settings.profile ? " selected" : ""}>${escape(profile.alias)} · ${escape(profile.effort)}</option>`).join("");
   const finishOptions = allowedFinishes("pr").map(finish => `<option value="${finish}"${finish === state.settings.finish ? " selected" : ""}>${finishLabels[finish]}</option>`).join("");
-  return `${header}${renderRunningSetup(state)}${repositories}<section class="editor-card"><p class="editor-intro">Safe defaults for new runs. These do not change repository access, provider settings, or trusted limits.</p><form data-form="settings">
-    <div class="form-grid">${field("finish", "Finish authority", `<select id="finish" name="finish">${finishOptions}</select>`)}${field("profile", "Approved runtime profile", `<select id="profile" name="profile">${profileOptions}</select>`)}</div>
-    ${field("capacity", "Worker capacity", `<input id="capacity" name="capacity" type="number" min="1" max="${cap.limits.capacity}" step="1" value="${Math.min(state.settings.capacity || 1, cap.limits.capacity)}" required aria-describedby="capacity-hint">`, `At most ${cap.limits.capacity} concurrent workers`)}
-    <div class="form-actions"><button class="button primary" type="submit"${disabled(locked)}>Save defaults</button><span>Applies to future runs</span></div></form></section>`;
-}
-
-/** Whether the plan form has a repository to pick, or the server offers a way to add one. */
-function canAddOrPick(state: ViewState): boolean {
-  const cap = state.capabilities;
-  return Boolean(cap?.repositories.length || cap?.workspaces?.connect_github || cap?.workspaces?.create_local || cap?.repository_onboarding?.enabled);
+  const defaults = planDefaults(cap);
+  const limitMinutes = Math.max(1, Math.floor(cap.limits.wall_seconds / 60));
+  return `${header}${renderRunningSetup(state)}<section class="editor-card"><h2>Defaults</h2><form data-form="settings">
+    <div class="form-grid">${field("profile", "Model", `<select id="profile" name="profile">${profileOptions}</select>`)}${field("capacity", "Agents at once", `<input id="capacity" name="capacity" type="number" min="1" max="${cap.limits.capacity}" step="1" value="${Math.min(state.settings.capacity ?? defaults.capacity, cap.limits.capacity)}" required aria-describedby="capacity-hint">`, `Up to ${cap.limits.capacity} agents`)}</div>
+    ${field("finish", "When it's done", `<select id="finish" name="finish">${finishOptions}</select>`)}
+    <div class="default-limits"><p><strong>Time limit</strong><span>${Math.min(limitMinutes, Math.round(defaults.wall_seconds / 60))} minutes · set by Luna</span></p><p><strong>Retries</strong><span>${defaults.repair_attempts} · set by Luna</span></p></div>
+    <div class="form-actions"><button class="button primary" type="submit"${disabled(locked)}>Save defaults</button></div></form></section>`;
 }
 
 /** Hide picker rows that don't match the filter text. View-only; nothing is read or sent. */
@@ -314,14 +360,14 @@ const itemId = (prefix: string, name: string): string => `${prefix}-${name.toLow
 /**
  * One composer: the request box, then one row with the repo chip and Plan it. The chip opens a
  * menu of your repos, GitHub repos to connect, and "+ New repo…" (created when Plan it is pressed).
- * Every other setting sits in a closed "More options" with the defaults filled in. The server
- * rechecks all of it on submit.
+ * Finish preference and things to leave alone are the only optional fields. Model and capacity
+ * come from Settings; time and retry limits come from the server.
  */
 function renderPlan(state: ViewState): string {
   const cap = state.capabilities;
-  if (!cap || !cap.profiles.length) return '<section class="plan-card"><p class="plan-note">Luna isn\'t ready to plan yet. Ask your operator to finish setting it up.</p></section>';
+  if (!cap || !cap.profiles.length) return '<section class="plan-card"><p class="plan-note">Luna needs a model configured before it can plan.</p></section>';
   const locked = !state.connected || Boolean(state.pending);
-  const defaults = planDefaults(cap);
+  const defaults = { ...planDefaults(cap), ...state.settings };
   const approved = cap.repositories;
   const creating = state.newRepository && cap.workspaces?.create_local === true;
   const picked = creating ? undefined : approved.find(repo => repo.alias === state.pickedRepository) ?? approved[0];
@@ -357,49 +403,26 @@ function renderPlan(state: ViewState): string {
   const chip = `<div class="repo-select"><button type="button" id="repo-chip" class="repo-chip" aria-haspopup="menu" aria-expanded="false" aria-controls="repo-menu"${disabled(locked || !approved.length && !canAdd)}><span class="sr-only">Repo: </span><span class="repo-chip-label">${escape(chipLabel)}</span>${icon("chevron", 14)}</button>
       <div id="repo-popover" class="repo-popover" hidden>${filter}<div id="repo-menu" role="menu" aria-label="Choose a repo">${approvedItems ? `<div role="group" aria-label="Your repos" class="repo-group"><p class="repo-group-label" aria-hidden="true">Your repos</p>${approvedItems}</div>` : ""}${githubItems || more ? `<div role="group" aria-label="On GitHub" class="repo-group"><p class="repo-group-label" aria-hidden="true">On GitHub</p>${githubItems}${more}</div>` : ""}${newItem}</div>${loading}${githubNote}${emptyNote}</div></div>`;
   const nameField = creating ? `<div class="repo-name-field"><label class="sr-only" for="new_repository">New repo name</label><input id="new_repository" name="new_repository" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" placeholder="new-repo-name" aria-describedby="plan-repo-error"${disabled(locked)}></div>` : "";
-  const eligible = cap.execution?.eligible === true;
   const finishes = allowedFinishes(creating ? "local_candidate" : picked?.max_finish ?? "local_candidate");
-  const profileOptions = cap.profiles.map((profile, index) => `<option value="${escape(profile.alias)}"${index === 0 ? " selected" : ""}>${escape(profile.alias)} · ${escape(profile.effort)}</option>`).join("");
-  const maxMinutes = Math.max(1, Math.floor(cap.limits.wall_seconds / 60));
-  const options = `<details id="plan-more" class="plan-more"><summary>More options</summary><div class="plan-more-body">
-      ${field("done_when", "Done when", '<input id="done_when" name="done_when" maxlength="1000" autocomplete="off" placeholder="The tests pass and the README explains it" aria-describedby="done_when-hint">', "Optional. Leave it empty and your request is the finish line.")}
+  const options = `<details id="plan-more" class="plan-options plan-more"><summary>Options</summary><div class="plan-more-body">
       ${field("non_goals", "Leave alone", '<textarea id="non_goals" name="non_goals" rows="2" maxlength="32032" placeholder="One thing per line" aria-describedby="non_goals-hint"></textarea>', "Optional, one per line.")}
-      <div class="form-grid">${field("finish", "When it's done", `<select id="finish" name="finish">${finishes.map(finish => `<option value="${finish}"${finish === defaults.finish ? " selected" : ""}>${planFinishLabels[finish]}</option>`).join("")}</select>`)}${field("profile", "Model", `<select id="profile" name="profile">${profileOptions}</select>`)}</div>
-      <div class="form-grid three">${field("capacity", "Workers at once", `<input id="capacity" name="capacity" type="number" min="1" max="${cap.limits.capacity}" step="1" value="${defaults.capacity}" required>`)}${field("wall_minutes", "Time limit, minutes", `<input id="wall_minutes" name="wall_minutes" type="number" min="1" max="${maxMinutes}" step="1" value="${Math.max(1, Math.min(maxMinutes, Math.round(defaults.wall_seconds / 60)))}" required>`)}${field("repair_attempts", "Retries", `<input id="repair_attempts" name="repair_attempts" type="number" min="0" max="${cap.limits.repair_attempts}" step="1" value="${defaults.repair_attempts}" required>`)}</div>
-      ${cap.repository_onboarding?.enabled ? `<div class="plan-more-row"><span>Need a repo from your operator's folders?</span>${button("repositories", "Add from an operator folder", { quiet: true, disabled: locked })}</div>` : ""}
-      <p class="plan-fine">Luna checks every step on the server. Planning never merges, releases or deploys anything.</p>
+      <div class="form-grid">${field("finish", "When it's done", `<select id="finish" name="finish">${finishes.map(finish => `<option value="${finish}"${finish === defaults.finish ? " selected" : ""}>${planFinishLabels[finish]}</option>`).join("")}</select>`)}</div>
     </div></details>`;
-  const note = !approved.length && !canAdd
-    ? (cap.repository_onboarding?.enabled ? "No repositories yet. Add one under More options." : "No repositories yet. Ask your operator to add one.")
-    : eligible ? "Luna drafts a plan first. Nothing runs until you press Start run." : "";
-  const noteHtml = note ? escape(note) : 'Luna drafts a plan first. Running it needs a <button type="button" class="text-link" id="action-setup" data-action="setup">one-time setup</button>.';
   return `<section class="plan-card"><form data-form="start" class="plan-form">
-    <div class="plan-box"><label for="objective">What do you want done?</label>
-      <div class="composer"><textarea id="objective" name="objective" rows="4" required maxlength="8000" placeholder="Fix the flaky login test. Or: start a tiny CLI that prints tonight's moon phase."></textarea>
+    <div class="plan-box">
+      <div class="composer"><label class="sr-only" for="objective">Describe what you want done</label><textarea id="objective" name="objective" rows="4" required maxlength="1000" placeholder="Describe what you want done, or a new thing to build."></textarea>
         <input type="hidden" name="repository" value="${escape(picked?.alias ?? "")}">
-        <div class="plan-controls">${chip}${nameField}<span class="plan-spacer"></span>${eligible ? `<button class="button plan-run" type="submit" value="start"${disabled(locked || !approved.length && !canAdd)}>Start run</button>` : ""}<button class="button primary plan-go" type="submit" value="plan"${disabled(locked || !approved.length && !canAdd)}>Plan it</button></div>
+        <div class="plan-controls">${chip}${nameField}${options}<span class="plan-spacer"></span><button class="button primary plan-go" type="submit" value="plan" disabled>Plan it</button></div>
       </div>
       <p class="plan-error" id="plan-repo-error" role="alert" hidden></p>
-      <p class="plan-note">${noteHtml}</p>
+      <p class="plan-note">Luna drafts a plan first. Nothing runs until you press Start run.</p>
     </div>
-    ${options}
   </form></section>`;
 }
 
-/** The setup guidance the plan form's "one-time setup" link opens. Read-only: nothing here turns running on. */
 function renderRunningSetup(state: ViewState): string {
   const eligible = state.capabilities?.execution?.eligible === true;
-  return `<section class="editor-card setup-card" aria-labelledby="setup-running"><div class="section-heading"><h2 id="setup-running" tabindex="-1">Running work</h2><span class="setup-state">${eligible ? "Set up" : "Not set up yet"}</span></div>${eligible
-    ? "<p>Running is set up. Start run appears next to Plan it.</p>"
-    : "<p>Luna can plan now. Running a plan needs a one-time check on the machine Luna runs on: Codex is signed in, your plan includes Codex, and Luna's connection to Codex passes its checks.</p><p class=\"muted\">Your Luna server turns on Start run once that check passes; the steps are in the Luna Factory README. Until then you can plan as much as you like, and nothing runs.</p>"}</section>`;
-}
-
-function renderRepositories(state: ViewState): string {
-  const busy = !state.connected || Boolean(state.pending) || state.discovering;
-  const discovery = state.discovery;
-  const candidate = discovery?.candidates[0];
-  return `<section class="editor-card"><div class="section-heading"><h2>Operator-offered repositories</h2>${button("discover-repositories", "Refresh repositories", { icon: "refresh", disabled: busy })}</div><p class="editor-intro">Request a trusted alias for a local repository. A local operator must approve access before it can be used. Nothing is cloned and no run starts here.</p>
-    ${state.discovering ? '<p role="status">Reading the local catalog…</p>' : !state.capabilities?.repository_onboarding?.enabled ? '<div class="notice">Your operator has not enabled local discovery. Ask them to configure a trusted discovery root on the server.</div>' : !discovery ? '<p class="muted">Refresh repositories to read the available catalog.</p>' : !candidate ? '<div class="notice">No new repositories found. Approved aliases are already available when planning. Ask your operator to add a local repository under a trusted root, then refresh.</div>' : `<div class="form-actions native-form-action"><button class="button" type="button" data-action="chat-repository-form"${disabled(busy)}>Choose with a ChatGPT form</button><span>When supported by this host; the accessible form remains available below.</span></div><form data-form="repositories">${field("candidate_id", "Local repository", `<select id="candidate_id" name="candidate_id" required>${discovery.candidates.map(item => `<option value="${escape(item.id)}">${escape(item.name)} · ${escape(item.root_alias)}</option>`).join("")}</select>`, "Only repositories discovered by the server are offered.")}${field("alias", "Trusted alias", '<input id="alias" name="alias" required maxlength="64" pattern="[A-Za-z0-9_-]{1,64}" placeholder="sandbox-test" aria-describedby="alias-hint">', "Use letters, digits, hyphens and underscores. Runs use this alias, never a filesystem path.")}${field("max_finish", "Maximum finish authority", `<select id="max_finish" name="max_finish" required>${allowedFinishes(candidate.max_finish).map(finish => `<option value="${finish}">${finishLabels[finish]}</option>`).join("")}</select>`, "The operator's root policy is the ceiling. Choose the smallest authority needed.")}<div class="form-actions"><button class="button primary" type="submit"${disabled(busy)}>Request access</button><span>Requires local operator approval</span></div></form>`}
-    ${discovery?.requests.length ? `<section class="repository-requests"><h3>Access requests</h3>${discovery.requests.map(request => `<article class="repository-request"><div class="section-heading"><strong>${escape(request.alias)}</strong><span>${request.status === "approved" ? "Approval recorded" : "Pending operator approval"}</span></div><p>${escape(request.name)} · ${escape(request.root_alias)} · ${finishLabels[request.max_finish]}</p>${request.status === "pending" ? `<p class="muted">Give the local operator this request ID: <code>${escape(request.id)}</code>. After approval, refresh repositories.</p>` : '<p class="muted">Current approved aliases appear in Settings and when planning.</p>'}</article>`).join("")}</section>` : ""}
-  </section>`;
+  return `<section class="editor-card setup-card" aria-labelledby="setup-running"><div class="section-heading"><h2 id="setup-running" tabindex="-1">Running</h2><span class="setup-state">${eligible ? "Ready" : "Not ready"}</span></div>${eligible
+    ? "<p>The server reports that running is ready. It shows Start run only on plans it approves.</p>"
+    : "<p>Running needs setup on the machine hosting Luna. Finish setup there; Start run appears when the server reports it is ready.</p>"}</section>`;
 }

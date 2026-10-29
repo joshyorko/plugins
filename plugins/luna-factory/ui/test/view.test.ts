@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { filterRepositories, renderWorkbench, type Editor } from "../src/view";
 import { WorkbenchController } from "../src/controller";
-import { fixtureGithubRepositories, fixtureGraph, fixturePlanCapabilities, fixtureRun, fixtureWorkbench } from "./fixtures";
+import { fixtureCampaign, fixtureCampaignPlan, fixtureGithubRepositories, fixtureGraph, fixturePlanCapabilities, fixtureRun, fixtureWorkbench } from "./fixtures";
 import { githubRepositoryListSchema } from "../src/domain";
 import { bindRepoMenu, isRepoMenuOpen } from "../src/repo-menu";
 
@@ -15,13 +15,22 @@ function render(editor: Editor = null, run = fixtureRun()) {
   return { root, controller };
 }
 describe("accessible workbench", () => {
-  it("puts change, remaining gap, and actual blocker before evidence", () => {
+  it("puts secondary actions in the overflow menu and adds a narrow back affordance", () => {
+    const plan = fixtureCampaignPlan().run;
+    const { root, controller } = render(null, plan);
+    controller.state.selectedId = plan.id;
+    controller.state.capabilities = { ...fixtureWorkbench.capabilities, workspaces: { connect_github: true, create_local: true } };
+    renderWorkbench(root, controller.state, null, false);
+    const menu = root.querySelector<HTMLDetailsElement>(".header-menu");
+    expect(menu?.querySelector("summary")?.getAttribute("aria-label")).toBe("More options");
+    expect(menu?.querySelectorAll('[role="menuitem"]')).toHaveLength(2);
+    expect(root.querySelector(".appbar-plan .mobile-back")?.getAttribute("aria-label")).toBe("Back to plans");
+  });
+  it("puts a server-authorized decision in the page banner", () => {
     const { root } = render(null, fixtureRun({ state: "NEEDS_INPUT", blocker: "Choose whether to reduce the scope", pending_decision: { id: "decision-1", question: "Choose whether to reduce the scope" } }));
-    expect(root.textContent).toContain("Choose whether to reduce the scope");
-    const main = root.querySelector("main");
-    expect(main?.querySelector(".story")).not.toBeNull();
-    expect(main?.textContent?.indexOf("Choose whether to reduce the scope")).toBeLessThan(main?.textContent?.indexOf("Evidence and audit") ?? 0);
-    expect(root.querySelector('[data-kind="answer"]')).not.toBeNull();
+    expect(root.querySelector(".plan-banner h2")?.textContent).toBe("Choose whether to reduce the scope");
+    expect(root.querySelector('.plan-banner [data-kind="answer"]')).not.toBeNull();
+    expect(root.querySelector(".plan-title-row .page-primary")).toBeNull();
     expect(root.textContent).not.toContain("Force");
   });
   it("shows explicit ChatGPT follow-up buttons only when the host advertises message sending", () => {
@@ -29,31 +38,29 @@ describe("accessible workbench", () => {
     renderWorkbench(root, controller.state, null, false, { surface: "global", canSendFollowUps: true });
     const buttons = root.querySelectorAll<HTMLButtonElement>('[data-action="chat-follow-up"]');
     expect(buttons).toHaveLength(1);
-    expect(buttons[0]?.textContent).toContain("Ask ChatGPT about this");
-    expect(root.textContent).toContain("only after your click");
-    expect(root.textContent).toContain("Nothing starts");
+    expect(buttons[0]?.textContent).toContain("Ask in chat");
     expect(Array.from(buttons).every(button => !button.disabled)).toBe(true);
     renderWorkbench(root, controller.state, null, false, { surface: "global", canSendFollowUps: false });
     expect(Array.from(root.querySelectorAll<HTMLButtonElement>('[data-action="chat-follow-up"]')).every(button => button.disabled)).toBe(true);
-    expect(root.textContent).toContain("unavailable in this host");
   });
   it("keeps inline cards glanceable and adapts the same data for the thread inspector", () => {
     const { root, controller } = render(null, fixtureRun({ state: "NEEDS_INPUT", blocker: "Choose a safe scope" }));
     renderWorkbench(root, controller.state, null, false, { surface: "inline", displayMode: "inline", canExpand: true });
     expect(root.querySelector(".inline-card")?.textContent).toContain("Choose a safe scope");
     expect(root.querySelector(".sidebar")).toBeNull();
-    expect(root.querySelector('[data-action="expand-mode"]')?.textContent).toContain("Open Luna Factory");
+    expect(root.querySelector('[data-action="expand-mode"]')?.textContent).toBe("Open");
+    expect(root.querySelector(".inline-attention")).toBeNull();
     expect(root.querySelectorAll(".inline-card button")).toHaveLength(2);
     renderWorkbench(root, controller.state, null, false, { surface: "thread", displayMode: "fullscreen" });
     expect(root.querySelector('.workbench[data-surface="thread"]')).not.toBeNull();
     expect(root.querySelector(".thread-inspector-label")?.textContent).toContain("This conversation");
-    expect(root.textContent).toContain("Choose a safe scope");
+    expect(root.querySelector(".plan-title-row h1")?.textContent).toBe("Make Luna Factory a first-class workbench");
   });
   it("shows inline follow-up status and connection errors", () => {
     const { root, controller } = render(null, fixtureRun({ state: "NEEDS_INPUT" }));
     controller.reportError("ChatGPT could not receive this message.");
     renderWorkbench(root, controller.state, null, false, { surface: "inline", canSendFollowUps: false });
-    expect(root.querySelector('[role="alert"]')?.textContent).toContain("could not receive");
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("couldn't complete");
     expect(Array.from(root.querySelectorAll('[data-action="chat-follow-up"]')).every(button => (button as HTMLButtonElement).disabled)).toBe(true);
     controller.reportNotice("Message sent to the active ChatGPT conversation.");
     renderWorkbench(root, controller.state, null, false, { surface: "inline", canSendFollowUps: true });
@@ -94,8 +101,8 @@ describe("accessible workbench", () => {
     const { root, controller } = render();
     controller.setDisconnected("The MCP Apps host is disconnected.");
     renderWorkbench(root, controller.state, null, false, { surface: "global", canSendFollowUps: true, canExpand: true });
-    expect(root.querySelector(".connection")?.textContent).toContain("Disconnected");
-    expect(root.querySelector('[role="alert"]')?.textContent).toContain("disconnected");
+    expect(root.querySelector(".offline-banner")?.textContent).toContain("Offline. Showing what Luna saw");
+    expect(root.querySelector('[data-action="reconnect"]')).not.toBeNull();
     expect(Array.from(root.querySelectorAll<HTMLButtonElement>('[data-action="chat-follow-up"], [data-action="expand-mode"]')).every(button => button.disabled)).toBe(true);
   });
   it("binds a task follow-up to the selected graph node", () => {
@@ -118,7 +125,7 @@ describe("accessible workbench", () => {
     for (const field of root.querySelectorAll("input:not([type=hidden]),select,textarea")) expect(root.querySelector(`label[for="${field.id}"]`) ?? field.getAttribute("aria-label")).toBeTruthy();
     expect(root.querySelector("#repo-chip")?.textContent).toContain("plugins");
     expect(root.querySelector<HTMLInputElement>('input[name="repository"]')?.value).toBe("plugins");
-    expect(root.querySelector('input[name="capacity"]')?.getAttribute("max")).toBe("4");
+    expect(root.querySelector('input[name="capacity"]')).toBeNull();
   });
   it("retains typed form drafts on status refresh", () => {
     const { root, controller } = render("steer");
@@ -140,16 +147,17 @@ describe("accessible workbench", () => {
   });
   it("does not imply stopped descendants while cancellation is pending", () => {
     const { root } = render(null, fixtureRun({ state: "CANCELLING", claim_held: true }));
-    expect(root.textContent).toContain("Repository claimownedRetained");
+    expect(root.querySelector(".plan-menu [data-kind='cancel']")).not.toBeNull();
+    expect(root.textContent).not.toContain("Stopped");
     expect(root.querySelector('[data-kind="resume"]')).toBeNull();
   });
   it("allows NEEDS_INPUT answers without an active turn and explains same-run continuation", () => {
     const run = fixtureRun({ state: "NEEDS_INPUT", turn_id: null, blocker: "Choose the bounded scope", pending_decision: { id: "decision-1", question: "Choose the bounded scope" } });
     const { root } = render(null, run);
-    expect(root.querySelector('[data-kind="answer"]')?.textContent).toBe("Answer the owner");
+    expect(root.querySelector('[data-kind="answer"]')?.textContent).toBe("Answer");
     const form = render("steer", run).root;
     expect(form.querySelector('button[type="submit"]')?.hasAttribute("disabled")).toBe(false);
-    expect(form.textContent).toContain("same run and owner thread");
+    expect(form.textContent).toContain("Your answer goes to Luna in this conversation.");
     expect(form.textContent).not.toContain("Sent to the current turn only");
   });
   it("shows no invented runs or repository access when empty", () => {
@@ -157,10 +165,10 @@ describe("accessible workbench", () => {
     controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [], capabilities: { ...fixtureWorkbench.capabilities, repositories: [] } } });
     const root = document.createElement("div");
     renderWorkbench(root, controller.state, null, false);
-    expect(root.textContent).toContain("No runs yet");
-    expect(root.textContent).toContain("No repositories yet");
-    expect(root.textContent).toContain("Ask your operator");
-    expect(root.querySelector('[data-action="start"]')?.hasAttribute("disabled")).toBe(true);
+    expect(root.querySelector("h1")?.textContent).toBe("Plans");
+    expect(root.querySelector(".plan-composer")).not.toBeNull();
+    expect(root.textContent).toContain("No repos yet");
+    expect(root.querySelector('[data-action="start"]')).toBeNull();
     expect(root.querySelector('[data-action="repositories"]')).toBeNull();
   });
   it("offers picking a repo from home when the server can connect or create one", () => {
@@ -169,11 +177,11 @@ describe("accessible workbench", () => {
     controller.setConnected(true);
     const root = document.createElement("div");
     renderWorkbench(root, controller.state, null, false);
-    expect(root.querySelector("#action-start-repository")?.textContent).toContain("Pick a repo");
+    expect(root.querySelector("#repo-chip")?.textContent).toContain("Connect GitHub");
     expect(root.querySelector('[data-action="repositories"]')).toBeNull();
     renderWorkbench(root, controller.state, "start", false);
     expect(root.textContent).toContain("Connect a repo or start a new one");
-    expect(root.querySelector<HTMLButtonElement>('button[value="plan"]')?.disabled).toBe(false);
+    expect(root.querySelector<HTMLButtonElement>('button[value="plan"]')?.disabled).toBe(true);
   });
   it("keeps settings free of the operator-folder flow", () => {
     const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
@@ -184,68 +192,59 @@ describe("accessible workbench", () => {
     expect(root.querySelector('[data-action="repositories"]')).toBeNull();
     expect(root.querySelector('input[name="path"]')).toBeNull();
   });
-  it("renders discovered choices, explicit finish caps and pending local approval without path controls", () => {
+  it("keeps local-folder onboarding out of the regular Repos screen", () => {
     const { root, controller } = render();
     controller.state.capabilities = { ...fixtureWorkbench.capabilities, repository_onboarding: { enabled: true, approval: "local_operator" } };
-    controller.state.discovery = { candidates: [{ id: "a".repeat(64), name: "sample", root_alias: "tests", max_finish: "local_candidate" }], requests: [{ id: "request-1", alias: "sandbox-test", name: "sample", root_alias: "tests", max_finish: "local_candidate", status: "pending" }], approval: "local_operator" };
     renderWorkbench(root, controller.state, "repositories", false);
-    expect(root.querySelector('form[data-form="repositories"]')).not.toBeNull();
-    expect(root.querySelector('[data-action="chat-repository-form"]')?.textContent).toContain("Choose with a ChatGPT form");
-    expect(root.querySelector<HTMLSelectElement>('[name="candidate_id"]')?.value).toBe("a".repeat(64));
-    expect(root.querySelector<HTMLSelectElement>('[name="max_finish"]')?.options.length).toBe(1);
+    expect(root.querySelector('form[data-form="repositories"]')).toBeNull();
     expect(root.querySelector('input[name="path"]')).toBeNull();
-    expect(root.querySelector('input[name="approved"]')).toBeNull();
-    expect(root.textContent).toContain("Pending operator approval");
-    expect(root.textContent).toContain("request-1");
-    expect(root.textContent).not.toContain("Starts native Codex execution");
+    expect(root.textContent).toContain("Connect GitHub or create a repo from the plan composer.");
   });
-  it("explains unavailable effective routing without implying future telemetry", () => {
-    const { root } = render();
-    expect(root.textContent).toContain("No execution-side model evidence");
-    expect(root.textContent).toContain("Effort telemetry unavailable");
-    expect(root.textContent).not.toContain("Not yet observed");
+  it("shows the model in Details without internal route diagnostics", () => {
+    const { root, controller } = render();
+    controller.setViewMode("details");
+    renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector(".plan-details")?.textContent).toContain("Model");
+    expect(root.querySelector(".plan-details")?.textContent).toContain("gpt-6-luna");
+    expect(root.querySelector(".plan-details")?.textContent).not.toContain("Effort telemetry unavailable");
   });
-  it("keeps provider configuration and exact-turn mismatch evidence distinct", () => {
+  it("shows model changes without exposing agent or turn identifiers", () => {
     const run = fixtureRun();
     run.route.configured_provider = "headroom-fixture";
     run.route.observed_model = "gpt-6-sol";
     run.route.observed_model_source = "model/rerouted";
     run.route.reroutes = [{ thread_id: "owner-123", turn_id: "turn-123", from_model: "gpt-6-luna", to_model: "gpt-6-sol", source: "model/rerouted", reason: "highRiskCyberActivity" }];
-    const { root } = render(null, run);
-    expect(root.textContent).toContain("headroom-fixture");
-    expect(root.textContent).toContain("Downstream execution and billing unverified");
-    expect(root.textContent).toContain("1 native model mismatch recorded");
-    expect(root.textContent).toContain("owner-123, turn-123");
-    expect(root.textContent).toContain("Effort telemetry unavailable");
+    const { root, controller } = render(null, run);
+    controller.setViewMode("details"); renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector(".plan-details")?.textContent).toContain("gpt-6-sol");
+    expect(root.querySelector(".model-note")?.textContent).toContain("model changed during this run");
+    expect(root.querySelector(".plan-details")?.textContent).not.toContain("owner-123");
+    expect(root.querySelector(".plan-details")?.textContent).not.toContain("turn-123");
   });
-  it("puts objective, current story, the decision, and proof counts in order", () => {
+  it("keeps the task title and decision together without repeating state", () => {
     const { root } = render(null, fixtureRun({ state: "NEEDS_INPUT", pending_decision: { id: "decision-1", question: "Keep the migration local?" } }));
     const text = root.querySelector("main")?.textContent ?? "";
-    const story = root.querySelector(".story")?.textContent ?? "";
-    expect(story).not.toBe("");
-    expect(text.indexOf("Make Luna Factory a first-class workbench")).toBeLessThan(text.indexOf(story));
-    expect(text.indexOf(story)).toBeLessThan(text.indexOf("Keep the migration local?"));
-    expect(root.querySelector(".decision-panel .eyebrow")?.textContent).toBe("Needs you");
-    expect(text).toContain("1 of 2 done");
-    expect(root.querySelectorAll(".needs-you .button.primary")).toHaveLength(1);
+    expect(root.querySelector(".plan-title-row h1")?.textContent).toBe("Make Luna Factory a first-class workbench");
+    expect(root.querySelector(".plan-banner h2")?.textContent).toBe("Keep the migration local?");
+    expect(text).not.toContain("No new server changes");
+    expect(root.querySelectorAll(".plan-banner .button.primary")).toHaveLength(1);
   });
-  it("renders stopped unresolved separately from finished verified and retains unknown liveness", () => {
+  it("shows stopped state and unknown agent status in Activity", () => {
     const run = fixtureRun({ state: "CANCELLED", active_workers: 0, claim_held: true });
     if (!run.presentation) throw new Error("Missing fixture presentation");
     run.presentation.result = { kind: "stopped_unresolved", label: "Stopped with work unresolved" };
     run.presentation.owner.liveness = "unknown";
     run.presentation.workers = [{ thread_id: "worker-retained", liveness: "unknown" }];
-    const { root } = render(null, run);
-    expect(root.textContent).toContain("Stopped with work unresolved");
-    expect(root.textContent).toContain("unknown");
-    expect(root.textContent).toMatch(/(Worker \d+|Unlisted worker): unknown/);
+    const { root, controller } = render(null, run);
+    expect(root.textContent).toContain("Stopped");
+    controller.setViewMode("lanes"); renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector(".activity-agents")?.textContent).toContain("Status unknown");
     expect(root.textContent).not.toContain("worker-retained");
-    expect(root.textContent).toContain("Repository claim");
   });
   it("offers an allowed secondary stop only from the server action list", () => {
     const run = fixtureRun();
     const { root } = render(null, run);
-    expect(root.querySelector('[data-kind="cancel"][data-tool="cancel_factory_run"]')).not.toBeNull();
+    expect(root.querySelector('.plan-menu [data-kind="cancel"][data-tool="cancel_factory_run"]')).not.toBeNull();
     const noCancel = fixtureRun();
     const presentation = noCancel.presentation;
     if (!presentation) throw new Error("Missing fixture presentation");
@@ -253,7 +252,7 @@ describe("accessible workbench", () => {
     const second = render(null, noCancel).root;
     expect(second.querySelector('[data-kind="cancel"]')).toBeNull();
   });
-  it("folds an allowed secondary steer under wait without promoting it", () => {
+  it("keeps the running page free of secondary steering buttons", () => {
     const run = fixtureRun();
     const current = run.presentation;
     if (!current) throw new Error("Missing fixture presentation");
@@ -261,27 +260,27 @@ describe("accessible workbench", () => {
     const steer = { kind: "steer" as const, label: "Correct the owner", reason: "current_owned_turn", tool: "steer_factory_run", allowed: true };
     run.presentation = { ...current, primary_action: wait, actions: [wait, steer] };
     const { root } = render(null, run);
-    expect(root.querySelector(".decision-panel .button.primary")?.textContent).toBe("Wait for observed work");
+    expect(root.querySelector(".page-primary")).toBeNull();
     const secondary = root.querySelector('[data-kind="steer"]');
-    expect(secondary?.closest(".decision-panel .run-controls")).not.toBeNull();
-    expect(secondary?.classList.contains("primary")).toBe(false);
-    expect(root.querySelector(".decision-panel details")).toBeNull();
+    expect(secondary).toBeNull();
+    expect(root.querySelector(".plan-menu")).not.toBeNull();
   });
   it("hides machine reason codes behind plain copy and keeps legacy action read-only", () => {
-    const run = fixtureRun({ blocker: null });
+    const run = fixtureRun({ state: "BLOCKED", blocker: null });
     if (!run.presentation) throw new Error("Missing fixture presentation");
     run.presentation.primary_action = { ...run.presentation.primary_action, kind: "reconcile", label: "Reconcile existing work", reason: "owned_liveness_unknown", tool: "reconcile_factory_run", allowed: true };
     run.presentation.actions = [run.presentation.primary_action];
+    run.presentation.blocker_kind = { kind: "liveness_unknown" };
     const { root } = render(null, run);
     expect(root.textContent).toContain("Luna can't confirm the earlier run stopped.");
-    expect(root.querySelector('[data-kind="reconcile"][data-tool="reconcile_factory_run"]')?.textContent).toBe("Check running work");
+    expect(root.querySelector('.plan-banner [data-kind="reconcile"][data-tool="reconcile_factory_run"]')?.textContent).toBe("Check running work");
     expect(root.textContent).not.toContain("owned_liveness_unknown");
     const legacy = fixtureRun();
     delete legacy.control;
     delete legacy.presentation;
     const oldRoot = render(null, legacy).root;
-    expect(oldRoot.textContent).toContain("Outcome unverified");
-    expect(oldRoot.querySelector(".decision-panel .button.primary")?.textContent).toBe("Refresh current state");
+    expect(oldRoot.textContent).toContain("Status unknown");
+    expect(oldRoot.querySelector(".page-primary")).toBeNull();
     expect(oldRoot.querySelector('[data-kind="cancel"]')).toBeNull();
   });
 });
@@ -309,7 +308,7 @@ describe("one-box plan form", () => {
   it("puts the request first, then one row with the repo chip and Plan it", () => {
     const { root } = renderPlan(fixturePlanCapabilities);
     const form = root.querySelector<HTMLFormElement>('form[data-form="start"]')!;
-    expect(form.querySelector('label[for="objective"]')?.textContent).toBe("What do you want done?");
+    expect(form.querySelector('label[for="objective"]')?.textContent).toBe("Describe what you want done");
     const chip = form.querySelector<HTMLButtonElement>("#repo-chip")!;
     expect(form.querySelector("#objective")!.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(chip.closest(".plan-controls")?.querySelector('button[value="plan"]')).not.toBeNull();
@@ -329,22 +328,21 @@ describe("one-box plan form", () => {
     expect(outside).toHaveLength(0);
     expect(root.querySelector("#plan-repo-error")?.hasAttribute("hidden")).toBe(true);
   });
-  it("hides the header Plan work button and keeps Close on the composer grid", () => {
+  it("keeps the composer on Home without a separate Plan work control", () => {
     const { root, controller } = renderPlan(fixturePlanCapabilities);
     expect(root.querySelector("#action-start")).toBeNull();
-    expect(root.querySelector("#action-close-editor")?.closest(".plan-composer")).not.toBeNull();
+    expect(root.querySelector("#action-close-editor")).toBeNull();
     expect(root.querySelector(".plan-composer .plan-card")).not.toBeNull();
     renderWorkbench(root, controller.state, null, false);
-    expect(root.querySelector("#action-start")).not.toBeNull();
+    expect(root.querySelector("#action-start")).toBeNull();
   });
-  it("links one-time setup to read-only setup guidance and never enables running", () => {
+  it("keeps running setup guidance factual and server-gated", () => {
     const { root, controller } = renderPlan(fixturePlanCapabilities);
-    const link = root.querySelector<HTMLButtonElement>('.plan-note .text-link[data-action="setup"]');
-    expect(link?.textContent).toBe("one-time setup");
-    expect(link?.type).toBe("button");
     renderWorkbench(root, controller.state, "settings", false);
     const setup = root.querySelector("#setup-running")?.closest("section");
-    expect(setup?.textContent).toContain("Not set up yet");
+    expect(setup?.textContent).toContain("Not ready");
+    expect(setup?.textContent).toContain("Running needs setup on the machine hosting Luna.");
+    expect(setup?.textContent).toContain("Start run appears when the server reports it is ready.");
     expect(setup?.querySelectorAll("button,input,select,form")).toHaveLength(0);
     expect(root.querySelector('button[value="start"]')).toBeNull();
   });
@@ -352,25 +350,33 @@ describe("one-box plan form", () => {
     const { root } = renderPlan(fixturePlanCapabilities);
     const text = visibleText(root).toLowerCase();
     expect(root.querySelector(".footer")).toBeNull();
-    for (const jargon of ["finish authority", "admission", "profile alias", "qualification", "qualified", "mandatory", "acceptance", "non-goal", "capacity"]) expect(text).not.toContain(jargon);
+    for (const jargon of ["finish authority", "admission", "profile alias", "qualification", "qualified", "mandatory", "acceptance", "non-goal", "capacity", "model", "retries"]) expect(text).not.toContain(jargon);
   });
-  it("fills More options with the defaults Plan it would use", () => {
+  it("keeps optional plan settings limited to finish preference and leave-alone notes", () => {
     const { root } = renderPlan(fixturePlanCapabilities);
     const value = (name: string) => root.querySelector<HTMLInputElement | HTMLSelectElement>(`[name="${name}"]`)?.value;
-    expect([value("finish"), value("profile"), value("capacity"), value("wall_minutes"), value("repair_attempts"), value("done_when"), value("non_goals")]).toEqual(["local_candidate", "luna", "1", "30", "2", "", ""]);
-    expect(root.querySelector('[name="done_when"]')?.closest("#plan-more")).not.toBeNull();
+    expect(value("finish")).toBe("local_candidate");
+    expect(value("non_goals")).toBe("");
+    expect(root.querySelector<HTMLTextAreaElement>("#objective")?.maxLength).toBe(1000);
+    expect(Array.from(root.querySelectorAll<HTMLElement>("#plan-more .field label"), label => label.textContent)).toEqual(["Leave alone", "When it's done"]);
+    for (const name of ["profile", "capacity", "wall_minutes", "repair_attempts", "done_when"]) expect(root.querySelector(`[name="${name}"]`)).toBeNull();
   });
-  it("shows Start run only when the server says execution is eligible, and Plan it stays the primary", () => {
+  it("keeps Plan it as Home's primary and gates campaign start on server readiness", () => {
     const off = renderPlan({ ...fixturePlanCapabilities, execution: { eligible: false, reason: "qualification_unverified" } }).root;
     expect(off.querySelector('button[value="start"]')).toBeNull();
-    expect(off.textContent).toContain("Running it needs a one-time setup.");
-    const { root } = renderPlan({ ...fixturePlanCapabilities, execution: { eligible: true, reason: "qualified" } });
-    const start = root.querySelector<HTMLButtonElement>('button[value="start"]');
-    expect(start?.textContent).toBe("Start run");
-    expect(start?.classList.contains("primary")).toBe(false);
-    expect(root.querySelector('button[value="plan"]')?.classList.contains("primary")).toBe(true);
-    expect(root.textContent).toContain("Nothing runs until you press Start run.");
-    expect(root.textContent).not.toContain("one-time setup");
+    expect(off.querySelectorAll(".page-primary")).toHaveLength(0);
+    expect(off.querySelector('button[value="plan"]')?.classList.contains("primary")).toBe(true);
+    expect(off.textContent).toContain("Nothing runs until you press Start run.");
+    const planState = fixtureCampaignPlan();
+    const plan = planState.run;
+    const campaign = fixtureCampaign();
+    const graph = planState.graph.graph;
+    const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
+    controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [plan], selected_run: plan, capabilities: { ...fixturePlanCapabilities, execution: { eligible: true, reason: "qualified" } } } });
+    controller.setConnected(true); controller.state.graph = graph; controller.state.campaigns = [campaign];
+    const campaignRoot = document.createElement("div");
+    renderWorkbench(campaignRoot, controller.state, null, false);
+    expect(campaignRoot.querySelector(".page-primary")?.textContent).toBe("Start run");
   });
   it("menu lists your repos, then GitHub repos with Connect, then + New repo…", () => {
     const { root } = renderPlan(fixturePlanCapabilities);
@@ -399,9 +405,9 @@ describe("one-box plan form", () => {
     expect(root.querySelector('[data-repo-action="new"]')).toBeNull();
     expect(root.querySelector('[data-action="repositories"]')).toBeNull();
   });
-  it("keeps the operator-folder path inside More options, only when discovery is offered", () => {
+  it("does not expose the local-folder access workflow in the plan composer", () => {
     const { root } = renderPlan({ ...fixturePlanCapabilities, repository_onboarding: { enabled: true, approval: "local_operator" } });
-    expect(root.querySelector('[data-action="repositories"]')?.closest("#plan-more")).not.toBeNull();
+    expect(root.querySelector('[data-action="repositories"]')).toBeNull();
   });
   it("keeps the picked repo and limits finish options to what it allows", () => {
     const { root, controller } = renderPlan(fixturePlanCapabilities);
@@ -442,6 +448,7 @@ describe("one-box plan form", () => {
   it("shows a quiet line when GitHub can't be read, and still plans with approved repos", () => {
     const { root, controller } = renderPlan(fixturePlanCapabilities, false);
     controller.state.githubRepos = githubRepositoryListSchema.parse(fixtureGithubRepositories({ available: false, reason: "rate_limited", repositories: [] }));
+    root.querySelector<HTMLTextAreaElement>("#objective")!.value = "Write a plan";
     renderWorkbench(root, controller.state, "start", false);
     expect(root.textContent).toContain("GitHub repos couldn't be read right now.");
     expect(root.querySelector<HTMLButtonElement>('button[value="plan"]')?.disabled).toBe(false);
@@ -456,7 +463,7 @@ describe("one-box plan form", () => {
     renderWorkbench(root, controller.state, "start", false);
     expect(root.querySelector<HTMLTextAreaElement>("#objective")?.value).toBe("Keep this request after a creation error");
     expect(root.querySelector<HTMLInputElement>("#new_repository")?.value).toBe("moon-garden");
-    expect(root.textContent).toContain("workspace creation failed");
+    expect(root.textContent).toContain("Couldn't complete that.");
   });
 });
 

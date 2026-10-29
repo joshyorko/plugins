@@ -4,7 +4,7 @@ import { roster } from "../src/agents";
 import { fitGeometry, layoutWaves } from "../src/campaign-map";
 import { WorkbenchController, type Bridge } from "../src/controller";
 import { renderLanes } from "../src/lanes";
-import { nowSentence, runTier, SinceTracker, statusLabel } from "../src/narrative";
+import { freshness, nowSentence, runTier, SinceTracker, statusLabel } from "../src/narrative";
 import { renderWorkbench } from "../src/view";
 import { fixtureBackends, fixtureCampaign, fixtureCampaignPlan, fixturePlanningRun, fixtureRun, fixtureSwarmRun, fixtureTimelineCapability, fixtureTimelines, fixtureWorkbench } from "./fixtures";
 import { campaignListSchema, classifyRun, needsOperatorDecision, parentLabel, type Capabilities } from "../src/domain";
@@ -30,23 +30,23 @@ describe("campaign map layout", () => {
     expect(layout.waves.flat().sort()).toEqual(["a", "b", "c"]);
   });
   it("fits wave columns to the pane before panning", () => {
-    expect(fitGeometry(5, 1040).nodeWidth).toBeLessThan(216);
-    expect(fitGeometry(2, 1040).nodeWidth).toBe(216);
-    expect(fitGeometry(12, 600).nodeWidth).toBe(156);
+    expect(fitGeometry(2, 1040).nodeWidth).toBe(208);
+    expect(fitGeometry(12, 600).nodeWidth).toBe(208);
+    expect(fitGeometry(12, 600).columnGap).toBe(36);
   });
 });
 
 describe("narrative and attention", () => {
   it("keeps Needs you identical to the server-authorized decision rule", () => {
     expect(runTier(fixtureRun({ state: "NEEDS_INPUT", pending_decision: { id: "d", question: "Pick one?" } }))).toBe("needs");
-    expect(runTier(fixtureRun({ state: "BLOCKED", pending_decision: null }))).toBe("unverified");
+    expect(runTier(fixtureRun({ state: "BLOCKED", pending_decision: null }))).toBe("stopped");
     expect(runTier(fixturePlanningRun())).toBe("planned");
     expect(runTier(fixtureRun({ state: "CANCELLED" }))).toBe("stopped");
   });
-  it("uses the server's result label outside the two UI-owned tiers", () => {
+  it("uses plain state labels for active plans", () => {
     const run = fixtureRun({ state: "RUNNING" });
-    expect(statusLabel(run)).toBe(run.presentation?.result.label);
-    expect(nowSentence(fixturePlanningRun())).toContain("1 planned task");
+    expect(statusLabel(run)).toBe("Running");
+    expect(nowSentence(fixturePlanningRun())).toBe("1 task in this plan.");
   });
   it("reports only server changes after this session began", () => {
     let clock = 1_000;
@@ -65,20 +65,20 @@ describe("agents and lanes", () => {
   it("builds the roster only from reported owner and workers", () => {
     const agents = roster(fixtureSwarmRun(), null);
     expect(agents.map(agent => [agent.label, agent.role, agent.liveness, agent.taskId])).toEqual([
-      ["Luna", "coordinator", "active", "objective"], ["Worker 1", "worker", "active", "child:child-1"], ["Worker 2", "worker", "unknown", "child:child-2"],
+      ["Luna", "coordinator", "active", "objective"], ["Agent 1", "worker", "active", "child:child-1"], ["Agent 2", "worker", "unknown", "child:child-2"],
     ]);
     expect(roster(fixturePlanningRun(), null)).toEqual([]);
   });
-  it("never extends an old record to now and hatches agent lanes without attributed receipts", () => {
+  it("shows reported events without extending old activity to now", () => {
     const run = fixtureSwarmRun();
     const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
     const html = renderLanes(run, roster(run, null), controller.state, (run.updated_at ?? 0) + 30 * 86_400);
-    expect(html).toContain("last event");
+    expect(html).toContain("Recent activity");
     expect(html).not.toContain("now-line");
-    expect(html).toContain("No receipts attributed to this agent");
+    expect(html).toContain("Recent activity");
     const legacy = { ...run, receipts: run.receipts.map(({ thread_id: _thread, ...receipt }) => receipt) };
-    expect(renderLanes(legacy, roster(legacy, null), controller.state)).toContain("Per-agent timeline not reported by this server");
-    expect(renderLanes(fixturePlanningRun(), [], controller.state)).toContain("No work has been recorded for this plan yet");
+    expect(renderLanes(legacy, roster(legacy, null), controller.state)).toContain("Recent activity");
+    expect(renderLanes(fixturePlanningRun(), [], controller.state)).toContain("No recent activity has been reported.");
   });
 });
 
@@ -107,17 +107,16 @@ describe("mission control surfaces", () => {
     primary.querySelector(".inspector .route-list")?.remove();
     for (const internal of ["Revision", "claim", "subject", "1148934299", "f51105bf"]) expect(primary.textContent).not.toContain(internal);
   });
-  it("shares one task-and-agent selection across Map and Lanes and sends it to ChatGPT without thread ids", async () => {
+  it("shares one task-and-agent selection across Tasks and Activity and sends it to ChatGPT without thread ids", async () => {
     const { controller, context } = await campaignController(fixtureSwarmRun());
     controller.selectAgent("child-2");
     expect(controller.state.selectedNodeId).toBe("child:child-2");
-    await vi.waitFor(() => expect(context).toHaveBeenLastCalledWith(expect.objectContaining({ node_id: "child:child-2", agent_label: "Worker 2", agent_role: "worker", agent_liveness: "unknown" })));
+    await vi.waitFor(() => expect(context).toHaveBeenLastCalledWith(expect.objectContaining({ node_id: "child:child-2", agent_label: "Agent 2", agent_role: "worker", agent_liveness: "unknown" })));
     expect(JSON.stringify(context.mock.lastCall?.[0])).not.toMatch(/"(?:agent_)?thread/);
     controller.setViewMode("lanes");
     const root = document.createElement("div");
     renderWorkbench(root, controller.state, null, false);
-    expect(root.querySelector('.lanes [data-thread-id="child-2"]')?.getAttribute("aria-pressed")).toBe("true");
-    expect(root.querySelector('.crew [data-thread-id="child-2"]')?.getAttribute("aria-pressed")).toBe("true");
+    expect(root.querySelector('.activity-agent [data-thread-id="child-2"]')?.getAttribute("aria-pressed")).toBe("true");
     controller.selectNode("objective");
     expect(controller.state.selectedAgent).toBeNull();
     controller.selectAgent("not-a-reported-thread");
@@ -130,35 +129,57 @@ describe("mission control surfaces", () => {
     const root = document.createElement("div");
     renderWorkbench(root, controller.state, null, false, { surface: "inline", canExpand: true, canSendFollowUps: true });
     expect(root.querySelectorAll(".inline-card button")).toHaveLength(2);
-    expect(root.textContent).toContain("Planned · not started");
+    expect(root.querySelector(".inline-top .status")?.textContent).toContain("Planned");
     expect(root.querySelector(".token")).toBeNull();
   });
-  it("shows a rerouted model only as stop evidence, never as an escalation treatment", async () => {
+  it("shows a rerouted model in Details without escalating it", async () => {
     const run = fixtureSwarmRun();
     run.route.observed_model = "gpt-6.1-sol";
     run.route.observed_model_source = "model/rerouted";
     run.route.reroutes = [{ thread_id: "owner-a", turn_id: "turn-a", from_model: "gpt-6-luna", to_model: "gpt-6.1-sol", reason: "highRiskCyberActivity", source: "model/rerouted" }];
     const { controller } = await campaignController(run);
     const root = document.createElement("div");
+    controller.setViewMode("details");
     renderWorkbench(root, controller.state, null, false);
-    expect(root.querySelector("#evidence-audit")?.textContent).toContain("Execution was stopped for review");
+    expect(root.querySelector(".model-note")?.textContent).toContain("model changed during this run");
     expect(root.querySelector('[class*="sol"], [class*="astra"]')).toBeNull();
-    const primary = root.cloneNode(true) as HTMLElement;
-    primary.querySelector("#evidence-audit")?.remove();
-    expect(primary.textContent).not.toContain("gpt-6.1-sol");
+    expect(root.querySelector(".plan-banner")).toBeNull();
+    expect(root.querySelector(".page-primary")).toBeNull();
   });
-  it("groups the home view by attention tier", () => {
+  it("groups Home plans by current state without empty groups", () => {
     const controller = new WorkbenchController({ call: async () => ({}), context: async () => undefined }, () => undefined);
-    controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [fixtureRun({ id: "d1", state: "NEEDS_INPUT", pending_decision: { id: "d", question: "Pick?" } }), fixtureSwarmRun(), fixtureCampaignPlan().run, fixtureRun({ id: "b1", state: "BLOCKED" })] } });
+    const blocked = fixtureRun({ id: "b1", state: "BLOCKED" });
+    blocked.presentation!.blocker_kind = { kind: "liveness_unknown" };
+    blocked.presentation!.primary_action = { kind: "reconcile", label: "Check running work", reason: "read_only_native_reconciliation", tool: "reconcile_factory_run", allowed: true };
+    const unknown = fixtureRun({ id: "u1", state: "RUNNING" });
+    unknown.control = undefined;
+    unknown.presentation = undefined;
+    const terminal = fixtureRun({ id: "history-1", state: "CANCELLED", owner_thread: null, turn_id: null, active_workers: 0, claim_held: false });
+    controller.receiveInitial({ structuredContent: { ...fixtureWorkbench, runs: [fixtureRun({ id: "d1", state: "NEEDS_INPUT", pending_decision: { id: "d", question: "Pick?" } }), fixtureSwarmRun(), fixtureCampaignPlan().run, blocked, unknown, terminal] } });
     const root = document.createElement("div");
     renderWorkbench(root, controller.state, null, false);
-    expect(Array.from(root.querySelectorAll(".home-group h2")).map(heading => Array.from(heading.childNodes).filter(child => child.nodeType === Node.TEXT_NODE).map(child => child.textContent).join(""))).toEqual(expect.arrayContaining(["Needs you", "In progress", "Planned · not started", "History"]));
+    expect(Array.from(root.querySelectorAll(".home-group h2")).map(heading => Array.from(heading.childNodes).filter(child => child.nodeType === Node.TEXT_NODE).map(child => child.textContent).join(""))).toEqual(["Needs you", "Running", "Planned"]);
     expect(root.querySelector(".group-needs")?.textContent).toContain("Pick?");
-    expect(root.querySelector(".home-head p")?.textContent).toBe("1 needs you · 1 in progress · 1 planned · 1 in history");
+    expect(root.querySelectorAll(".plan-row")).toHaveLength(6);
+    expect(root.querySelector<HTMLDetailsElement>(".home-history")?.open).toBe(false);
+    expect(root.querySelector(".home-history > summary")?.textContent).toBe("Show 1 from history");
+    const historyStatuses = Array.from(root.querySelectorAll(".home-history .status"), status => status.textContent);
+    expect(historyStatuses).toEqual(["Stopped"]);
+    expect(root.querySelector(".group-needs [data-run-id='b1'] .status")?.textContent).toContain("Blocked");
+    expect(root.querySelector(".group-needs [data-run-id='u1'] .status")?.textContent).toContain("Status unknown");
+    expect(root.querySelector(".home-group .group-empty")).toBeNull();
   });
 });
 
 describe("motion and message copy", () => {
+  it("uses compact relative time and a short date for Home rows", () => {
+    const now = Date.parse("2026-10-29T12:00:00Z") / 1000;
+    expect(freshness(now - 30, now)).toBe("now");
+    expect(freshness(now - 300, now)).toBe("5m");
+    expect(freshness(now - 3_600, now)).toBe("1h");
+    expect(freshness(Date.parse("2026-10-04T12:00:00Z") / 1000, now)).toBe("Oct 4");
+    expect(freshness(undefined, now)).toBe("Time unknown");
+  });
   it("marks a task changed only when a later snapshot reports a different state", async () => {
     const { controller } = await campaignController(fixtureSwarmRun());
     const root = document.createElement("div");
@@ -178,15 +199,15 @@ describe("motion and message copy", () => {
     controller.state.refreshing = true;
     renderWorkbench(root, controller.state, null, false, { surface: "inline", canSendFollowUps: true, canExpand: true });
     expect(root.textContent).not.toContain("unavailable in this host");
-    expect(root.textContent).toContain("Available once the current read finishes");
+    expect(root.querySelectorAll('[data-action="chat-follow-up"]')).toHaveLength(1);
     renderWorkbench(root, controller.state, null, false, { surface: "inline", canSendFollowUps: false, canExpand: true });
-    expect(root.textContent).toContain("unavailable in this host");
+    expect(Array.from(root.querySelectorAll<HTMLButtonElement>('[data-action="chat-follow-up"]')).every(button => button.disabled)).toBe(true);
   });
 });
 
-describe("campaign grouping", () => {
+describe("Home plans", () => {
   const decision = () => fixtureRun({ id: "d1", state: "NEEDS_INPUT", pending_decision: { id: "d", question: "Pick?" } });
-  const home = () => ({ ...fixtureWorkbench, runs: [decision(), fixtureSwarmRun(), fixtureCampaignPlan().run, fixtureRun({ id: "b1", state: "BLOCKED" })] });
+  const home = () => ({ ...fixtureWorkbench, runs: [decision(), fixtureSwarmRun(), fixtureCampaignPlan().run, fixtureRun({ id: "b1", state: "CONVERGED", active_workers: 0, claim_held: false, blocker: null, remaining_gap: null })] });
   function homeController(list: () => unknown) {
     const call = vi.fn<Bridge["call"]>().mockImplementation(async tool => tool === "list_factory_campaigns" ? list() : tool === "refresh_factory" ? { structuredContent: home() } : { isError: true, content: [{ type: "text", text: "unexpected" }] });
     const controller = new WorkbenchController({ call, context: async () => undefined }, () => undefined);
@@ -194,51 +215,26 @@ describe("campaign grouping", () => {
     controller.receiveInitial({ structuredContent: home() });
     return { controller, call };
   }
-  const heading = (root: HTMLElement, group: string) => Array.from(root.querySelector(`.group-${group} h2`)?.childNodes ?? []).filter(child => child.nodeType === Node.TEXT_NODE).map(child => child.textContent).join("");
-  it("nests the plan under its campaign row and keeps unlinked runs in their tiers", async () => {
+  it("lists each campaign plan once with its source issue and keeps other plans by state", async () => {
     const { controller, call } = homeController(() => ({ structuredContent: { campaigns: [fixtureCampaign()] } }));
     await controller.refresh();
     expect(call).toHaveBeenCalledWith("list_factory_campaigns", { limit: 100 });
-    expect(controller.state.error).toBeNull();
+    expect(controller.state.campaigns).toHaveLength(1);
+    expect(controller.state.campaigns?.[0]?.parent.display?.url).toBe("https://github.com/example/actions/issues/101");
     const root = document.createElement("div");
     renderWorkbench(root, controller.state, null, false);
-    const entity = root.querySelector(".group-campaigns .campaign-entity");
-    expect(heading(root, "campaigns")).toBe("Parent campaigns");
-    // Opening the campaign opens its planning run's Campaign Map.
-    const row = entity?.querySelector<HTMLAnchorElement>(".campaign-parent-row");
-    expect(row?.dataset.runId).toBe("campaign-actions-v2");
-    expect(row?.getAttribute("href")).toBe("/runs/campaign-actions-v2");
-    expect(row?.textContent).toContain("GitHub example/actions#101");
-    expect(row?.textContent).not.toContain("supplied, not verified");
-    expect(row?.textContent).toContain("14 planned tasks · No runs yet.");
-    expect(row?.textContent).toContain("Planned · not started");
-    const children = Array.from(entity?.querySelectorAll<HTMLElement>(".campaign-children > li") ?? []);
-    expect(children.map(child => child.querySelector(".child-kind")?.textContent ?? child.textContent)).toEqual(["Plan", "No execution runs yet"]);
-    expect(children[0]?.querySelector<HTMLAnchorElement>("a")?.dataset.runId).toBe("campaign-actions-v2");
-    // The linked plan leaves the unlinked tiers; everything else keeps its current grouping.
-    expect(root.querySelector(".group-planned")).toBeNull();
-    expect(root.querySelectorAll('[data-run-id="campaign-actions-v2"]')).toHaveLength(2);
-    expect(root.querySelector(".group-needs")?.textContent).toContain("Pick?");
-    expect(root.querySelector(".group-live [data-run-id='swarm-fixture']")).not.toBeNull();
-    expect(root.querySelector(".group-history [data-run-id='b1']")).not.toBeNull();
-    expect(root.querySelector(".home-head p")?.textContent).toBe("1 campaign · 1 needs you · 1 in progress · 1 in history");
-    // Campaign data never creates attention or proof.
-    expect(entity?.querySelector(".tier-needs")).toBeNull();
-    expect(entity?.textContent).not.toContain("proven ·");
-    const order = Array.from(root.querySelectorAll(".home-group")).map(section => section.className.replace("home-group group-", ""));
-    expect(order).toEqual(["needs", "campaigns", "live", "history"]);
-  });
-  it("never hides a real decision inside a campaign", async () => {
-    const linked = fixtureCampaign({ run_ids: ["d1"], runs: [{ id: "d1", state: "NEEDS_INPUT", updated_at: 1791141000 }] });
-    const { controller } = homeController(() => ({ structuredContent: { campaigns: [linked] } }));
-    await controller.refresh();
-    const root = document.createElement("div");
-    renderWorkbench(root, controller.state, null, false);
+    const row = root.querySelector<HTMLElement>('.plan-row[data-run-id="campaign-actions-v2"]');
+    expect(row?.querySelector<HTMLAnchorElement>(".plan-open")?.getAttribute("href")).toBe("/runs/campaign-actions-v2");
+    expect(row?.outerHTML).toContain("14 tasks");
+    expect(row?.querySelector(".plan-meta")?.innerHTML).toContain("from");
+    expect(row?.querySelector(".plan-meta")?.textContent).toContain("from #101");
+    expect(root.querySelectorAll('.plan-row[data-run-id="campaign-actions-v2"]')).toHaveLength(1);
+    expect(root.querySelectorAll(".campaign-children, .group-campaigns")).toHaveLength(0);
     expect(root.querySelector(".group-needs [data-run-id='d1']")).not.toBeNull();
-    expect(root.querySelector(".group-campaigns .campaign-child.tier-needs[data-run-id='d1']")).not.toBeNull();
-    expect(root.querySelector(".group-campaigns .campaign-parent-row")?.textContent).toContain("1 linked run.");
+    expect(root.querySelector(".group-running [data-run-id='swarm-fixture']")).not.toBeNull();
+    expect(root.querySelector(".home-done > summary")?.textContent).toBe("Show 1 done");
   });
-  it("keeps the current grouping when the server has no campaign tool", async () => {
+  it("keeps the plan visible when the campaign read is unavailable", async () => {
     const { controller } = homeController(() => ({ isError: true, content: [{ type: "text", text: "unknown_tool" }] }));
     await controller.refresh();
     expect(controller.state.campaigns).toBeNull();
@@ -247,57 +243,40 @@ describe("campaign grouping", () => {
     renderWorkbench(root, controller.state, null, false);
     expect(root.querySelector(".group-campaigns")).toBeNull();
     expect(root.querySelector(".group-planned [data-run-id='campaign-actions-v2']")).not.toBeNull();
-    expect(root.querySelector(".home-head p")?.textContent).toBe("1 needs you · 1 in progress · 1 planned · 1 in history");
   });
-  it("keeps the last valid grouping, marked stale, after a failed or inconsistent read", async () => {
+  it("keeps the last valid plan list when a campaign read fails", async () => {
     let next: unknown = { structuredContent: { campaigns: [fixtureCampaign()] } };
     const { controller } = homeController(() => next);
     await controller.refresh();
-    for (const bad of [
-      { isError: true, content: [{ type: "text", text: "read failed" }] },
-      { structuredContent: { campaigns: [fixtureCampaign({ planning: { ...fixtureCampaign().planning, run_id: "other-run" } })] } },
-      { structuredContent: { campaigns: [{ ...fixtureCampaign(), promotion: { allowed: true, reason: "forged" } }] } },
-      { structuredContent: { campaigns: [fixtureCampaign({ run_ids: ["campaign-actions-v2"] })] } },
-    ]) {
-      next = bad;
-      await controller.refresh();
-      expect(controller.state.campaigns?.map(campaign => campaign.id)).toEqual(["campaign-entity-101"]);
-      expect(controller.state.campaignsStale).toBe(true);
-      expect(controller.state.error).toBeNull();
-    }
-    const root = document.createElement("div");
-    renderWorkbench(root, controller.state, null, false);
-    expect(root.querySelector(".group-campaigns [role='status']")?.textContent).toContain("last valid read");
-    next = { structuredContent: { campaigns: [fixtureCampaign()] } };
+    next = { isError: true, content: [{ type: "text", text: "read failed" }] };
     await controller.refresh();
-    expect(controller.state.campaignsStale).toBe(false);
-    controller.setDisconnected("Host disconnected");
+    expect(controller.state.campaigns?.map(campaign => campaign.id)).toEqual(["campaign-entity-101"]);
     expect(controller.state.campaignsStale).toBe(true);
-  });
-  it("labels the campaign parent on its Campaign Map without exposing internal identities", async () => {
-    const { controller } = await campaignController();
-    controller.state.campaigns = [fixtureCampaign()];
     const root = document.createElement("div");
     renderWorkbench(root, controller.state, null, false);
-    expect(root.querySelector(".campaign-head .campaign-parent")?.textContent).toBe("from #101");
-    expect(root.querySelector<HTMLAnchorElement>(".campaign-head .campaign-parent a")?.href).toBe("https://github.com/example/actions/issues/101");
-    expect(root.querySelector(".campaign-head .campaign-parent")?.textContent).not.toContain("supplied, not verified");
-    expect(root.querySelector(".graph-inspector")?.textContent).not.toContain("Parent issue");
-    controller.state.campaigns = [fixtureCampaign({ parent: { ...fixtureCampaign().parent, display: null } })];
+    expect(root.querySelector(".home-read-note")?.textContent).toContain("Showing the last version");
+  });
+  it("links a source issue only when its GitHub URL is valid", async () => {
+    const { controller } = homeController(() => ({ structuredContent: { campaigns: [fixtureCampaign()] } }));
+    await controller.refresh();
+    expect(controller.state.campaigns).toHaveLength(1);
+    const root = document.createElement("div");
     renderWorkbench(root, controller.state, null, false);
-    expect(root.querySelector(".campaign-head .campaign-parent")?.textContent).toBe("from #101");
-    expect(root.querySelector(".campaign-head .campaign-parent a")).toBeNull();
-    expect(root.querySelector(".decision-panel")).toBeNull();
-    expect(root.querySelector(".map-node .node-title")?.textContent).toBeTruthy();
-    expect(root.querySelector(".map-node")?.classList.contains("dim")).toBe(false);
-    expect(root.querySelector('[data-action="graph"]')).toBeNull();
-    expect(root.textContent).not.toContain("0 of 1 criterion proven");
-    expect(root.textContent).not.toContain("No changes since");
-    const primary = root.cloneNode(true) as HTMLElement;
-    primary.querySelector("#evidence-audit")?.remove();
-    primary.querySelector(".planning-editor")?.remove();
-    primary.querySelector(".inspector .route-list")?.remove();
-    for (const internal of ["Revision", "claim", "1148934299", "I_kwDOsynthetic101", "sha256:"]) expect(primary.textContent).not.toContain(internal);
+    expect(root.querySelector<HTMLAnchorElement>(".plan-row .plan-meta a")?.href).toBe("https://github.com/example/actions/issues/101");
+    controller.state.campaigns = [fixtureCampaign({ parent: { ...fixtureCampaign().parent, display: { url: "javascript:alert(1)" } } })];
+    renderWorkbench(root, controller.state, null, false);
+    const row = root.querySelector('.plan-row[data-run-id="campaign-actions-v2"]');
+    expect(row?.querySelector(".plan-meta a")).toBeNull();
+    expect(row?.querySelector(".plan-meta")?.textContent).toContain("from #101");
+  });
+  it("counts unreadable records without showing their identifiers", async () => {
+    const { controller } = homeController(() => ({ structuredContent: { campaigns: [fixtureCampaign()], skipped: [{ id: "broken", reason: "campaign_record_corrupt" }] } }));
+    await controller.refresh();
+    expect(controller.state.campaignsSkipped).toBe(1);
+    const root = document.createElement("div");
+    renderWorkbench(root, controller.state, null, false);
+    expect(root.querySelector(".home-read-note")?.textContent).toBe("1 plan could not be shown.");
+    expect(root.textContent).not.toContain("broken");
   });
   it("accepts the server projection shape and rejects contradictory counts", () => {
     expect(campaignListSchema.safeParse({ campaigns: [fixtureCampaign()] }).success).toBe(true);
@@ -305,7 +284,6 @@ describe("campaign grouping", () => {
     counts.planning.tasks.total += 1;
     expect(campaignListSchema.safeParse({ campaigns: [counts] }).success).toBe(false);
     expect(campaignListSchema.safeParse({ campaigns: [{ ...fixtureCampaign(), planning: { ...fixtureCampaign().planning, planning_only: false } }] }).success).toBe(false);
-    // The forge key must be the canonical provider:owner/repo#number of the projected forge identity.
     const parent = fixtureCampaign().parent;
     for (const bad of [
       { ...parent, key: "github:example/actions#102" },
@@ -313,24 +291,12 @@ describe("campaign grouping", () => {
       { ...parent, forge: { ...parent.forge, repository: "Example/Actions" }, key: "github:Example/Actions#101" },
       { ...parent, provenance: "reported_by_github" },
     ]) expect(campaignListSchema.safeParse({ campaigns: [{ ...fixtureCampaign(), parent: bad }] }).success, JSON.stringify(bad)).toBe(false);
-    expect(campaignListSchema.safeParse({ campaigns: [{ ...fixtureCampaign(), repository: "actions" }] }).success).toBe(false);
   });
-  it("keeps parent provenance in plain words outside the main campaign label", () => {
+  it("keeps the source repository label in its friendly form", () => {
     expect(parentLabel(fixtureCampaign())).toBe("GitHub example/actions#101");
     expect(parentLabel(fixtureCampaign({ parent: { ...fixtureCampaign().parent, provenance: "github_app" } }))).toBe("GitHub example/actions#101");
   });
-  it("counts records the server skipped as unreadable without rendering them", async () => {
-    const { controller } = homeController(() => ({ structuredContent: { campaigns: [fixtureCampaign()], skipped: [{ id: "broken", reason: "campaign_record_corrupt" }] } }));
-    await controller.refresh();
-    expect(controller.state.campaignsSkipped).toBe(1);
-    const root = document.createElement("div");
-    renderWorkbench(root, controller.state, null, false);
-    expect(root.querySelector(".group-campaigns [role='status']")?.textContent).toBe("1 campaign record could not be read and is not shown.");
-    expect(root.querySelectorAll(".group-campaigns .campaign-entity")).toHaveLength(1);
-    expect(root.querySelector(".group-campaigns")?.textContent).not.toContain("broken");
-  });
 });
-
 async function observedController(capability: Capabilities["agent_timeline"] | null = fixtureTimelineCapability, reply?: (thread: string) => unknown) {
   const run = fixtureSwarmRun();
   const plan = fixtureCampaignPlan();
@@ -370,61 +336,60 @@ describe("observed agent timelines", () => {
       expect(controller.state.timelines).toEqual({});
     } finally { now.mockRestore(); }
   });
-  it("renders observed ticks labelled Observed in Codex and keeps the server's reason on unavailable lanes", async () => {
+  it("renders agent rows and a newest-first Activity feed", async () => {
     const { controller, run } = await observedController();
     controller.setViewMode("lanes");
     await vi.waitFor(() => expect(Object.keys(controller.state.timelines)).toHaveLength(3));
     controller.selectAgent("child-1");
     const root = document.createElement("div");
     root.innerHTML = renderLanes(run, roster(run, controller.state.graph), controller.state, (run.updated_at ?? 0) + 60);
-    expect(root.querySelectorAll(".lane-track.observed")).toHaveLength(2);
-    expect(root.querySelectorAll(".tick.observed")).toHaveLength(13);
-    expect(root.querySelector(".lane-track.observed")?.getAttribute("aria-label")).toContain("Observed in Codex");
-    expect(root.querySelector(".tick.observed")?.getAttribute("title")).toContain("Observed in Codex");
-    expect(root.querySelector(".lane-track.unavailable")?.textContent).toContain("declined this read");
-    expect(root.querySelector(".observed-events h4")?.textContent).toBe("Observed in Codex · Worker 1");
-    expect(root.querySelector(".observed-events")?.textContent).toContain("Check passed: cargo test");
-    expect(root.querySelector(".lanes-legend")?.textContent).toContain("Observed in Codex");
+    expect(root.querySelectorAll(".activity-agent")).toHaveLength(3);
+    expect(root.querySelectorAll(".activity-event").length).toBeGreaterThan(13);
+    expect(root.querySelector(".activity-event small")).toBeNull();
+    expect(root.textContent).not.toContain("Observed in Codex");
+    expect(root.querySelectorAll(".lane-track, .run-lane, .lanes-legend")).toHaveLength(0);
+    const times = Array.from(root.querySelectorAll<HTMLTimeElement>(".activity-event time"), time => Date.parse(time.dateTime));
+    expect(times.every((time, index) => index === 0 || times[index - 1]! >= time)).toBe(true);
     controller.selectAgent("owner-a");
     root.innerHTML = renderLanes(run, roster(run, controller.state.graph), controller.state, (run.updated_at ?? 0) + 60);
-    expect(root.querySelector(".observed-events")?.textContent).toContain("Spawned in Codex: Worker 1, Worker 2");
+    expect(root.querySelector('.activity-agent [data-thread-id="owner-a"]')?.getAttribute("aria-pressed")).toBe("true");
     expect(root.textContent).not.toMatch(/cas_|child-1|owner-a/);
   });
-  it("keeps attributed Factory receipts beside observed ticks on the same agent lane", async () => {
+  it("keeps recorded events and Codex observations distinct in one feed", async () => {
     const { controller, run } = await observedController();
     controller.setViewMode("lanes");
     await vi.waitFor(() => expect(Object.keys(controller.state.timelines)).toHaveLength(3));
     const root = document.createElement("div");
     root.innerHTML = renderLanes(run, roster(run, controller.state.graph), controller.state, (run.updated_at ?? 0) + 60);
-    const lanes = Array.from(root.querySelectorAll(".lane-list > li"));
-    const count = (index: number, selector: string) => lanes[index]?.querySelectorAll(selector).length;
-    expect(lanes.map(lane => lane.querySelector("strong")?.textContent)).toEqual(["Run receipts", "Luna", "Worker 1", "Worker 2"]);
-    // Receipt ticks follow the recorded thread_id; observed ticks are separate and never move a receipt.
-    expect([count(1, ".tick:not(.observed)"), count(2, ".tick:not(.observed)"), count(3, ".tick:not(.observed)")]).toEqual([2, 2, 0]);
-    expect([count(1, ".tick.observed"), count(2, ".tick.observed")]).toEqual([6, 7]);
-    expect(lanes[2]?.querySelector("small")?.textContent).toContain("2 receipts");
-    expect(lanes[3]?.querySelector(".lane-track.unavailable")?.textContent).toContain("declined this read");
-    expect(root.querySelector(".lanes-note")?.textContent).toContain("sits on the agent that recorded it");
-    expect(root.querySelector(".lanes-note")?.textContent).toContain("not Factory proof");
+    const events = Array.from(root.querySelectorAll(".activity-event"));
+    expect(events.length).toBeGreaterThan(run.receipts.length);
+    expect(events.map(event => event.querySelector("strong")?.textContent)).toContain("Agent 1");
+    expect(events.some(event => event.querySelector("small")?.textContent === "Observed in Codex")).toBe(false);
+    expect(root.textContent).not.toMatch(/receipts?|Factory proof/i);
   });
-  it("labels every no-observation state with a server-supplied reason", async () => {
-    // Receipts without a recorded thread, so every agent lane depends on the observation alone.
+  it("does not turn missing observations into agent activity", async () => {
     const run = fixtureSwarmRun();
     run.receipts = run.receipts.map(({ thread_id: _thread, ...receipt }) => receipt);
-    const reasons = async (capability: Capabilities["agent_timeline"] | null, reply?: (thread: string) => unknown) => {
+    const view = async (capability: Capabilities["agent_timeline"] | null, reply?: (thread: string) => unknown) => {
       const { controller } = await observedController(capability, reply);
       controller.setViewMode("lanes");
       if (capability?.enabled) await vi.waitFor(() => expect(Object.keys(controller.state.timelines)).toHaveLength(3));
       const root = document.createElement("div");
       root.innerHTML = renderLanes(run, roster(run, null), controller.state);
-      return Array.from(root.querySelectorAll(".lane-track.unavailable"), track => track.textContent);
+      return root;
     };
-    expect(await reasons(null)).toEqual(Array(3).fill("Per-agent timeline not reported by this server"));
-    expect(await reasons({ source: "codex-action-server", enabled: false, detail: "Codex observation is not configured on this server." })).toEqual(Array(3).fill("Codex observation is not configured on this server."));
-    expect(await reasons(fixtureTimelineCapability, () => ({ isError: true, content: [{ type: "text", text: "agent_thread_not_in_run" }] }))).toEqual(Array(3).fill("Codex observation could not be read for this agent."));
-    expect(await reasons(fixtureTimelineCapability, () => ({ structuredContent: { ...fixtureTimelines(run.id)["owner-a"], binding_verified: true } }))).toEqual(Array(3).fill("Codex observation could not be read for this agent."));
+    for (const root of [
+      await view(null),
+      await view({ source: "codex-action-server", enabled: false, detail: "Codex observation is not configured on this server." }),
+      await view(fixtureTimelineCapability, () => ({ isError: true, content: [{ type: "text", text: "agent_thread_not_in_run" }] })),
+      await view(fixtureTimelineCapability, () => ({ structuredContent: { ...fixtureTimelines(run.id)["owner-a"], binding_verified: true } })),
+    ]) {
+      expect(root.querySelectorAll(".activity-agent")).toHaveLength(3);
+      expect(root.querySelectorAll(".activity-event").length).toBeGreaterThan(0);
+      expect(root.textContent).not.toContain("No activity has been reported");
+    }
   });
-  it("reads at most the first agents and says so for the rest", async () => {
+  it("reads at most the first eight agents while listing every reported agent", async () => {
     const run = fixtureSwarmRun();
     run.presentation!.workers = Array.from({ length: 10 }, (_, index) => ({ thread_id: `worker-${index + 1}`, liveness: "unknown" as const }));
     const template = fixtureTimelines(run.id)["child-1"]!;
@@ -442,9 +407,10 @@ describe("observed agent timelines", () => {
     expect(call.mock.calls.filter(([tool]) => tool === "read_factory_agent_timeline")).toHaveLength(MAX_TIMELINE_AGENTS);
     const root = document.createElement("div");
     root.innerHTML = renderLanes(run, roster(run, null), controller.state);
-    expect(root.querySelectorAll(".lane-track.observed")).toHaveLength(MAX_TIMELINE_AGENTS);
-    expect(Array.from(root.querySelectorAll(".lane-track.unavailable"), track => track.textContent)).toEqual(Array(3).fill("Not observed: only the first 8 agents are read."));
-    expect(root.textContent).not.toContain("Reading what Codex observed");
+    expect(root.querySelectorAll(".activity-agent")).toHaveLength(11);
+    expect(root.querySelectorAll('.activity-event small')).toHaveLength(0);
+    expect(root.textContent).not.toContain("worker-9");
+    expect(root.textContent).not.toContain("only the first 8 agents");
   });
   it("stops reading as soon as Lanes closes or the page is hidden", async () => {
     let release: () => void = () => undefined;

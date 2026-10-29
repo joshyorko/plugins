@@ -12,6 +12,7 @@ describe("planning graph controls", () => {
     expect(call).toHaveBeenCalledExactlyOnceWith("create_factory_graph", { idempotency_key: "create-1" });
     expect(controller.state.graph?.planning_only).toBe(true);
     expect(controller.state.selectedId).toBe("run-123");
+    expect(controller.state.selectedNodeId).toBeNull();
   });
   it("reviews a proposed change before applying at its returned revision", async () => {
     const call = vi.fn<Bridge["call"]>().mockImplementation(async tool => ({ structuredContent: tool === "get_factory_backends" ? fixtureBackends : fixtureGraph() }));

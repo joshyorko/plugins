@@ -13,11 +13,11 @@ uncommitted original checkout and its sync-conflict files.
 | --- | --- | --- | --- |
 | A1 | Compile, fail closed at every effect path, revoke active work, protect qualification writes and exact identities, persist clock high-water mark | qualification worker | passed backend tests, independent review and exact-head CI at c179e60 |
 | A2 | Descriptor-pinned clone/publication/recovery, cancellation of descendants, final size checks, documented aggregate limit | workspace security worker | passed backend tests, independent review and exact-head CI at c179e60 |
-| A3 | Tokens, shell, header | UX worker, sequential slice 1 | running |
-| A4 | Plain language and banned-term regression | UX worker, sequential slice 2 | pending A3 |
-| A5 | Home composer and repository popover | UX worker, sequential slice 3 | pending A4 |
-| A6 | Plan, task drawer, edit/proposal review | UX worker plus bounded planning-contract worker | atomic update_task proposal required; implementation and regression coverage in progress |
-| A7 | Activity, inline card, states and mobile | UX worker, sequential slice 5 | pending A6 |
+| A3 | Tokens, shell, header | UX worker, sequential slice 1 | local checks and independent visual review passed |
+| A4 | Plain language and banned-term regression | UX worker, sequential slice 2 | local checks and independent visual review passed |
+| A5 | Home composer and repository popover | UX worker, sequential slice 3 | local checks and independent visual review passed |
+| A6 | Plan, task drawer, edit/proposal review | UX worker plus bounded planning-contract worker | atomic update_task tests, compiled integration and independent review passed |
+| A7 | Activity, inline card, states and mobile | UX worker, sequential slice 5 | local checks and independent visual review passed |
 | A8 | Package/docs/catalog parity and portable one-command deployment flow | parent | running |
 | A9 | Fresh independent review and exact-head source, test and CI evidence | parent and independent reviewer | pending integration |
 | A10 | Relaunch the validated Rust OCI service with retained state, verify MCP connection, keep execution denied without an operator grant | parent | deployed c179e60, healthy; 32 tools, saved run preserved; Dakota daemon and current-host MCP verified; OMP connection verified |

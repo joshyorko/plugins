@@ -25,9 +25,9 @@ export function roster(run: RunView | undefined, graph: FactoryGraph | null): Ag
   for (const worker of presentation.workers) {
     if (worker.thread_id === owner || agents.some(agent => agent.thread === worker.thread_id)) continue;
     ordinal += 1;
-    agents.push({ thread: worker.thread_id, role: "worker", ordinal, label: `Worker ${ordinal}`, liveness: worker.liveness, taskId: boundTask(worker.thread_id) });
+    agents.push({ thread: worker.thread_id, role: "worker", ordinal, label: `Agent ${ordinal}`, liveness: worker.liveness, taskId: boundTask(worker.thread_id) });
   }
   return agents;
 }
 
-export const livenessLabel: Record<Liveness, string> = { active: "Active", idle: "Idle", unknown: "Liveness unknown" };
+export const livenessLabel: Record<Liveness, string> = { active: "Active", idle: "Idle", unknown: "Status unknown" };

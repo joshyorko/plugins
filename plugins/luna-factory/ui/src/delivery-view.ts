@@ -43,7 +43,6 @@ function observedAge(delivery: Delivery, node: DeliveryNode): string | null {
 }
 
 type Outcome = "success" | "failure" | "pending" | "neutral";
-const outcomeLabels: Record<Outcome, string> = { success: "passed", failure: "failed", pending: "pending", neutral: "neutral or skipped" };
 function runOutcome(run: DeliveryPull["checks"]["runs"][number]): Outcome {
   if (run.status !== "completed") return "pending";
   if (run.conclusion === "success") return "success";
@@ -76,8 +75,33 @@ function checksSentence(pull: DeliveryPull): string {
   const pending = items.filter(item => item.outcome === "pending").length;
   return [`${passed} of ${pull.checks.total || items.length} checks passed`, failed ? `${failed} failed` : "", pending ? `${pending} pending` : ""].filter(Boolean).join(", ");
 }
+function compactChecks(pull: DeliveryPull): string {
+  const items = outcomes(pull);
+  if (!items.length) return "no checks reported";
+  if (!pull.checks.truncated && items.length === pull.checks.total && items.every(item => item.outcome === "success")) return "checks passed";
+  const passed = items.filter(item => item.outcome === "success").length;
+  return `${passed} of ${pull.checks.total || items.length} checks passed`;
+}
+function compactMapChecks(pull: DeliveryPull, stale: boolean): string {
+  const items = outcomes(pull);
+  if (!items.length) return "no checks reported";
+  if (!pull.checks.truncated && items.length === pull.checks.total && items.every(item => item.outcome === "success")) return stale ? "passed" : "checks passed";
+  return `${items.filter(item => item.outcome === "success").length}/${pull.checks.total || items.length}${stale ? "" : " passed"}`;
+}
+function reviewLabel(pull: DeliveryPull): string | null {
+  if (pull.review_decision === "approved") return "Review approved";
+  if (pull.review_decision === "changes_requested") return "Changes requested";
+  if (pull.review_decision === "review_required") return "Review required";
+  return null;
+}
+function safePullUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "github.com" && !url.username && !url.password && /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+\/?$/i.test(url.pathname) ? url.toString() : null;
+  } catch { return null; }
+}
 
-/** A compact PR chip with check dots for a map node. Omitted unless GitHub reported a pull request. */
+/** A compact pull-request line inside the task card, only when GitHub reported a pull request. */
 export function deliveryChip(state: ViewState, runId: string | undefined, nodeId: string): string {
   const report = deliveryFor(state, runId, nodeId);
   const node = report?.node;
@@ -86,49 +110,42 @@ export function deliveryChip(state: ViewState, runId: string | undefined, nodeId
   if (!pull) return "";
   const stale = node.freshness === "stale";
   const items = outcomes(pull);
-  const shown = items.slice(0, 5);
-  const ready = pull.ready_for_review && !stale;
   const when = observedAge(report.delivery, node);
-  const spoken = `Reported by GitHub: pull request ${pull.number}, ${pullState(pull)}, ${checksSentence(pull)}${ready ? ", ready for review" : ""}${stale && when ? `, stale, observed ${when}` : ""}.`;
-  return `<span class="pr-chip${stale ? " stale" : ""}${ready ? " ready" : ""}" title="${esc(spoken)}"><span aria-hidden="true">PR #${esc(pull.number)}</span>${shown.length ? `<span class="check-dots" aria-hidden="true">${shown.map(item => dot(item.outcome)).join("")}${items.length > shown.length ? `<small>+${items.length - shown.length}</small>` : ""}</span>` : ""}<span class="sr-only">${esc(spoken)}</span></span>`;
+  const spoken = `Reported by GitHub: pull request ${pull.number}, ${pullState(pull)}, ${checksSentence(pull)}${pull.ready_for_review ? ", ready for review" : ""}${stale && when ? `, stale, observed ${when}` : ""}.`;
+  const outcome = items.find(item => item.outcome === "failure")?.outcome ?? items.find(item => item.outcome === "pending")?.outcome ?? items[0]?.outcome ?? "neutral";
+  const summary = `PR #${pull.number} · ${compactMapChecks(pull, stale)}${stale ? " · stale" : ""}`;
+  return `<span class="pr-meta${stale ? " stale" : ""}" title="${esc(spoken)}"><i class="check-dot c-${outcome}" aria-hidden="true"></i><span>${esc(summary)}</span><span class="sr-only">${esc(spoken)}</span></span>`;
 }
 
-/** The inspector's "Reported by GitHub" section. Present only once `read_factory_delivery` answered. */
+/** Pull-request details appear only when the server returned GitHub data. */
 export function deliverySection(state: ViewState, runId: string | undefined, nodeId: string): string {
   const report = deliveryFor(state, runId, nodeId);
   if (!report) return "";
   const { delivery, node } = report;
-  const caveat = '<p class="small muted github-caveat">For context only. GitHub results are not Luna proof, and nothing here can merge or integrate.</p>';
   const retry = delivery.retry_at !== null ? ` Luna will not ask GitHub again for about ${Math.max(1, Math.round((delivery.retry_at - delivery.observed_at) / 60))} min.` : "";
-  const header = `<h4>Reported by GitHub</h4>`;
+  const header = `<h4>Pull request</h4>`;
   if (!node) {
     if (delivery.available) return "";
-    return `<section class="github-report" aria-label="Reported by GitHub">${header}<p class="small">Unavailable: ${esc(deliveryReason(delivery.reason))}.${esc(retry)}</p>${caveat}</section>`;
+    return `<section class="github-report" aria-label="Pull request">${header}<p class="small">Unavailable: ${esc(deliveryReason(delivery.reason))}.${esc(retry)}</p></section>`;
   }
-  const when = observedAge(delivery, node);
   if (node.status !== "observed") {
     const why = node.status === "deferred" ? "Not read yet. Waiting for the next polling window." : `Unavailable: ${deliveryReason(node.reason)}.`;
-    return `<section class="github-report" aria-label="Reported by GitHub">${header}<p class="small">${esc(why)}${delivery.reason === "rate_limited" ? esc(retry) : ""}</p>${caveat}</section>`;
+    return `<section class="github-report" aria-label="Pull request">${header}<p class="small">${esc(why)}${delivery.reason === "rate_limited" ? esc(retry) : ""}</p></section>`;
   }
   const stale = node.freshness === "stale";
-  const freshness = `<p class="small${stale ? " stale-line" : " muted"}">${stale ? `Stale · observed ${esc(when ?? "earlier")}. ${esc(deliveryReason(node.reason))}.${esc(retry)}` : `Observed ${esc(when ?? "at an unknown time")}`}</p>`;
-  const issue = node.issue ? `<p class="small">Issue #${esc(node.issue.number)} · ${esc(node.issue.state === "closed" ? "closed on GitHub" : node.issue.state === "open" ? "open" : "state unknown")}</p>` : "";
+  const staleNote = stale ? `<p class="small stale-line">GitHub data may be out of date: ${esc(deliveryReason(node.reason))}.${esc(retry)}</p>` : "";
   const pulls = node.pull_requests.map(pull => {
     const items = outcomes(pull);
-    const review = pull.review_decision === "approved" ? "review approved" : pull.review_decision === "changes_requested" ? "changes requested" : pull.review_decision === "review_required" ? "review required" : "no review decision reported";
-    const additions = pull.diff.additions ?? "?"; const deletions = pull.diff.deletions ?? "?"; const files = pull.diff.files_changed;
-    const ready = pull.ready_for_review ? `<p class="ready-line">${dot("success")}<span>Ready for review${stale ? " (as last observed)" : ""} · open, not a draft, all reported checks passed</span></p>` : "";
-    return `<div class="pr-report">
-      <p><strong>Pull request #${esc(pull.number)}</strong> · ${esc(pullState(pull))} · ${esc(review)}</p>
-      ${ready}
-      <p class="small diff-stat"><span class="add">+${esc(additions)}</span> <span class="del">−${esc(deletions)}</span>${files !== null ? ` · ${esc(files)} ${files === 1 ? "file" : "files"}` : ""}</p>
-      <p class="small">${esc(checksSentence(pull))}${pull.checks.truncated ? ` · showing ${items.length} of ${pull.checks.total}` : ""}</p>
-      ${items.length ? `<ul class="check-list">${items.map(item => `<li>${dot(item.outcome)}<span>${esc(item.name)} <small>${esc(outcomeLabels[item.outcome])}${item.summary ? ` · ${esc(item.summary)}` : ""}</small></span></li>`).join("")}</ul>` : ""}
-    </div>`;
+    const label = `#${pull.number} · ${reviewLabel(pull) ?? pullState(pull)} · ${compactChecks(pull)}`;
+    const url = safePullUrl(pull.url);
+    const summary = url ? `<a class="pr-report-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Open pull request on GitHub">${esc(label)}</a>` : `<span class="pr-report-link">${esc(label)}</span>`;
+    const failures = items.filter(item => item.outcome === "failure");
+    const failedChecks = failures.length ? `<ul class="check-list">${failures.map(item => `<li>${dot(item.outcome)}<span>${esc(item.name)} <small>failed${item.summary ? ` · ${esc(item.summary)}` : ""}</small></span></li>`).join("")}</ul>` : "";
+    return `<div class="pr-report">${summary}${failedChecks}</div>`;
   }).join("");
   const none = node.pull_requests.length ? "" : '<p class="small muted">GitHub reports no linked pull request for this issue.</p>';
   const more = node.pull_requests_truncated ? `<p class="small muted">Showing ${node.pull_requests.length} of ${node.pull_requests_total} linked pull requests.</p>` : "";
   // Only an explicit `complete: false` from the server marks a partial read; stale data already says so.
   const partial = node.complete === false && !stale ? '<p class="small muted">Partial read: GitHub did not return every linked pull request or check.</p>' : "";
-  return `<section class="github-report" aria-label="Reported by GitHub">${header}${freshness}${issue}${pulls}${none}${more}${partial}${caveat}</section>`;
+  return `<section class="github-report" aria-label="Pull request">${header}${staleNote}${pulls}${none}${more}${partial}</section>`;
 }

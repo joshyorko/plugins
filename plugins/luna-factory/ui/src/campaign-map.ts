@@ -84,7 +84,7 @@ export function layoutWaves(nodes: MapNode[]): WaveLayout {
 }
 
 export interface MapGeometry { nodeWidth: number; nodeHeight: number; columnGap: number; rowGap: number; padX: number; padY: number }
-export const MAP_GEOMETRY: MapGeometry = { nodeWidth: 216, nodeHeight: 68, columnGap: 76, rowGap: 18, padX: 20, padY: 22 };
+export const MAP_GEOMETRY: MapGeometry = { nodeWidth: 208, nodeHeight: 96, columnGap: 76, rowGap: 16, padX: 20, padY: 22 };
 
 /** Shrinks columns to fit the pane when it can (down to readable minimums); wider graphs pan instead. */
 export function fitGeometry(waveCount: number, available?: number): MapGeometry {
@@ -93,9 +93,7 @@ export function fitGeometry(waveCount: number, available?: number): MapGeometry 
   if (!available || available <= 0) return base;
   const natural = base.padX * 2 + columns * base.nodeWidth + (columns - 1) * base.columnGap;
   if (natural <= available) return base;
-  const columnGap = Math.max(36, Math.min(base.columnGap, Math.floor((available - base.padX * 2) / columns * 0.22)));
-  const nodeWidth = Math.floor((available - base.padX * 2 - (columns - 1) * columnGap) / columns);
-  return nodeWidth >= 156 ? { ...base, columnGap, nodeWidth: Math.min(base.nodeWidth, nodeWidth) } : { ...base, nodeWidth: 156, columnGap: 36 };
+  return { ...base, columnGap: Math.max(36, Math.min(base.columnGap, Math.floor((available - base.padX * 2) / columns * 0.22))) };
 }
 
 export function nodePosition(layout: WaveLayout, id: string, g: MapGeometry = MAP_GEOMETRY): { x: number; y: number } | null {

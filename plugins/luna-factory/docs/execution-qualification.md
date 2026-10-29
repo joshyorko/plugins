@@ -183,6 +183,8 @@ replacement for server identity.
 
 ## Remaining for full #71
 
+- Campaign promotion remains a separate static refusal. A persisted grant does
+  not enable `promote_factory_campaign` or turn a planning record into execution.
 - Live subscription inference through the canary on the operator runtime, with recorded evidence.
 - Real callback ownership: proof that native events are bound to the owned thread and turn.
 - Crash windows between intent, send and acknowledgement under qualification.

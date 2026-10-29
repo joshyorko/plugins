@@ -1,7 +1,7 @@
 import { App, applyDocumentTheme, applyHostStyleVariables } from "@modelcontextprotocol/ext-apps";
 import { applyDeepLink, HostBridge, surfaceFromHostContext } from "./bridge";
 import { WorkbenchController, type Bridge } from "./controller";
-import { allowedFinishes, finishLabels, localRepositoryName, settingsSchema, startRequest, UI_VERSION, type FollowUpKind } from "./domain";
+import { allowedFinishes, finishLabels, localRepositoryName, settingsSchema, startRequest, taskTitleUpdate, UI_VERSION, type FollowUpKind } from "./domain";
 import { filterRepositories, renderWorkbench, toggleDisclosure, type Editor, type WorkbenchOptions } from "./view";
 import { SinceTracker, type Baseline } from "./narrative";
 import { registerViewTools } from "./view-tools";
@@ -48,26 +48,43 @@ function showEditor(next: Editor): void {
 mount.addEventListener("click", event => {
   if (!(event.target instanceof Element)) return;
   const target = event.target.closest<HTMLElement>("[data-action],[data-run-id]");
+  const headerMenu = mount.querySelector<HTMLDetailsElement>(".header-menu[open]");
+  if (headerMenu && (!target || !target.closest(".header-menu") || target.dataset.action)) headerMenu.open = false;
   if (!target || target instanceof HTMLButtonElement && target.disabled) return;
+  if (event.target.closest("a.source-link") && target.dataset.runId) return;
   event.preventDefault();
   if (target.dataset.runId) { editor = null; void openRun(target.dataset.runId); return; }
   switch (target.dataset.action) {
     case "overview": editor = null; void controller.select(null); break;
     case "refresh": void (async () => { await controller.refresh(); if (controller.state.graph) await controller.loadGraph(); })(); break;
+    case "reconnect": void (async () => {
+      try { connection = hostBridge.connect(); await connection; controller.setConnected(true); applyHostContext(); await controller.refresh(); }
+      catch { controller.setDisconnected("Could not reconnect to Luna Factory. Check the host connection and try again."); }
+    })(); break;
     case "graph": editor = null; void controller.loadGraph(); break;
     case "graph-node": if (target.dataset.nodeId) controller.selectNode(target.dataset.nodeId); break;
-    case "view-mode": if (target.dataset.mode === "map" || target.dataset.mode === "lanes") controller.setViewMode(target.dataset.mode); break;
+    case "close-task": controller.selectNode(null); break;
+    case "view-mode": if (target.dataset.mode === "map" || target.dataset.mode === "lanes" || target.dataset.mode === "details") controller.setViewMode(target.dataset.mode); break;
     case "select-agent": if (target.dataset.threadId) controller.selectAgent(controller.state.selectedAgent === target.dataset.threadId ? null : target.dataset.threadId); break;
     case "dismiss-change": controller.dismissAppliedChange(); break;
+    case "cancel-review": controller.dismissProposal(); break;
     case "toggle-disclosure": {
       toggleDisclosure(mount, target);
       if (target.getAttribute("aria-expanded") === "true") document.getElementById(target.getAttribute("aria-controls") ?? "")?.querySelector<HTMLElement>("input:not(:disabled), select:not(:disabled)")?.focus();
       break;
     }
-    case "apply-change": void controller.applyChange(mount.querySelector<HTMLInputElement>("#confirm-graph-change")?.checked === true); break;
+    case "close-edit-sheet": {
+      const sheet = target.closest<HTMLElement>(".edit-sheet[data-disclosure]");
+      const toggle = sheet ? Array.from(mount.querySelectorAll<HTMLElement>('[data-action="toggle-disclosure"]')).find(element => element.getAttribute("aria-controls") === sheet.id) : null;
+      if (toggle) { toggleDisclosure(mount, toggle, false); toggle.focus(); }
+      break;
+    }
+    case "apply-change": void controller.applyChange(true); break;
     case "share-context": void controller.select(controller.state.selectedId); break;
-    case "start": controller.state.newRepository = false; showEditor("start"); void controller.loadGithubRepositories(); break;
+    case "start": controller.state.newRepository = false; editor = null; void controller.select(null); void controller.loadGithubRepositories(); break;
+    case "promote-campaign": void controller.promoteCampaign(); break;
     case "settings": showEditor("settings"); break;
+    case "connect-github": showEditor("start"); openRepoMenu(mount, "first"); break;
     case "setup": {
       // The plan form's "one-time setup" link: read-only guidance in Settings. Nothing is enabled.
       showEditor("settings");
@@ -107,10 +124,9 @@ mount.addEventListener("click", event => {
   }
 });
 mount.addEventListener("change", event => {
-  if (event.target instanceof HTMLInputElement && event.target.id === "confirm-graph-change") {
-    const apply = mount.querySelector<HTMLButtonElement>('[data-action="apply-change"]');
-    if (apply) apply.disabled = !event.target.checked || !controller.state.connected || !!controller.state.pending || controller.state.graphStale || controller.state.graphLoading;
-    return;
+  if (event.target instanceof HTMLElement && event.target.closest(".planning-editor")) {
+    const saveError = mount.querySelector<HTMLElement>("#task-save-error");
+    if (saveError) { saveError.textContent = ""; saveError.hidden = true; }
   }
   if (event.target instanceof HTMLSelectElement && event.target.name === "candidate_id") {
     const selected = event.target.value;
@@ -122,6 +138,10 @@ mount.addEventListener("change", event => {
 });
 mount.addEventListener("input", event => {
   if (event.target instanceof HTMLInputElement && event.target.id === "repo_filter") filterRepositories(mount, event.target.value);
+  if (event.target instanceof HTMLTextAreaElement && event.target.id === "objective") {
+    const plan = mount.querySelector<HTMLButtonElement>('button[type="submit"][value="plan"]');
+    if (plan) plan.disabled = !event.target.value.trim() || !controller.state.connected || Boolean(controller.state.pending);
+  }
   // The name error shows only while the name is invalid; typing clears it.
   if (event.target instanceof HTMLInputElement && event.target.id === "new_repository") showRepoError(null);
 });
@@ -181,17 +201,33 @@ mount.addEventListener("submit", event => {
         if (pendingStart?.fingerprint !== fingerprint) pendingStart = { fingerprint, key: crypto.randomUUID() };
         const key = pendingStart.key;
         const capabilities = controller.state.capabilities;
+        const settings = controller.state.settings;
         const { new_repository: name, ...request } = fields;
         success = newRepoInput
-          ? await controller.createRepositoryAndSubmit(name ?? "", alias => submitNewRun(controller, intent, startRequest({ ...request, repository: alias }, controller.state.capabilities ?? capabilities, key)))
-          : await submitNewRun(controller, intent, startRequest(request, capabilities, key));
+          ? await controller.createRepositoryAndSubmit(name ?? "", alias => submitNewRun(controller, intent, startRequest({ ...request, repository: alias }, controller.state.capabilities ?? capabilities, key, controller.state.settings)))
+          : await submitNewRun(controller, intent, startRequest(request, capabilities, key, settings));
         if (success) pendingStart = null;
         if (success && intent !== "start") { await controller.refresh(); await controller.loadGraph(); }
       } else if (form.dataset.form === "graph-node") {
-        if (intent !== "target" && intent !== "dependencies") throw new Error("Choose which plan change to propose.");
+        if (intent !== "save") throw new Error("Choose Save changes.");
         const nodeId = controller.state.selectedNodeId;
-        if (!nodeId) throw new Error("Select a task first");
-        success = await controller.proposeChange(intent === "target" ? { kind: "set_target", node_id: nodeId, target_id: fields.target_id ?? "" } : { kind: "set_dependencies", node_id: nodeId, dependencies: new FormData(form).getAll("dependencies").filter((value): value is string => typeof value === "string") });
+        const graph = controller.state.graph;
+        const selected = graph?.nodes.find(node => node.id === nodeId);
+        if (!nodeId || !graph || !selected) throw new Error("Select a task first.");
+        const dependencies = new FormData(form).getAll("dependencies").filter((value): value is string => typeof value === "string");
+        const titleField = form.querySelector<HTMLTextAreaElement>("#task-title");
+        const canonicalTitle = selected.editor_title === null ? null : selected.editor_title ?? selected.title;
+        const title = titleField ? taskTitleUpdate(titleField.value, canonicalTitle) : fields.title ?? "";
+        if (title === "") {
+          const saveError = form.querySelector<HTMLElement>("#task-save-error");
+          if (saveError) { saveError.textContent = "Add a task title."; saveError.hidden = false; }
+          form.querySelector<HTMLTextAreaElement>("#task-title")?.focus();
+          return;
+        }
+        const targetId = form.querySelector<HTMLSelectElement>("#target_id")?.value ?? "";
+        const editToggle = Array.from(mount.querySelectorAll<HTMLElement>('[data-action="toggle-disclosure"]')).find(element => element.getAttribute("aria-controls") === `edit-${nodeId}`);
+        if (editToggle) toggleDisclosure(mount, editToggle, false);
+        success = await controller.proposeChange({ kind: "update_task", node_id: nodeId, title, dependencies, target_id: targetId || null });
         return;
       } else if (form.dataset.form === "settings") {
         const settings = settingsSchema.parse({ ...fields, capacity: Number(fields.capacity) });
@@ -251,9 +287,9 @@ if (fixturePreview) {
   const scenarios = [
     fixtureRun({ id: "review-301", pending_decision: { id: "review-301-decision-1", question: "Keep the protected migration local or remove it?" }, objective: "Make review recovery safe after reconnect", state: "NEEDS_INPUT", active_workers: 0, blocker: "The requested scope includes a protected migration. Keep it local or remove the migration?", delta: "Recovery checks pass. One scope decision is holding the final candidate.", remaining_gap: "Resolve the migration scope with the owner." }),
     fixtureRun(),
-    fixtureRun({ id: "sample-204", repository: "sample-service", objective: "Preserve job progress across restarts", state: "RUNNING", delta: "The owner reproduced the restart gap. Two bounded workers are testing the fix.", active_workers: 2 }),
-    fixtureRun({ id: "friday-41", repository: "friday", objective: "Tighten the nightly handoff", state: "CONVERGED", active_workers: 0, claim_held: false, blocker: null, remaining_gap: null, delta: "Owner accepted the current subject. The requested pull request is ready." }),
-    fixtureRun({ id: "blocked-77", repository: "sample", objective: "Inspect blocked recovery safely", state: "BLOCKED", active_workers: 0, claim_held: true, blocker: "Native owner liveness is unknown. Keep the claim held." }),
+    fixtureRun({ id: "sample-204", repository: "sample-service", objective: "Preserve job progress across restarts", state: "RUNNING", delta: "Luna reproduced the restart gap. Two agents are testing the fix.", active_workers: 2 }),
+    fixtureRun({ id: "friday-41", repository: "friday", objective: "Tighten the nightly handoff", state: "CONVERGED", active_workers: 0, claim_held: false, blocker: null, remaining_gap: null, delta: "Luna accepted the current plan. The requested pull request is ready." }),
+    fixtureRun({ id: "blocked-77", repository: "sample", objective: "Inspect blocked recovery safely", state: "BLOCKED", active_workers: 0, claim_held: true, blocker: "Codex status is unknown. Keep the work paused." }),
   ];
   const scenario = previewParams.get("scenario");
   const selected = scenario === "blocked" ? scenarios[4] : scenario === "selected-node" ? scenarios[1] : scenarios[0];
@@ -280,6 +316,7 @@ if (fixturePreview) {
     controller.state.selectedNodeId = graph.nodes[0]?.id ?? null;
   }
   renderWorkbench(mount, controller.state, editor, fixturePreview, workbenchOptions);
+  if (previewParams.get("scenario") === "plan") void controller.loadGithubRepositories();
 } else {
   // Model-callable view tools must exist before the handshake advertises them.
   registerViewTools(app as never, controller, { surface: () => workbenchOptions.surface ?? "global", readPlan: readSelectedPlan });
@@ -288,8 +325,8 @@ if (fixturePreview) {
     controller.setConnected(true);
     applyHostContext();
     // Single-run tool results render immediately; only fetch missing workbench controls.
-    if (!controller.state.initialized || !controller.state.capabilities) void controller.refresh().then(readSelectedPlan);
-    else { readSelectedPlan(); void controller.loadCampaigns(); }
+    if (!controller.state.initialized || !controller.state.capabilities) void controller.refresh().then(readSelectedPlan).then(() => controller.loadGithubRepositories());
+    else { readSelectedPlan(); void controller.loadCampaigns(); void controller.loadGithubRepositories(); }
   }).catch(() => controller.setDisconnected("Could not connect to the MCP Apps host. Reopen Luna Factory from the host to reconnect."));
   // Read-only status polling. It never starts a model, and pauses while hidden or editing.
   const refreshTimer = window.setInterval(() => {
@@ -310,6 +347,35 @@ function readSelectedPlan(): void {
 }
 // Arrow keys move between tasks in reading order; Enter/Space already activate buttons.
 mount.addEventListener("keydown", event => {
+  const headerMenu = mount.querySelector<HTMLDetailsElement>(".header-menu[open]");
+  if (headerMenu && event.target instanceof HTMLElement && headerMenu.contains(event.target)) {
+    const items = Array.from(headerMenu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
+    const activeItem = event.target.closest<HTMLButtonElement>("button[role='menuitem']");
+    const current = activeItem ? items.indexOf(activeItem) : -1;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      headerMenu.open = false;
+      headerMenu.querySelector<HTMLElement>("summary")?.focus();
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
+      if (!items.length) return;
+      event.preventDefault();
+      const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      items[next]?.focus();
+      return;
+    }
+  }
+  const openSheet = mount.querySelector<HTMLElement>(".edit-sheet[data-disclosure]:not([hidden])");
+  if (event.key === "Escape" && openSheet) {
+    const toggle = Array.from(mount.querySelectorAll<HTMLElement>('[data-action="toggle-disclosure"]')).find(element => element.getAttribute("aria-controls") === openSheet.id);
+    if (toggle) { event.preventDefault(); toggleDisclosure(mount, toggle, false); toggle.focus(); return; }
+  }
+  if (event.key === "Escape" && controller.state.selectedNodeId) {
+    event.preventDefault();
+    controller.selectNode(null);
+    return;
+  }
   if (!(event.target instanceof HTMLElement) || !event.target.matches(".map-node") || !["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft"].includes(event.key)) return;
   const nodes = Array.from(mount.querySelectorAll<HTMLElement>(".map-node"));
   const index = nodes.indexOf(event.target);
