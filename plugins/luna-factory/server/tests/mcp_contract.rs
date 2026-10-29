@@ -154,11 +154,11 @@ fn campaign_catalog_is_model_and_app_visible_with_read_only_reads_and_fenced_pro
         promote["inputSchema"]["properties"]["expected_revision"]["maximum"],
         9_007_199_254_740_991_u64
     );
-    // The projection contract itself cannot claim execution today.
+    // Eligibility is advisory; the immutable graph remains planning-only.
     let campaign = &value("get_factory_campaign")["outputSchema"]["$defs"]["campaign"];
     assert_eq!(
         campaign["properties"]["promotion"]["properties"]["allowed"],
-        json!({"const":false})
+        json!({"type":"boolean"})
     );
     assert_eq!(
         campaign["properties"]["planning"]["properties"]["planning_only"],

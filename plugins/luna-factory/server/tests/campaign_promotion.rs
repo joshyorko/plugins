@@ -330,3 +330,41 @@ async fn mapped_daemon_dispatch_uses_host_paths_while_validating_local_files() {
     );
     // These are framing fixtures. No actual host path or inference is exercised.
 }
+
+#[tokio::test]
+async fn concurrent_identical_approvals_converge_to_one_atomic_admission() {
+    let (_temp, config, create) = fixture();
+    let factory = Factory::new(config.clone()).unwrap();
+    let created = factory.create_campaign(create).await.unwrap();
+    let request = promote(
+        created["campaign"]["id"].as_str().unwrap(),
+        0,
+        "simultaneous",
+    );
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let threads: Vec<_> = (0..2)
+        .map(|_| {
+            let config = config.clone();
+            let request = request.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let mut store = Store::open(&config).unwrap();
+                barrier.wait();
+                store.admit_promotion(&config, &request).unwrap()
+            })
+        })
+        .collect();
+    let admissions: Vec<_> = threads
+        .into_iter()
+        .map(|thread| thread.join().unwrap())
+        .collect();
+    assert_eq!(
+        admissions
+            .iter()
+            .filter(|admission| admission.created)
+            .count(),
+        1
+    );
+    assert_eq!(admissions[0].run.id, admissions[1].run.id);
+    assert_eq!(rows(&config), (2, 1, 1));
+}
