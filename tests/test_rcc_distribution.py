@@ -36,13 +36,13 @@ class RccDistributionTests(unittest.TestCase):
             rcc = next(p for p in marketplace["plugins"] if p["name"] == "rcc")
             self.assertNotIn("dagger", json.dumps(rcc).lower())
 
-    def test_hermes_registers_all_eight_canonical_skills(self):
+    def test_hermes_registers_canonical_skills_and_verifier(self):
         registered = []
         context = SimpleNamespace(register_skill=lambda **skill: registered.append(skill))
         runpy.run_path(str(PLUGIN / "__init__.py"))["register"](context)
         expected = {"rcc", "rcc-core", "rcc-robots", "rcc-workitems",
                     "rcc-robot-framework", "rcc-rpaframework", "action-server",
-                    "rcc-ci-maintenance"}
+                    "rcc-ci-maintenance", "verify-rcc"}
         self.assertEqual({skill["name"] for skill in registered}, expected)
         for skill in registered:
             self.assertTrue(skill["path"].is_relative_to(PLUGIN / "skills"))

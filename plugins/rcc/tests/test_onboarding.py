@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,7 +36,24 @@ class OnboardingRuntimeTests(unittest.TestCase):
         result = subprocess.run(["rcc", *args], cwd=cwd or self.root,
                                 env=self.environment, text=True, capture_output=True,
                                 timeout=240)
+        evidence = os.getenv("RCC_ONBOARDING_EVIDENCE")
+        if evidence:
+            directory = Path(evidence)
+            directory.mkdir(parents=True, exist_ok=True)
+            number = len(list(directory.glob("command-*.json"))) + 1
+            (directory / f"command-{number:03d}.json").write_text(json.dumps({
+                "argv": ["rcc", *args], "cwd": str(cwd or self.root),
+                "stdout": result.stdout, "stderr": result.stderr,
+                "exit_code": result.returncode,
+            }, indent=2) + "\n")
         return result
+
+    def retain(self, path):
+        evidence = os.getenv("RCC_ONBOARDING_EVIDENCE")
+        if evidence:
+            directory = Path(evidence)
+            directory.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, directory / path.name)
 
     def initialize(self, destination):
         catalog = self.rcc("robot", "initialize", "--list")
@@ -44,6 +62,7 @@ class OnboardingRuntimeTests(unittest.TestCase):
         return self.rcc("robot", "initialize", "-t", "01-python", "-d", str(destination))
 
     def test_initializer_preserves_nonempty_hidden_and_git_destinations(self):
+        checked = []
         for relative in ("existing.txt", ".hidden", ".git/HEAD"):
             with self.subTest(existing=relative):
                 destination = self.root / relative.replace("/", "-")
@@ -55,6 +74,10 @@ class OnboardingRuntimeTests(unittest.TestCase):
                 self.assertEqual(sentinel.read_text(), "existing history or data\n")
                 self.assertEqual([p for p in destination.rglob("*") if p.is_file()],
                                  [sentinel])
+                checked.append({"existing": relative, "preserved": True})
+        evidence = os.getenv("RCC_ONBOARDING_EVIDENCE")
+        if evidence:
+            (Path(evidence) / "preservation.json").write_text(json.dumps(checked, indent=2) + "\n")
 
     def test_first_pass_and_local_workitems_and_filesecrets(self):
         import strictyaml
@@ -72,6 +95,8 @@ class OnboardingRuntimeTests(unittest.TestCase):
         output = destination / config["artifactsDir"]
         self.assertTrue((output / "log.html").is_file())
         self.assertIn("Hello", (output / "greeting.txt").read_text())
+        self.retain(output / "greeting.txt")
+        self.retain(output / "log.html")
 
         fixture = Path(__file__).parent / "fixtures" / "local_tasks.py"
         shutil.copy2(fixture, destination / "local_tasks.py")
@@ -105,9 +130,20 @@ class OnboardingRuntimeTests(unittest.TestCase):
             self.assertIn("status: PASS", result.stdout + result.stderr)
             items = json.loads((destination / local_env["RC_WORKITEM_OUTPUT_PATH"]).read_text())
             self.assertEqual([item["payload"] for item in items], [expected])
+            self.retain(destination / local_env["RC_WORKITEM_OUTPUT_PATH"])
             local_env["RC_WORKITEM_INPUT_PATH"] = local_env["RC_WORKITEM_OUTPUT_PATH"]
             local_env["RC_WORKITEM_OUTPUT_PATH"] = "devdata/consumer-output.json"
 
 
 if __name__ == "__main__":
-    unittest.main()
+    if "--require-runtime" in sys.argv:
+        sys.argv.remove("--require-runtime")
+        required = (
+            "OnboardingRuntimeTests.test_first_pass_and_local_workitems_and_filesecrets",
+            "OnboardingRuntimeTests.test_initializer_preserves_nonempty_hidden_and_git_destinations",
+        )
+        result = unittest.main(defaultTest=required, exit=False).result
+        sys.exit(not (result.wasSuccessful() and result.testsRun == len(required)
+                      and not result.skipped))
+    else:
+        unittest.main()
