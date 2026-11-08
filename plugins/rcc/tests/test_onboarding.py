@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -135,4 +136,14 @@ class OnboardingRuntimeTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    if "--require-runtime" in sys.argv:
+        sys.argv.remove("--require-runtime")
+        required = (
+            "OnboardingRuntimeTests.test_first_pass_and_local_workitems_and_filesecrets",
+            "OnboardingRuntimeTests.test_initializer_preserves_nonempty_hidden_and_git_destinations",
+        )
+        result = unittest.main(defaultTest=required, exit=False).result
+        sys.exit(not (result.wasSuccessful() and result.testsRun == len(required)
+                      and not result.skipped))
+    else:
+        unittest.main()
