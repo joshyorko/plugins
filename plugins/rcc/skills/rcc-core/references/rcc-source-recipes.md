@@ -182,6 +182,8 @@ brew install --cask joshyorko/tools/rcc
 
 When working on Bluefin, prefer this or a repo-native container path for a host-level `rcc`; do not layer host packages casually.
 
+If RCC is missing, inspect the project's container/setup path first, then use a platform-matched asset and published checksum from [the community fork's releases](https://github.com/joshyorko/rcc/releases). Pin the release and verify SHA-256 before execution; do not guess assets, bypass checksum failures, or substitute upstream browser-only download instructions. Ask before system-wide installation, administrator privileges, or shell-startup changes. Confirm with `rcc version` afterward; do not run robot dependencies in host Python as a workaround.
+
 Josh's fork also exposes endpoint overrides for private control planes and mirrors:
 
 ```zsh
