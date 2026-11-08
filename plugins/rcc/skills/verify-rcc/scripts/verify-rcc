@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""Drive RCC CLI checks in owned scratch space; retain evidence separately."""
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import sys
+
+
+FEATURES = ("health", "onboarding", "quickref", "distribution")
+MARKER = ".verify-rcc.json"
+
+
+def save(path, value):
+    path.write_text(json.dumps(value, indent=2) + "\n")
+
+
+def command(args, root, evidence, env, expected=0, timeout=300):
+    number = len(list(evidence.glob("command-*.json"))) + 1
+    record = {"argv": [str(arg) for arg in args], "cwd": str(root)}
+    process = subprocess.Popen(args, cwd=root, env=env, text=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               start_new_session=True)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except BaseException:
+        os.killpg(process.pid, signal.SIGKILL)
+        stdout, stderr = process.communicate()
+        record.update(stdout=stdout, stderr=stderr, exit_code=process.returncode,
+                      interrupted=True)
+        save(evidence / f"command-{number:03d}.json", record)
+        raise
+    record.update(stdout=stdout, stderr=stderr, exit_code=process.returncode)
+    save(evidence / f"command-{number:03d}.json", record)
+    if (expected == 0 and process.returncode != 0) or (expected != 0 and process.returncode == 0):
+        raise RuntimeError(f"Unexpected exit {process.returncode}: {args}; see {evidence}")
+    return stdout + stderr
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", choices=("launch", "doctor", "drive", "cleanup"))
+    parser.add_argument("feature", nargs="?", choices=FEATURES)
+    parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--evidence-dir", type=Path)
+    parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[5])
+    args = parser.parse_args()
+    run = args.run_dir.resolve()
+    repo = args.repo.resolve()
+    if run == repo or run.is_relative_to(repo) or repo.is_relative_to(run):
+        raise RuntimeError("Scratch must be separate from the source checkout")
+
+    if args.action == "launch":
+        # Launch consumes only an empty scratch dir or its newly prepared venv.
+        if run.exists() and any(path.name != "venv" for path in run.iterdir()):
+            raise RuntimeError("Launch requires fresh scratch (only venv may already exist)")
+        if not args.evidence_dir:
+            parser.error("launch requires --evidence-dir")
+        evidence = args.evidence_dir.resolve()
+        if evidence.is_relative_to(run) or run.is_relative_to(evidence):
+            raise RuntimeError("Evidence must be outside scratch")
+        if not (repo / "plugins/rcc/tests/test_onboarding.py").is_file():
+            raise RuntimeError("Use --repo with the plugins source checkout, not an installed bundle")
+        import jsonschema, skills_ref, strictyaml  # noqa: F401
+
+        evidence.mkdir(parents=True, exist_ok=False)
+        run.mkdir(parents=True, exist_ok=True)
+        revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+        inputs = {}
+        for folder in (repo / "plugins/rcc", repo / "tests", repo / "scripts"):
+            for path in sorted(folder.rglob("*")):
+                if path.is_file() and "__pycache__" not in path.parts:
+                    inputs[str(path.relative_to(repo))] = hashlib.sha256(path.read_bytes()).hexdigest()
+        state = {"run_dir": str(run), "evidence_dir": str(evidence), "repo": str(repo),
+                 "revision": revision, "python": sys.executable, "inputs": inputs, "features": {}}
+        save(run / MARKER, state)
+        save(evidence / "receipt.json", state)
+        print(f"Ready: {run}; evidence: {evidence}")
+        return
+
+    state = json.loads((run / MARKER).read_text())
+    if state["run_dir"] != str(run) or state["repo"] != str(repo):
+        raise RuntimeError("Run ownership does not match the requested scratch/checkout")
+    evidence = Path(state["evidence_dir"])
+    if evidence.is_relative_to(run) or run.is_relative_to(evidence):
+        raise RuntimeError("Evidence must survive scratch cleanup")
+    lock = (run / ".active").open("w")
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    if args.action == "cleanup":
+        shutil.rmtree(run)
+        state["cleanup"] = {"scratch_removed": not run.exists()}
+        save(evidence / "receipt.json", state)
+        print(f"Removed owned scratch; retained {evidence}")
+        return
+
+    env = os.environ.copy()
+    for key in list(env):
+        if key.startswith(("RC_", "RPA_", "RCC_")):
+            env.pop(key)
+    for variable, subdir in (("TMPDIR", "tmp"), ("ROBOCORP_HOME", "rcc-home"),
+                             ("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "data"),
+                             ("XDG_CACHE_HOME", "cache"), ("XDG_STATE_HOME", "state")):
+        env[variable] = str(run / subdir)
+        (run / subdir).mkdir(exist_ok=True)
+    env.update(RCC_HOLOTREE_MODE="private", PYTHONDONTWRITEBYTECODE="1",
+               PATH=str(Path(state["python"]).parent) + os.pathsep + env["PATH"])
+    py = state["python"]
+    if args.action == "doctor":
+        if not shutil.which("rcc"):
+            raise RuntimeError("RCC is unavailable; use rcc-core installation guidance")
+        command(["rcc", "version"], repo, evidence, env, timeout=30)
+        command([py, "-c", "import jsonschema, skills_ref, strictyaml"], repo, evidence, env)
+        for relative, digest in state["inputs"].items():
+            if hashlib.sha256((repo / relative).read_bytes()).hexdigest() != digest:
+                raise RuntimeError(f"Source changed since launch: {relative}; start a fresh run")
+        print("Doctor passed: source inputs, verification Python, and RCC are available")
+        return
+
+    if not args.feature:
+        parser.error("drive requires a feature")
+    feature = args.feature
+    state["features"][feature] = "running"
+    save(evidence / "receipt.json", state)
+    try:
+        if feature == "health":
+            command(["rcc", "diagnostics", "--quick", "--json"], repo, evidence, env)
+            fixture = run / "broken-robot"
+            fixture.mkdir()
+            robot = fixture / "robot.yaml"
+            robot.write_text('tasks:\n  Main:\n    shell: python -c "open(\'TASK_RAN\', \'w\').write(\'yes\')"\ncondaConfigFile: missing-environment.yaml\n')
+            output = command(["rcc", "ht", "vars", "-r", str(robot), "--json"],
+                             fixture, evidence, env, expected=1, timeout=30)
+            if "missing-environment.yaml" not in output or (fixture / "TASK_RAN").exists():
+                raise RuntimeError("Missing environment did not stop before task execution")
+            save(evidence / "health-state.json", {"missing_environment_rejected": True,
+                                                   "task_marker_exists": False})
+        elif feature == "onboarding":
+            env.update(RCC_ONBOARDING_RUNTIME="1", RCC_ONBOARDING_HOME=env["ROBOCORP_HOME"],
+                       RCC_ONBOARDING_EVIDENCE=str(evidence / "onboarding"))
+            command([py, "-m", "unittest", "discover", "-s", "plugins/rcc/tests",
+                     "-p", "test_onboarding.py", "-v"], repo, evidence, env, timeout=900)
+        elif feature == "quickref":
+            helper = repo / "plugins/rcc/skills/rcc-core/scripts/tealdeer.py"
+            config = run / "config/tealdeer/config.toml"
+            config.parent.mkdir(parents=True)
+            config.write_text("[updates]\nauto_update = false\n")
+            before = config.read_bytes()
+            tldr_version = command(["tldr", "--version"], repo, evidence, env)
+            if not tldr_version.startswith("tealdeer "):
+                raise RuntimeError("This journey requires the real Tealdeer client")
+            command([py, str(helper), "install", "--codex-home", str(run / "codex")], repo, evidence, env)
+            rendered = command(["tldr", "--no-auto-update", "rcc"], run, evidence, env)
+            if "rcc version" not in rendered or config.read_bytes() != before:
+                raise RuntimeError("Offline page missing or user configuration changed")
+            command([py, str(helper), "status"], repo, evidence, env)
+            command([py, str(helper), "uninstall"], repo, evidence, env)
+            if (run / "data/tealdeer/pages/rcc.page.md").exists():
+                raise RuntimeError("Managed page survived uninstall")
+            if any(path.is_file() for path in (run / "cache").rglob("*")):
+                raise RuntimeError("Offline lookup unexpectedly populated the cache")
+            save(evidence / "quickref-state.json", {"config_preserved": config.read_bytes() == before,
+                                                     "managed_page_removed": True, "cache_files": 0})
+        else:
+            command(["bash", "bin/check"], repo, evidence, env)
+            command([py, "-m", "unittest", "discover", "-s", "plugins/rcc/tests", "-v"],
+                    repo, evidence, env)
+        state["features"][feature] = "passed"
+    except BaseException:
+        state["features"][feature] = "failed"
+        raise
+    finally:
+        save(run / MARKER, state)
+        save(evidence / "receipt.json", state)
+    print(f"Passed: {feature}; evidence: {evidence}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as error:
+        print(f"verify-rcc: {error}", file=sys.stderr)
+        sys.exit(1)

@@ -181,10 +181,11 @@ class RecipeContractTests(unittest.TestCase):
                         self.assertIn(anchor.lower(), anchors, f"broken anchor: {target}")
 
     def test_eight_specialists_and_generated_skill_links_remain(self) -> None:
-        self.assertEqual({path.name for path in SKILLS.iterdir() if path.is_dir()}, SPECIALISTS)
+        expected = SPECIALISTS | {"verify-rcc"}
+        self.assertEqual({path.name for path in SKILLS.iterdir() if path.is_dir()}, expected)
         repo = PLUGIN.parents[1]
         for generated_root in (repo / "skills", repo / ".agents" / "skills"):
-            for name in SPECIALISTS:
+            for name in expected:
                 link = generated_root / name
                 with self.subTest(link=link):
                     self.assertTrue(link.is_symlink(), f"generated skill must be a symlink: {link}")

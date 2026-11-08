@@ -141,9 +141,10 @@ Primary docs:
 
 The `plugins/rcc/` distribution is split into focused RCC-family skills.
 
-The marketplace displays it as **RCC Automation**. It provides eight skills using the RCC CLI directly, with optional offline Tealdeer integration and no bundled MCP server. Start an empty-directory project with `$rcc-robots` and its [new robot recipe](plugins/rcc/skills/rcc-robots/references/rcc-command-recipes.md#recipe-new-robot).
+The marketplace displays it as **RCC Automation**. It provides eight existing skills plus a verification skill using the RCC CLI directly, with optional offline Tealdeer integration and no bundled MCP server. Start an empty-directory project with `$rcc-robots` and its [new robot recipe](plugins/rcc/skills/rcc-robots/references/rcc-command-recipes.md#recipe-new-robot).
 
 - [`rcc`](plugins/rcc/skills/rcc/SKILL.md) — router for choosing the right RCC specialist.
+- [`verify-rcc`](plugins/rcc/skills/verify-rcc/SKILL.md) — source-checkout verification journeys with isolated scratch and retained CLI evidence; also discoverable at `.cursor/skills/verify-rcc/`.
 - [`rcc-core`](plugins/rcc/skills/rcc-core/SKILL.md) — RCC itself: CLI/source orientation, holotree/cache internals, endpoints, templates, bundles, and remote cache/client behavior.
 - [`rcc-robots`](plugins/rcc/skills/rcc-robots/SKILL.md) — RCC CLI, `robot.yaml`, `conda.yaml`, holotree, templates, freezes, bundles, and environment validation.
 - [`rcc-workitems`](plugins/rcc/skills/rcc-workitems/SKILL.md) — classic `robocorp.workitems`, `actions-work-items`, producer/consumer/reporter flows, local queues, and custom adapters.
