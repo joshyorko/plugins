@@ -20,6 +20,7 @@ Use this skill for work item queues, adapters, and producer/consumer/reporter au
 - Preserve producer/consumer/reporter queue names and output queue wiring.
 - In multi-stage DocDB flows, write down the queue ladder and make every role's input and output queue explicit; avoid accidental `queue_output_output` collection chains.
 - Prefer local SQLite/file adapters for deterministic local and CI validation before Redis, DocumentDB, or Yorko Control Room.
+- Prefer `actions-work-items` and user-owned adapters for new portable queue workflows; preserve existing classic adapter contracts. For upstream `robocorp.workitems` compatibility, explicitly select FileAdapter and use the [local fixture recipe](references/workitems-adapters.md#local-upstream-sdk-compatibility-fixtures); do not inherit hosted defaults. FileSecrets is test-only; upstream Vault/Storage are not generic self-hosted backends.
 - When DocDB is the production state boundary, run helper scripts through an allowlisted RCC task such as `RunDocDBHelper` instead of direct host Python in CI.
 - Keep committed DocDB env files local-only. Production jobs should set live queue names and credentials in job env, load secrets inside RCC, and avoid `-e devdata/env-docdb-*.json`.
 - Release input items consistently with context managers or explicit done/fail APIs.

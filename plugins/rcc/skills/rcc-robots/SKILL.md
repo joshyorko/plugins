@@ -11,6 +11,8 @@ Retain ownership of `robot.yaml`, `conda.yaml`, holotree, freeze files, task run
 
 ## First Inspection
 
+For an empty-directory request, start with the [new robot recipe](references/rcc-command-recipes.md#recipe-new-robot): inspect hidden files and Git context, list the installed templates, and scaffold into a new or empty destination without `--force`. Preserve template pins, then run the exact generated task through RCC and verify its PASS and artifacts. Use Python `robocorp.tasks` unless the request or existing project calls for `.robot`; route Actions Core `@action` / `package.yaml` work to `$action-server`.
+
 1. Locate the robot root by finding `robot.yaml`; inspect nearby `conda.yaml`, `devdata/*.json`, `.gitignore`, freeze files, and output/artifacts policy.
 2. Read `robot.yaml` before task code: tasks, `devTasks`, `environmentConfigs`, `artifactsDir`, `PATH`, `PYTHONPATH`, and ignored files decide how RCC runs the project.
 3. Read `conda.yaml` next: channels, Python version, `uv`, pip packages, `rccPostInstall`, and environment variables.
@@ -28,6 +30,7 @@ Retain ownership of `robot.yaml`, `conda.yaml`, holotree, freeze files, task run
 - Keep helper scripts that need robot dependencies behind `rcc task script` or a declared `robot.yaml` task, especially in CI.
 - Use `ROBOT_ROOT` and `ROBOT_ARTIFACTS` for raw path resolution; in `robocorp.tasks`, prefer `get_output_dir()` and `get_current_task()`.
 - If changing package pins, verify PyPI or source metadata in the current run. Keep shared template pins consistent.
+- Use bounded timeouts for network operations and subprocesses; report exit status, final task status, and expected artifacts separately. A completion log line is not PASS.
 - Do not steer users toward upstream Robocorp/Sema4.ai platform paths unless the task explicitly targets those interfaces; this skill assumes RCC-first local/CI automation by default.
 
 ## References

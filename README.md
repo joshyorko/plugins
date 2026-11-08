@@ -42,8 +42,6 @@ plugins/
 │   │   └── skills/
 │   └── rcc/
 │       ├── plugin.json
-│       ├── mcp.json           # portable RCC Dagger MCP server
-│       ├── .mcp.json          # Codex compatibility map
 │       ├── .codex-plugin/
 │       ├── .claude-plugin/
 │       └── skills/
@@ -143,7 +141,7 @@ Primary docs:
 
 The `plugins/rcc/` distribution is split into focused RCC-family skills.
 
-The plugin also advertises `rcc-dagger` as a bundled stdio MCP server. The marketplace presents it as optional and Codex users can toggle it independently after installation. The entry remains visible even when Dagger is not installed; in that environment only the MCP server fails to start, while the RCC skills remain available.
+The marketplace displays it as **RCC Automation**. It provides eight skills using the RCC CLI directly, with optional offline Tealdeer integration and no bundled MCP server. Start an empty-directory project with `$rcc-robots` and its [new robot recipe](plugins/rcc/skills/rcc-robots/references/rcc-command-recipes.md#recipe-new-robot).
 
 - [`rcc`](plugins/rcc/skills/rcc/SKILL.md) — router for choosing the right RCC specialist.
 - [`rcc-core`](plugins/rcc/skills/rcc-core/SKILL.md) — RCC itself: CLI/source orientation, holotree/cache internals, endpoints, templates, bundles, and remote cache/client behavior.

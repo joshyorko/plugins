@@ -14,6 +14,8 @@ For production DocumentDB/MongoDB queue ladders, retry/outbox design, CI helper 
 
 ## Classic robocorp.workitems
 
+For new portable queue workflows, prefer our `actions-work-items` and user-owned adapters. Preserve classic contracts when maintaining existing robots. Upstream `robocorp.workitems` can select its hosted adapter in activity contexts; explicitly choose a local adapter for fixtures.
+
 ```python
 from robocorp import workitems
 from robocorp.tasks import task
@@ -36,6 +38,38 @@ def consumer() -> None:
 ```
 
 Use `with item:` so input items are released consistently. `outputs.create(...)` needs a currently reserved input item, so pure producers should start from a seed input or use an adapter-specific queue seeding script. Raise `BusinessException` for non-retryable data/business problems and `ApplicationException` for retryable technical failures. At task boundaries those exceptions fail the item; inside `with item:` loops, the context manager records the failed item and lets the loop continue.
+
+## Local upstream SDK compatibility fixtures
+
+This recipe is **legacy upstream SDK compatibility only**, using dummy data and no hosted account. For production, use a verified user-owned queue/backend. FileSecrets is test-only: upstream Vault defaults to hosted `RobocorpVault`, while `BaseSecretManager` is only an extension point. Upstream Storage uses Control Room asset APIs without a built-in generic local adapter. Production owned Vault/Storage providers and Action Server's intended unified control-plane role are future work, not shipped capabilities.
+
+In an existing RCC project that declares `robocorp-workitems` and `robocorp-vault` (or the `robocorp` meta package), create `devdata/env.json` as a flat environment object:
+
+```json
+{
+  "RC_WORKITEM_ADAPTER": "FileAdapter",
+  "RC_WORKITEM_INPUT_PATH": "devdata/input.json",
+  "RC_WORKITEM_OUTPUT_PATH": "devdata/producer-output.json",
+  "RC_VAULT_SECRET_MANAGER": "FileSecrets",
+  "RC_VAULT_SECRETS_FILE": "devdata/test-secrets.json"
+}
+```
+
+`devdata/input.json` contains a seed item, for example `[{"payload": {"rows": [{"id": "fixture-1"}]}, "files": {}}]`. `devdata/test-secrets.json` contains only dummy values, for example `{"fixture": {"token": "test-only"}}`. File attachment paths are relative to the item JSON file. The Vault key is `RC_VAULT_SECRETS_FILE` (plural). Keep real secrets out of committed files and logs.
+
+Read the exact task keys in `robot.yaml`, set `producer_task` / `consumer_task` accordingly, and run from the project root:
+
+```sh
+rcc task run --robot robot.yaml --task "$producer_task" -e devdata/env.json
+```
+
+Inspect the producer's exit status, final PASS, and output payloads before continuing. Create `devdata/env-consumer.json` with the same explicit local adapters, set `RC_WORKITEM_INPUT_PATH` to `devdata/producer-output.json` and `RC_WORKITEM_OUTPUT_PATH` to a different `devdata/consumer-output.json`, then run:
+
+```sh
+rcc task run --robot robot.yaml --task "$consumer_task" -e devdata/env-consumer.json
+```
+
+Verify the consumer's PASS and output payloads, including any failed items; a runner PASS alone does not prove every item succeeded. Validate fixtures with network access denied **after** environment provisioning so an unintended hosted fallback fails. Use declared RCC environments, not host Python. Do not call upstream Storage or omit the explicit adapters to make a fixture pass.
 
 ## actions-work-items
 

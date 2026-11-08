@@ -24,9 +24,6 @@ Use $rcc-core for provider or cache-server work. Inspect the named profile witho
 Use $rcc-core for env coordinate or prewarm. Read the shipped v18.19.7 command help and build-coordination reference, use external timeouts, keep verified Artifact closure authoritative, and report released-binary CLI evidence separately from internal/source tests.
 ```
 
-```text
-Use $rcc when exposing the plugin's bundled RCC Dagger module to agents through MCP. Set RCC_DAGGER_REPO only when a different checkout is requested. If Docker or Dagger is unavailable, fall back to $rcc-core and use the regular rcc binary directly in the active project context.
-```
 
 ## Inspect A Robot
 

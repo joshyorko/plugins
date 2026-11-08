@@ -2,6 +2,8 @@
 
 Use this reference when improving RCC-family skill examples for Python libraries, package pins, or source-backed recipes. It captures the 2026-05-23 audit across official docs, Josh repositories, upstream Robocorp/Sema4AI repositories, and public Robocorp runtime/process examples.
 
+The 2026-11-08 [source snapshot](source-map.md#2026-11-08-onboarding-and-local-compatibility-refresh) selectively refreshes project-shape, local SDK fixture, and hosted-service boundaries below. Package-version observations remain historical, not new pin recommendations.
+
 Recheck sources before making "latest", version-current, or default-template claims. Treat Josh-owned RCC sources as current stack evidence, and upstream Robocorp/Sema4AI docs as package/API evidence unless the task explicitly targets their hosted product. Control Room backend architecture must stay marked as inference when derived from public clients or examples instead of backend source.
 
 ## Source Snapshot
@@ -27,80 +29,28 @@ Useful org-level repos found during the scan:
 
 | Surface                | Libraries                                                                                                                    | Use for                                                                                                 | Example stance                                                                                                                                                                                                       |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Action packages        | `sema4ai-actions`, `sema4ai-mcp`, `sema4ai-data`                                                                             | `@action`, direct MCP tools, named data queries, OpenAPI/MCP exposure                                   | Keep `package.yaml` v2, typed inputs, `Response[T]`, `ActionError`, `Secret`, `OAuth2Secret`, `SecretSpec`, `Request`, and `Table` examples current.                                                                 |
+| Action packages        | `actions-core`, `actions-runtime`, `actions.mcp`                                                                             | `@action`, direct MCP tools, named data queries, OpenAPI/MCP exposure                                   | Use the owning Action Server references for current `@action`, typed responses, secrets, and MCP v2 examples; historical upstream APIs are not interchangeable.                                                                 |
 | RCC robot projects     | `robocorp`, `robocorp-tasks`, `robocorp-log`, `robocorp-browser`, `robocorp-workitems`, `robocorp-vault`, `robocorp-storage` | Contained automation run through `robot.yaml` and `conda.yaml`                                          | Keep literal package/API names; RCC owns the environment boundary.                                                                                                                                                   |
 | Browser automation     | `robocorp-browser`                                                                                                           | Playwright-backed browser tasks in RCC projects or action packages                                      | Configure before `browser.page()`; use isolated install/post-install for CI; persistent contexts are single-run-sensitive.                                                                                           |
-| Work item queues       | `robocorp-workitems`, `actions-work-items`, `robocorp-adapters-custom`                                                       | Producer/consumer/reporter flows, Action Server/non-robot queues, file/SQLite/Redis/DocumentDB adapters | Use `robocorp.workitems` for modern RCC robot flows, `actions-work-items` for Action Server/non-robot flows, and `robocorp-adapters-custom` for production-proven custom adapters such as DocDB-backed robot queues. |
-| Secrets and assets     | `robocorp-vault`, `robocorp-storage`, `robocorp-log`                                                                         | Control Room secrets, assets, safe logging                                                              | Show mock vault only for local development; hide sensitive values with `robocorp.log`; never put real values in committed `devdata`.                                                                                 |
+| Work item queues       | `robocorp-workitems`, `actions-work-items`, `robocorp-adapters-custom`                                                       | Producer/consumer/reporter flows, Action Server/non-robot queues, file/SQLite/Redis/DocumentDB adapters | Prefer `actions-work-items` and user-owned adapters for portable flows; preserve `robocorp.workitems` and existing custom contracts for compatibility. |
+| Secrets and assets     | `robocorp-vault`, `robocorp-storage`, `robocorp-log`                                                                         | Upstream compatibility boundaries and safe logging                                                              | FileSecrets is test-only; Vault defaults to hosted RobocorpVault and Storage needs Control Room asset APIs. No shipped generic owned provider is implied.                                                                                 |
 | RPA Framework and HITL | `rpaframework`, `rpaframework-assistant`, Robot Framework libraries                                                          | Legacy `RPA.*` robots, Python-callable RPA utilities, Assistant desktop dialogs                         | Prefer modern `robocorp.*` libraries for new RCC Python robots. Use `RPA.Assistant` through `rpaframework-assistant` when a desktop/HITL dialog is intentionally part of the workflow.                               |
 
 ## Coverage Notes To Keep Current
 
-- `robocorp-storage`: asset examples below cover `list_assets`, `get_text`, `get_json`, `get_file`, `get_bytes`, `set_text`, `set_json`, `set_file`, `set_bytes`, and `delete_asset`; recheck the API before adding new asset types.
+- `robocorp-storage`: the boundary below replaces hosted asset examples; do not imply that configuring an endpoint ships a standalone backend.
 - `robocorp-vault`: local FileSecrets development guidance and `robocorp.log.suppress_variables()` examples are included below for secret rotation or credential generation tasks.
 - `robocorp-log`: `process_snapshot()` and suppression examples are included below for debugging long-running robots without leaking secrets.
-- `sema4ai.actions`: broaden examples beyond basic `@action` to include `Request`, `Table`, `SecretSpec`, `setup`, `teardown`, and explicit `ActionError` handling through `Response(error=...)`.
-- `sema4ai.mcp`: keep annotation hints visible: `read_only_hint`, `destructive_hint`, `idempotent_hint`, and `open_world_hint`.
+- `actions-core`: use the existing Action Server references rather than duplicating or importing upstream action examples.
+- `actions.mcp`: consult the owning Action Server references for supported MCP v2 tooling.
 - `robocorp-browser`: browser examples below cover `configure_context(...)`, persistent-context constraints, and `browser.configure(install=True, isolated=True)` versus `python -m robocorp.browser install ... --isolated`.
 - `actions-work-items`: use Josh's `workflow-producer-consumer` template as community-branch evidence when documenting action-package producer/consumer flows.
 
 ## Reference Examples
 
-### Action With Typed Result And Expected Error
+### Action Packages
 
-```python
-from sema4ai.actions import ActionError, Response, action
-
-
-@action(is_consequential=False)
-def normalize_order(order_id: str) -> Response[dict[str, str]]:
-    if not order_id.strip():
-        raise ActionError("order_id is required")
-    return Response(result={"order_id": order_id.strip().upper()})
-```
-
-Use `ActionError` for expected user/data failures. Unexpected exceptions should remain real failures unless the action contract explicitly returns a typed error payload.
-
-### Request-Aware Action
-
-```python
-from sema4ai.actions import Request, Response, action
-
-
-@action
-def caller_info(request: Request) -> Response[dict[str, str | None]]:
-    return Response(result={"request_id": request.headers.get("x-request-id")})
-```
-
-Use `Request` only when action behavior needs invocation metadata. Keep normal business inputs as typed function parameters.
-
-### Data Query Shape
-
-```python
-from sema4ai.actions import Response, Table
-from sema4ai.data import get_connection, query
-
-
-@query
-def recent_orders() -> Response[Table]:
-    result_set = get_connection().query("select id, status from orders limit 20")
-    return Response(result=result_set.to_table())
-```
-
-Prefer `Response[Table]` for named data queries so tabular results stay structured instead of becoming large plain strings.
-
-### Direct MCP Tool
-
-```python
-from sema4ai.mcp import tool
-
-
-@tool(read_only_hint=True, open_world_hint=False)
-def add(a: int, b: int) -> int:
-    return a + b
-```
-
-Use direct `sema4ai.mcp` only when the package intentionally defines MCP tools/resources/prompts. Ordinary `@action` packages are exposed by Action Server through `/mcp`.
+Use the owning [`action-server` skill](../../action-server/SKILL.md) for current `actions-core` / `actions-runtime`, `from actions import action`, typed responses, and MCP v2 examples. Python `robocorp.tasks` uses `@task` with `robot.yaml`; Actions Core uses `@action` with `package.yaml` v2; Robot Framework uses `.robot` suites. Do not mix entry points or copy historical `sema4ai.*` examples into our Actions packages.
 
 ### Robot Task With Setup And Output Directory
 
@@ -202,7 +152,7 @@ RC_WORKITEM_OUTPUT_PATH=devdata/work-items-out/last-run/work-items.json
 
 This is the modern Python `robocorp.workitems` file-adapter env family. Do not mix it with legacy `RPA_WORKITEMS_*` variables unless bridging older Robot Framework code.
 
-### Vault Mock Plus Secret Suppression
+### Test-only Upstream Vault Compatibility
 
 ```python
 from robocorp import log, vault
@@ -217,14 +167,14 @@ def rotate_token() -> None:
         vault.set_secret(secret)
 ```
 
-For local mock vault only:
+The example above applies only to existing upstream integrations or test-only FileSecrets fixtures. `robocorp.vault` defaults to hosted `RobocorpVault`; custom `BaseSecretManager` is an extension point, not a shipped production self-hosted provider. Select the fixture adapter explicitly before importing/using Vault:
 
 ```text
 RC_VAULT_SECRET_MANAGER=FileSecrets
-RC_VAULT_SECRET_FILE=/absolute/path/to/dev-secrets.yaml
+RC_VAULT_SECRETS_FILE=/absolute/path/to/dev-secrets.yaml
 ```
 
-Mock vault files are development fixtures, not safe secret stores.
+Use only dummy values in FileSecrets files. They are test fixtures, not production secret stores; see the [local compatibility recipe](../../rcc-workitems/references/workitems-adapters.md#local-upstream-sdk-compatibility-fixtures).
 
 ### Process Snapshot
 
@@ -240,49 +190,9 @@ def capture_debug_snapshot() -> None:
 
 Use `process_snapshot()` for targeted debugging of long-running or resource-sensitive robots. Keep secret suppression in place around sensitive variables before adding snapshots to a workflow.
 
-### Asset Storage
+### Asset Storage Boundary
 
-```python
-from pathlib import Path
-
-from robocorp import storage
-from robocorp.tasks import task
-
-
-@task
-def update_state() -> None:
-    known_assets = storage.list_assets()
-    report_path = Path("output/report.json")
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text('{"status": "ok"}', encoding="utf-8")
-
-    if "workflow-state" not in known_assets:
-        storage.set_json("workflow-state", {"last_status": "new"})
-
-    state = storage.get_json("workflow-state")
-    state["last_status"] = "ok"
-    state["known_assets"] = known_assets
-    storage.set_json("workflow-state", state)
-
-    storage.set_text("last-status", "ok")
-    last_status = storage.get_text("last-status")
-
-    storage.set_file("latest-report", report_path)
-    downloaded = storage.get_file(
-        "latest-report",
-        Path("output/downloaded-report.json"),
-        exist_ok=True,
-    )
-
-    storage.set_bytes("raw-snapshot", b"snapshot", content_type="application/octet-stream")
-    snapshot = storage.get_bytes("raw-snapshot")
-
-    if last_status == "ok" and downloaded.exists() and snapshot:
-        # Delete only when cleanup is intended; asset deletion is irreversible.
-        storage.delete_asset("raw-snapshot")
-```
-
-Use asset storage for shared state or binary/text assets that are not a queue item. Use work item attachments when the data should follow a specific item through a process.
+Upstream `robocorp.storage` constructs an `AssetsClient` using a Control Room workspace, endpoint, and token. It has no built-in generic local-provider selection. Do not use its `get_json` / `set_json` / file APIs as an implicitly self-hosted default. Use explicit user-owned files or storage interfaces for local workflows; a production owned Vault/Storage provider remains future work. Existing upstream integrations require a verified backend and explicit scope.
 
 ### Work Item Attachments
 
@@ -303,7 +213,7 @@ Creating an output item requires a reserved input item. Use `save=False` when th
 
 ```python
 from actions.work_items import inputs, outputs
-from sema4ai.actions import Response, action
+from actions import Response, action
 
 
 @action
@@ -318,7 +228,7 @@ def consume(max_items: int = 10) -> Response[dict[str, int]]:
     return Response(result={"processed": processed})
 ```
 
-Use `actions-work-items` for action-package-centered workflows. Use `robocorp.workitems` for modern RCC robot flows.
+Prefer `actions-work-items` and user-owned adapters for new portable workflows. Keep `robocorp.workitems` when maintaining existing robot API/adapter contracts.
 
 ## Repo Scan Notes
 

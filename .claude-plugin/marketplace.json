@@ -62,7 +62,7 @@
     {
       "name": "rcc",
       "source": "./plugins/rcc",
-      "description": "RCC v18.19.7 skills for Environment Artifacts, providers, trust, coordination, automation projects, Robot/RPA Framework, work items, Action Server, CI, optional offline Tealdeer quick reference, and optional Dagger MCP.",
+      "description": "RCC v18.19.7 skills for Environment Artifacts, providers, trust, coordination, automation projects, Robot/RPA Framework, work items, Action Server, CI, optional offline Tealdeer quick reference.",
       "category": "development",
       "tags": [
         "rcc",
@@ -81,8 +81,6 @@
         "workitems",
         "action-server",
         "actions",
-        "dagger",
-        "mcp",
         "ci",
         "developer-tools"
       ]

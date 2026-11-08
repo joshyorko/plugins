@@ -12,7 +12,7 @@ Treat RCC as the center of gravity for this stack. Frame the domain as RCC-manag
 ## Route By Task
 
 - Use `$rcc-core` for RCC itself: command selection, install/source orientation, Holotree/cache internals, Environment Artifacts, providers, trust, lifecycle/leases, build coordination/prewarm, endpoint/profile configuration, templates, bundles, remote cache/client behavior, and failures before a robot task starts.
-- Use `$rcc-robots` for RCC-backed automation projects using the `robot.yaml` packaging/runtime convention: `conda.yaml`, environment configs, freeze files, task runtime, templates, artifacts, and task debugging.
+- Use `$rcc-robots` to bootstrap an empty directory with `rcc robot initialize`, or for existing RCC-backed automation projects using `robot.yaml`: `conda.yaml`, environment configs, freeze files, task runtime, templates, artifacts, and task debugging. Python `@task`, Robot Framework `.robot`, and Actions Core `@action` / `package.yaml` are different project shapes; choose one from the request and existing project.
 - Use `$rcc-robot-framework` for `.robot` suites and resources, Robot CLI/Rebot, custom Robot libraries, results, and RCC `robot_tests` acceptance work.
 - Use `$rcc-rpaframework` for `RPA.*` library selection, keyword recipes, package/platform needs, and interoperability with `robocorp.*` libraries.
 - Use `$rcc-workitems` for classic `robocorp.workitems`, `actions-work-items`, producer/consumer/reporter flows, local SQLite/file queues, custom adapters, Redis, DocumentDB, and Yorko Control Room adapters.
@@ -43,8 +43,8 @@ Load the owning specialist, then the linked recipe. These are entry points into 
 - For DocDB-backed RPA systems that mix queue naming, helper scripts, retry, outbox, dashboards, or GitHub Actions matrix workers, start with `$rcc-workitems`; pull in `$rcc-robots` or `$rcc-ci-maintenance` only after the queue boundary is clear.
 - Keep canonical edits under `plugins/rcc/skills/<skill>/`. Treat top-level `skills/` and `.agents/skills/` as generated views.
 - Do not prototype marketplace servers, MCP servers, web services, daemons, or new runtime products from this plugin. `action-server` covers normal action-package work only.
-- When the user explicitly asks to expose Dagger to agents, use `references/dagger-mcp.md` and `scripts/rcc-dagger-mcp`. The installed plugin uses its bundled RCC module by default; use `RCC_DAGGER_REPO` only when the user asks for a different checkout.
-- If Docker or Dagger is unavailable, or the task does not need Dagger isolation, use the normal `rcc` binary directly. Start with `$rcc-core` for binary/version/install checks and run `rcc version` or the relevant `rcc ...` command in the active project context.
+- Use the `rcc` binary directly in the active project context; start with `$rcc-core` for binary/version/install checks. Do not silently substitute host Python when RCC environment resolution fails.
+- Prefer our `actions-work-items` and user-owned adapters for portable queue workflows. Upstream Vault/Storage are compatibility APIs with hosted defaults, not shipped self-hosted services. Action Server's intended future control-plane role is not implemented by this plugin.
 
 ## Shared References
 
@@ -54,5 +54,4 @@ Load the owning specialist, then the linked recipe. These are entry points into 
 - `../rcc-core/references/providers-and-trust.md`: providers, `cache serve`, enterprise transport, trust carriers/policy, receipts, and legacy `rccremote` boundaries.
 - `../rcc-core/references/build-coordination.md`: shipped coordination/prewarm CLI, state model, limitations, and evidence boundaries.
 - `references/agent-prompt-examples.md`: short prompts that point future agents at the right specialist skill.
-- `references/dagger-mcp.md`: opt-in bridge for exposing a local RCC Dagger module through Dagger's MCP server.
 - `../rcc-workitems/references/docdb-rpa-patterns.md`: production DocDB/RPA queue, helper, retry, outbox, artifact, and CI patterns from the local BPS example.

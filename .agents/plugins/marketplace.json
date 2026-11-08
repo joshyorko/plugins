@@ -144,7 +144,7 @@
     },
     {
       "name": "rcc",
-      "description": "RCC v18.19.7 skills for Environment Artifacts, providers, trust, coordination, automation projects, Robot/RPA Framework, work items, Action Server, CI, optional offline Tealdeer quick reference, and optional Dagger MCP.",
+      "description": "RCC v18.19.7 skills for Environment Artifacts, providers, trust, coordination, automation projects, Robot/RPA Framework, work items, Action Server, CI, optional offline Tealdeer quick reference.",
       "tags": [
         "rcc",
         "tealdeer",
@@ -162,15 +162,13 @@
         "workitems",
         "action-server",
         "actions",
-        "dagger",
-        "mcp",
         "ci",
         "developer-tools"
       ],
       "interface": {
-        "displayName": "RCC Automation + Dagger MCP",
-        "shortDescription": "RCC skills, TLDR + Dagger MCP",
-        "longDescription": "RCC v18.19.7 workflows split across focused skills for Environment Artifacts, providers, trust, coordination/prewarm, RCC core, robot projects, Robot Framework suites, RPA Framework automation, work items, Action Server packages, and CI maintenance. Includes an optional offline Tealdeer quick reference: opt in to managed tldr rcc setup, preserve existing custom pages, and synchronize opted-in marketplace pages at session start after upgrades. Tealdeer must already be installed. The optional Dagger MCP server can be enabled or disabled independently.",
+        "displayName": "RCC Automation",
+        "shortDescription": "RCC skills + offline TLDR",
+        "longDescription": "RCC v18.19.7 workflows split across focused skills for Environment Artifacts, providers, trust, coordination/prewarm, RCC core, robot projects, Robot Framework suites, RPA Framework automation, work items, Action Server packages, and CI maintenance. Includes an optional offline Tealdeer quick reference: opt in to managed tldr rcc setup, preserve existing custom pages, and synchronize opted-in marketplace pages at session start after upgrades. Tealdeer must already be installed.",
         "developerName": "Josh Yorko",
         "category": "Developer Tools",
         "capabilities": [
@@ -185,7 +183,7 @@
           "Enable optional tldr rcc integration and its managed session-start sync, adopting an existing canonical symlink without replacing it.",
           "Inspect an RCC artifact provider or prewarm workflow.",
           "Build or debug an RCC automation with RPA Framework.",
-          "Use the bundled Dagger MCP server to inspect or run an RCC Dagger module."
+          "Create a new RCC robot in an empty directory and verify its first PASS and artifacts."
         ],
         "brandColor": "#1D4ED8",
         "composerIcon": "./assets/rcc-logo.svg",

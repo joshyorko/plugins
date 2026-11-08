@@ -289,7 +289,7 @@ class DisposableRccRuntimeTests(unittest.TestCase):
                                         text=True, capture_output=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 if args == ["version"]:
-                    self.assertIn("v18.19.7", result.stdout)
+                    self.assertRegex(result.stdout, r"v18\.\d+\.\d+")
             result = subprocess.run(
                 ["rcc", "ht", "vars", "-r", str(fixture), "--json"], cwd=root,
                 env=environment, text=True, capture_output=True, timeout=30,

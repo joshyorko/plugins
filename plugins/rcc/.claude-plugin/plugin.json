@@ -1,7 +1,7 @@
 {
   "name": "rcc",
-  "version": "0.3.0",
-  "description": "RCC v18.19.7 skills for Environment Artifacts, providers, trust, coordination, robots, Robot/RPA Framework, work items, Action Server, CI, optional offline Tealdeer quick reference, and optional Dagger MCP.",
+  "version": "0.4.0",
+  "description": "RCC v18.19.7 skills for Environment Artifacts, providers, trust, coordination, robots, Robot/RPA Framework, work items, Action Server, CI, optional offline Tealdeer quick reference.",
   "author": {
     "name": "Josh Yorko",
     "email": "joshua.yorko@gmail.com",
@@ -25,8 +25,6 @@
     "workitems",
     "action-server",
     "actions",
-    "dagger",
-    "mcp",
     "ci"
   ]
 }

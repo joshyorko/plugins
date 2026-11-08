@@ -4,6 +4,29 @@ This file records sources inspected across RCC skill refreshes and what each sou
 
 Treat Josh-owned RCC sources as the primary evidence path for current stack behavior. Use upstream Robocorp/Sema4.ai repositories and docs as dependency/interface-history evidence unless a task explicitly targets those packages, APIs, or hosted services. Preserve literal package/API names like `robocorp.tasks`, `robocorp.workitems`, `robocorp-browser`, and `ROBOCORP_HOME` when they are the real interfaces in use.
 
+## 2026-11-08 Onboarding And Local Compatibility Refresh
+
+Compared our router and specialists at `joshyorko/plugins@daef92df2a4e7f026b01849489226c338304126d` with upstream `robocorp/robocorp@2a0bc90cd0619431de8cdbed31da0b22ba6a83ec`:
+
+- [Upstream automation skill](https://github.com/robocorp/robocorp/blob/2a0bc90cd0619431de8cdbed31da0b22ba6a83ec/skills/robocorp-automation/SKILL.md) and [API reference](https://github.com/robocorp/robocorp/blob/2a0bc90cd0619431de8cdbed31da0b22ba6a83ec/skills/robocorp-automation/references/api.md): empty-directory inspection, installed template discovery, exact task keys, and final PASS/artifact checks.
+- `vault/src/robocorp/vault/{_vault,_adapters}.py`: hosted `RobocorpVault` default, test-only `FileSecrets`, plural `RC_VAULT_SECRETS_FILE`, and `BaseSecretManager` extension point.
+- `workitems/src/robocorp/workitems/_adapters/{__init__,_file}.py`: hosted activity-context detection, explicit FileAdapter, input/output fixture paths, and payload/file shape.
+- `storage/src/robocorp/storage/__init__.py`: `AssetsClient(workspace, endpoint, token)`; no generic standalone local-provider selection.
+- Installed Linux RCC v18.19.9: `robot initialize --help` / `--list`, `task run --help`, and `task script --help`. Actual catalog includes `03-python-work-items` (not the unverified upstream spelling `03-python-workitems`). CLI checks do not bump the separately qualified v18.19.7 Environment Artifact baseline or template package pins.
+
+| Upstream behavior | Before | Owner | Accepted delta or rejection |
+| --- | --- | --- | --- |
+| Empty-directory bootstrap | Partial; one example used unlisted `python` | `rcc-robots` command recipes; router | Inspect hidden files/Git; list actual templates; no force/overwrite; preserve pins |
+| First PASS and artifact proof | Partial | `rcc-robots` run recipe | Exact task key, exit zero, final PASS, expected artifacts; declared in-environment tests |
+| Work Items and local secrets | Partial; Vault variable misspelled | `rcc-workitems`; Python library audit | Explicit local adapters, producer-to-consumer file wiring; FileSecrets test-only |
+| Python SDK reference | Existing specialist coverage | Python library audit; `action-server` | Reuse task/browser/log examples; remove duplicate upstream Actions/hosted Storage recommendations |
+| Install and operational safety | Partial | `rcc-core`; `rcc-robots` | Community releases/checksums, bounded operations, no silent host Python or hosted deployment |
+| Lean distribution | Bundled unused Dagger runtime | Manifests, catalog, generated views | Remove bridge/module/MCP declarations; display **RCC Automation**, retain stable `rcc` package/skill identifiers |
+
+Issue #97 originally retained Dagger; the operator's subsequent removal request supersedes that requirement. Keep eight specialist skills, Environment Artifact/provider/trust/coordination guidance, CI, and Action Server functionality. Do not adopt upstream hosted signup/download requirements, Vault/Storage defaults, or implement a new control plane as part of this refresh.
+
+Repeatable validation: `bin/check`; `python3 -m unittest discover -s plugins/rcc/tests`; opt into real disposable onboarding with `RCC_ONBOARDING_RUNTIME=1 python3 -m unittest discover -s plugins/rcc/tests -p test_onboarding.py -v`. That smoke provisions the generated environment, requires a starter PASS and artifacts, checks nonempty/hidden/Git destination preservation, and runs FileAdapter producer/consumer plus dummy FileSecrets with Python socket networking denied. It does not qualify a production secrets/storage provider or every RCC release/platform.
+
 ## 2026-09-03 RCC v18.19.7 Refresh
 
 - Release tag: `joshyorko/rcc@v18.19.7`, exact commit `4148c2b71705c9d2baf0e88b48d08a79cb7bda0f`.

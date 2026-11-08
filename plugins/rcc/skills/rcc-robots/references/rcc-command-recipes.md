@@ -21,8 +21,10 @@ They may also set `ROBOCORP_HOME` to place RCC state inside the worker. Keep tha
 ## Create Or Locate A Robot
 
 ```bash
-rcc robot init --json
-rcc robot init -t python -d my-robot
+rcc robot initialize --help
+rcc robot initialize --list
+# Set template_name to an entry actually printed above.
+rcc robot initialize -t "$template_name" -d my-robot
 rcc create
 rcc pull github.com/joshyorko/template-python-browser
 ```
@@ -39,22 +41,23 @@ Before editing task code, inspect:
 
 **Owner:** `$rcc-robots`.
 
-**Preflight:** Confirm `rcc version` is v18.19.7; identify the host/container/CI boundary and use a new, empty destination; list this binary's available templates first and set `template_name` to a catalog entry.
+**Preflight:** Record `rcc version` and the host/container/CI boundary. Inspect the destination including hidden files and Git context; preserve existing files and Git history. Use a new directory or confirm it is empty. Inspect this binary's help/catalog and set `template_name` to an actually listed template; names vary by binary/catalog. The installed v18.19.9 lists `01-python`, `02-python-browser`, and `03-python-work-items` among others. Preserve generated dependency pins and freeze files.
 
 **Command:**
 
 ```sh
-rcc robot init --json
-rcc robot init -t "$template_name" -d my-robot
+rcc robot initialize --help
+rcc robot initialize --list
+rcc robot initialize -t "$template_name" -d my-robot
 ```
 
-**Success evidence:** The selected template appears in the first command's catalog and `my-robot/robot.yaml` plus template files exist; read `robot.yaml` and `conda.yaml` before running tasks.
+**Success evidence:** The selected template appears in the catalog and `my-robot/robot.yaml` plus template files exist. Read `robot.yaml`, its selected environment config, and task entry points, then follow [Run robot](#recipe-run-robot) from `my-robot`. Use the exact task key, require exit zero plus the runner's final PASS, and inspect expected artifacts. `rcc task run` executes a project; it does not scaffold one.
 
-**Side effects:** The first command lists templates; the second writes a project tree and may download template content. Check the destination before running; omit `--force` to avoid requesting overwrite behavior.
+**Side effects:** Help/catalog commands inspect templates; initialize writes a project tree and may download template content. RCC refuses nonempty destinations without `--force`; choose a new subdirectory instead. Do not request overwrite or Git initialization unless authorized.
 
 **Failure routing:** Template/init errors go to `$rcc-core`; project config and task changes stay with `$rcc-robots`.
 
-**Source:** Installed RCC v18.19.7 `rcc robot init --help`; [Create Or Locate A Robot](#create-or-locate-a-robot).
+**Source:** Installed RCC v18.19.9 `rcc robot initialize --help` / `--list`; [source snapshot](../../rcc/references/source-map.md#2026-11-08-onboarding-and-local-compatibility-refresh).
 
 ## robot.yaml Pattern
 
@@ -142,22 +145,30 @@ Use `--silent` for agent-readable output. Add `--debug`, `--trace`, or `--timeli
 
 **Owner:** `$rcc-robots`.
 
-**Preflight:** Confirm `rcc version` is v18.19.7; identify host/container/CI and `ROBOCORP_HOME`; inspect `robot.yaml` for the declared task, environment, outputs, services, and secrets. Set `task_name` to an actual declared task. Review post-install hooks before resolving its environment, and run the task only when resolution succeeds.
+**Preflight:** Record `rcc version`; identify host/container/CI and `ROBOCORP_HOME`; inspect `robot.yaml` for the declared task, environment, outputs, services, and secrets. Set `task_name` to an actual declared task. Review post-install hooks before resolving its environment, and run the task only when resolution succeeds.
 
 **Command:**
 
 ```sh
 rcc ht vars -r robot.yaml --json
-rcc run -r robot.yaml -t "$task_name" --silent
+rcc task run --robot robot.yaml --task "$task_name"
 ```
 
-**Success evidence:** Environment resolution succeeds; then RCC exits successfully and the named task's expected result is present in its declared output location. A successful invocation alone does not prove the task's business outcome.
+**Success evidence:** Environment resolution succeeds; RCC exits zero, the task runner reports its final PASS/success, and expected outputs exist in the configured `artifactsDir` (for example, `log.html` plus a report). A `finally` completion message does not prove PASS or the business outcome. If the starter names its task `RunTask`, use that exact key rather than a remembered `Main` or function name.
 
 **Side effects:** May build/download the environment, run post-install hooks, write RCC cache/logs and robot artifacts, and perform any external actions implemented by the task. Resolution JSON can contain secrets; redact before sharing. Treat as project execution, not a read-only check.
 
 **Failure routing:** Environment resolution failures go to `$rcc-core`; task, dependency, and artifact failures remain with `$rcc-robots`.
 
 **Source:** Installed RCC v18.19.7 `rcc task run --help`; [Run Tasks](#run-tasks).
+
+For focused tests, inspect `rcc task script --help` and confirm `pytest` is a declared project dependency before running inside the project environment:
+
+```sh
+rcc task script --robot robot.yaml -- python -m pytest tests
+```
+
+Do not fall back to host Python or install into it when resolution fails. For local Work Items and test-only FileSecrets fixtures, use the [compatibility recipe](../../rcc-workitems/references/workitems-adapters.md#local-upstream-sdk-compatibility-fixtures).
 
 ## Bundles
 
