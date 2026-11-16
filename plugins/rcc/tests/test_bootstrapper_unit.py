@@ -377,6 +377,53 @@ class BootstrapperUnitAndSecurityTests(unittest.TestCase):
             if old_key is not None:
                 os.environ["RCC_BOOTSTRAPPER_API_KEY"] = old_key
 
+    def test_windows_runtime_liveness_and_identity_do_not_send_signals(self) -> None:
+        import bootstrapper_runtime as runtime
+
+        with (
+            patch.object(runtime.sys, "platform", "win32"),
+            patch.object(runtime, "_windows_process_state", return_value=(True, "windows-creation:123")),
+            patch.object(runtime.os, "kill") as kill,
+        ):
+            self.assertTrue(runtime._is_pid_alive(45678))
+            self.assertEqual(runtime._proc_start_token(45678), "windows-creation:123")
+            kill.assert_not_called()
+
+    def test_windows_runtime_stop_targets_owned_process_tree(self) -> None:
+        import bootstrapper_runtime as runtime
+
+        metadata = runtime._instance_metadata_path(self.datadir)
+        metadata.parent.mkdir(parents=True, exist_ok=True)
+        metadata.write_text("{}", encoding="utf-8")
+        with (
+            patch.object(runtime.sys, "platform", "win32"),
+            patch.object(runtime, "inspect_owned_instance", return_value={"state": "running", "metadata": {"pid": 45678}}),
+            patch.object(runtime, "_is_pid_alive", return_value=False),
+            patch.object(runtime.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run,
+            patch.object(runtime.os, "kill") as kill,
+        ):
+            stopped = runtime.stop_owned_runtime(datadir=self.datadir)
+            self.assertTrue(stopped["terminated"])
+            self.assertEqual(run.call_args.args[0], ["taskkill", "/PID", "45678", "/T", "/F"])
+            kill.assert_not_called()
+        self.assertFalse(metadata.exists())
+
+    def test_windows_runtime_failed_stop_preserves_ownership(self) -> None:
+        import bootstrapper_runtime as runtime
+
+        metadata = runtime._instance_metadata_path(self.datadir)
+        metadata.parent.mkdir(parents=True, exist_ok=True)
+        metadata.write_text("{}", encoding="utf-8")
+        with (
+            patch.object(runtime.sys, "platform", "win32"),
+            patch.object(runtime, "inspect_owned_instance", return_value={"state": "running", "metadata": {"pid": 45678}}),
+            patch.object(runtime, "_is_pid_alive", return_value=True),
+            patch.object(runtime.subprocess, "run", return_value=SimpleNamespace(returncode=1)),
+        ):
+            with self.assertRaisesRegex(PolicyViolationError, "owned Windows process tree"):
+                runtime.stop_owned_runtime(datadir=self.datadir)
+        self.assertTrue(metadata.exists())
+
     def test_runtime_start_preserves_home_and_isolates_supported_cache_variables(self) -> None:
         import bootstrapper_runtime
 

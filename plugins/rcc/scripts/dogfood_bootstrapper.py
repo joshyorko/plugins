@@ -194,6 +194,7 @@ def run_dogfood_suite(
             rcc_binary=rcc_binary,
             runtime_home=runtime_home,
             robocorp_home=robocorp_home,
+            startup_timeout=300.0 if sys.platform == "win32" else 90.0,
         )
         mcp_url = f"http://127.0.0.1:{port}/mcp"
         base_url = f"http://127.0.0.1:{port}"

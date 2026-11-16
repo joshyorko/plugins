@@ -35,11 +35,11 @@ if __name__ == "__main__":
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_ROOT = SCRIPT_DIR.parent
-from install_bootstrapper import (
+from install_bootstrapper import (  # noqa: E402
     PACKAGE_SHA256,
     verify_extracted_package,
     verify_installed_package,
-)  # noqa: E402
+)
 
 _configured_package_dir = os.environ.get("RCC_BOOTSTRAPPER_PACKAGE_DIR")
 if os.environ.get("RCC_BOOTSTRAPPER_HOME"):
@@ -80,6 +80,7 @@ from rcc_bootstrapper.policy import (  # noqa: E402
     get_trusted_project_roots,
     default_robocorp_home,
     inspect_binary_health,
+    redact_secrets,
     verify_binary_before_execution,
 )
 
@@ -102,10 +103,45 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _windows_process_state(pid: int) -> tuple[bool, str | None]:
+    """Query liveness and creation identity without sending a Windows signal."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        if ctypes.get_last_error() == 5:
+            raise PermissionError(f"Cannot inspect process {pid}")
+        return False, None
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            raise OSError(ctypes.get_last_error(), "GetExitCodeProcess failed")
+        if code.value != 259:  # STILL_ACTIVE
+            return False, None
+        creation, exit_time, kernel, user = (wintypes.FILETIME() for _ in range(4))
+        if not kernel32.GetProcessTimes(
+            handle, ctypes.byref(creation), ctypes.byref(exit_time), ctypes.byref(kernel), ctypes.byref(user)
+        ):
+            raise OSError(ctypes.get_last_error(), "GetProcessTimes failed")
+        ticks = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+        return True, f"windows-creation:{ticks}"
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _proc_start_token(pid: int) -> str | None:
     """Return an OS-specific process identity token (e.g. /proc/<pid>/stat starttime on Linux)."""
     if pid <= 0:
         return None
+    if sys.platform == "win32":
+        return _windows_process_state(pid)[1]
     if sys.platform.startswith("linux"):
         stat_path = Path(f"/proc/{pid}/stat")
         if not stat_path.is_file():
@@ -134,6 +170,8 @@ def _is_pid_alive(pid: int) -> bool:
     if spawned is not None and spawned.poll() is not None:
         _SPAWNED_RUNTIME_PROCS.pop(pid, None)
         return False
+    if sys.platform == "win32":
+        return _windows_process_state(pid)[0]
     if sys.platform.startswith("linux"):
         stat_path = Path(f"/proc/{pid}/stat")
         if not stat_path.is_file():
@@ -586,10 +624,20 @@ def start_owned_runtime(
     }
     _save_instance_metadata(datadir, instance_meta)
 
+    def startup_diagnostics() -> str:
+        tails = []
+        for log in (stdout_log, stderr_log, datadir / "server_log.txt"):
+            if log.is_file():
+                with log.open("rb") as stream:
+                    stream.seek(max(0, log.stat().st_size - 3000))
+                    tail = stream.read(3000).decode("utf-8", errors="replace")
+                tails.append(f"{log.name}: {redact_secrets(tail, [resolved_api_key])}")
+        return "\n".join(tails)
+
     deadline = time.monotonic() + startup_timeout
     while time.monotonic() < deadline:
         if proc.poll() is not None:
-            err_tail = stderr_log.read_text(encoding="utf-8", errors="replace")[-2000:] if stderr_log.is_file() else ""
+            err_tail = startup_diagnostics()
             _reconcile_stale_metadata(datadir)
             raise PolicyViolationError(
                 "runtime_exited_during_startup",
@@ -604,10 +652,11 @@ def start_owned_runtime(
         time.sleep(0.25)
 
     # Timed out waiting for listener; terminate our spawned child
+    diagnostics = startup_diagnostics()
     stop_owned_runtime(datadir=datadir)
     raise PolicyViolationError(
         "runtime_startup_timeout",
-        f"Timed out after {startup_timeout}s waiting for action-server to listen on {host}:{port}.",
+        f"Timed out after {startup_timeout}s waiting for action-server to listen on {host}:{port}.\n{diagnostics}",
     )
 
 
@@ -627,12 +676,21 @@ def stop_owned_runtime(*, datadir: Path, timeout: float = 15.0) -> dict[str, Any
     pid = int((meta or {}).get("pid") or 0)
     try:
         if sys.platform == "win32":
-            os.kill(pid, signal.SIGTERM)
+            # PyInstaller's parent owns a child Runtime and dependency processes.
+            # Stop the whole verified owned tree, not just its launcher.
+            killed = subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True, text=True, timeout=timeout, check=False,
+            )
+            if killed.returncode and _is_pid_alive(pid):
+                raise PolicyViolationError("runtime_stop_failed", "Could not terminate the owned Windows process tree.")
         else:
             os.killpg(os.getpgid(pid), signal.SIGTERM)
     except ProcessLookupError:
         pass
     except Exception:
+        if sys.platform == "win32":
+            raise
         try:
             os.kill(pid, signal.SIGTERM)
         except Exception:
@@ -645,13 +703,15 @@ def stop_owned_runtime(*, datadir: Path, timeout: float = 15.0) -> dict[str, Any
         time.sleep(0.1)
 
     if _is_pid_alive(pid):
+        if sys.platform == "win32":
+            raise PolicyViolationError("runtime_stop_failed", "Owned Windows process tree is still running; ownership metadata retained.")
         try:
-            if sys.platform != "win32":
-                os.killpg(os.getpgid(pid), signal.SIGKILL)
-            else:
-                os.kill(pid, signal.SIGTERM)
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
         except Exception:
             pass
+
+    if _is_pid_alive(pid):
+        raise PolicyViolationError("runtime_stop_failed", "Owned Runtime is still running; ownership metadata retained.")
 
     meta_path = _instance_metadata_path(datadir)
     if meta_path.is_file():
