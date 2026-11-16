@@ -35,6 +35,14 @@ def package_zip(path: Path) -> bytes:
 
 
 class PackagingTests(unittest.TestCase):
+    def test_package_builder_rejects_incompatible_compressor_before_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "not-created" / "package.zip"
+            with patch.object(builder.zlib, "ZLIB_RUNTIME_VERSION", "1.3.1.zlib-ng"):
+                with self.assertRaisesRegex(RuntimeError, "standard zlib"):
+                    builder.build("action-server", output)
+            self.assertFalse(output.parent.exists())
+
     def test_package_builder_preserves_home_and_sets_runtime_cache_homes(self) -> None:
         captured: dict[str, str] = {}
 

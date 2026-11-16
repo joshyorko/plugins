@@ -10,6 +10,7 @@ import stat
 import subprocess
 import tempfile
 import zipfile
+import zlib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -18,6 +19,12 @@ PACKAGE_DIR = REPO_ROOT / "plugins/rcc/bootstrapper"
 
 def build(action_server: str, output: Path) -> None:
     """Use Actions Runtime packaging, then deterministically deflate its ZIP."""
+    if "zlib-ng" in zlib.ZLIB_RUNTIME_VERSION:
+        raise RuntimeError(
+            "Release packaging requires standard zlib, not zlib-ng; "
+            "use the CI Python 3.11 toolchain (for example uv run --python 3.11). "
+            "Different compressors produce different pinned ZIP bytes."
+        )
     output = output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="rcc-bootstrapper-package-") as temp:

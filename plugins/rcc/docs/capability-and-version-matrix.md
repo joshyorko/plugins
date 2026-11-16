@@ -43,7 +43,7 @@ Before executing `action-server` or `rcc`, `plugins/rcc` verifies the binary's S
 
 | Release Asset | Version | Source | SHA-256 Digest | Status |
 | --- | --- | --- | --- | --- |
-| `rcc-actions-bootstrapper-0.6.0.zip` | `0.6.0` | Generated from `plugins/rcc/bootstrapper/` with Actions Runtime `1.1.1` | `d58a8711956f8a1ca29bf03d445f6090ad4393ac65319dc8fb4f3b191b19d058` | Two independent isolated builds at different output paths matched; release asset awaits publication of tag `v0.6.0`. |
+| `rcc-actions-bootstrapper-0.6.0.zip` | `0.6.0` | Generated from `plugins/rcc/bootstrapper/` with Actions Runtime `1.1.1` | `93c4c5f4e8ab169eec2e2a6001714b8e12e72f4b8b4d6dcfda71e93868d229ff` | Standard-zlib output reproduced the hosted CI artifact byte-for-byte; earlier receipts use the equivalent zlib-ng ZIP with a different transport digest; release asset awaits publication of tag `v0.6.0`. |
 
 ### 1.4 PyPI Package & Wheel SHA-256 Digests
 

@@ -12,10 +12,10 @@ python3 plugins/rcc/scripts/install_bootstrapper.py
 
 On Windows PowerShell, run `py -3 plugins/rcc/scripts/install_bootstrapper.py`. Setup verifies SHA-256 pins before atomically publishing the package and binaries under the user's RCC Bootstrapper home. The extracted Action package is self-contained; setup does not import the repository source or require Pydantic. Runtime databases, the private Action Server caches, UV cache, and `ROBOCORP_HOME` live under the separate `state/` directory. Existing versioned installs are verified and reused on retry. Setup preserves the caller's `HOME` and `USERPROFILE`.
 
-Before the release asset exists, build the package ZIP from canonical source and qualify the actual installer with pinned artifacts:
+Before the release asset exists, build the package ZIP from canonical source with standard zlib (the CI Python 3.11 toolchain), then qualify the actual installer with pinned artifacts. zlib-ng generates different compressed bytes and is rejected by the builder; the installer never relaxes the ZIP checksum. Earlier retained receipts identify the previous zlib-ng transport digest.
 
 ```bash
-python3 plugins/rcc/scripts/build_bootstrapper_package.py \
+uv run --no-project --python 3.11 python plugins/rcc/scripts/build_bootstrapper_package.py \
   --action-server /path/to/actions-runtime-1.1.1-linux64 \
   --output /tmp/rcc-actions-bootstrapper-0.6.0.zip
 python3 plugins/rcc/scripts/dogfood_bootstrapper.py \
