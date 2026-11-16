@@ -35,6 +35,7 @@ We **do not** build a custom Python MCP server or stdio wrapper around `rcc` and
 - Codex plugin manifest [`plugins/rcc/.mcp.json`](file:///home/kdlocpanda/plugins/plugins/rcc/.mcp.json) registers `rcc-bootstrapper` with `"type": "http"` and `"url": "http://127.0.0.1:8765/mcp"`, linked from [`plugins/rcc/.codex-plugin/plugin.json`](file:///home/kdlocpanda/plugins/plugins/rcc/.codex-plugin/plugin.json) via `"mcpServers": "./.mcp.json"`.
 - All bootstrapper capabilities are authored with standard `actions-core` (`1.1.0`) primitives (`@tool`, `@action`, `@resource`, `@prompt`, Pydantic models, `Response[T]`, `ActionError`, `Secret`, and MCP tool annotations `read_only_hint`, `destructive_hint`, `idempotent_hint`, `open_world_hint`).
 - Hosting on Actions Runtime `/mcp` ensures every bootstrapper invocation dogfoods the real runtime's FastMCP v2 transport, OpenAPI schema generation, action invocation pipeline, SQLite run store, and (when started with `--api-key` on Linux) native Action Canvas MCP tools (`capability_discover`, `canvas_*`) and `/api/managed-work-items/v1` endpoints.
+- The retained Linux receipt qualifies bootstrapper tools, the Canvas resource read, and managed Work Items schema authentication only. It does **not** qualify a Canvas create/apply workflow or managed Work Items operations (`/capabilities` returned HTTP 422 with zero operations).
 
 ### Decision 3: Local Installation, First-Use Behavior, Datadir, Ports, Auth, and Upgrade/Rollback
 
@@ -49,9 +50,7 @@ We **do not** build a custom Python MCP server or stdio wrapper around `rcc` and
    - Isolated test/CI runs set `--datadir`, `ACTIONS_HOME`, `ROBOTS_HOME`, and `ROBOCORP_HOME` to temporary directories so user caches are untouched.
 3. **Port & Loopback Binding**:
    - Default bind address is `127.0.0.1` on port `8765` (`http://127.0.0.1:8765/mcp`), matching Actions Runtime's loopback DNS-rebinding allowlist (`127.0.0.1:*`, `localhost:*`, `[::1]:*`).
-4. **Authentication Modes**:
-   - **Local Loopback Mode (default for local desktop MCP)**: Starts on `127.0.0.1:8765` without `--api-key` for zero-friction local MCP client attachment when only bootstrapper package tools are needed.
-   - **Authenticated API-Key Mode (`--api-key` / `RCC_BOOTSTRAPPER_API_KEY`)**: Passes `--api-key` to `action-server start`. On Linux with Actions Runtime `1.1.1`, this also enables native Action Canvas MCP tools and `/api/managed-work-items/v1` Bearer-authenticated routes (`GET /schema`, `GET /capabilities`, `POST /operations`). Secrets are never logged or written in plaintext to world-readable files.
+4. **Authentication and executable trust**: An API key is required for every owned Runtime. `bootstrapper_runtime.py` reads `--api-key` or `RCC_BOOTSTRAPPER_API_KEY` and passes it to `action-server start`; it refuses startup without a non-empty key. The key must be supplied to the MCP client through its user-level secret store or environment-backed header configuration. The portable plugin manifest cannot safely carry a user secret, so authenticated client attachment is host-specific and requires operator setup. The Runtime receives the key in its process arguments, which can be observed by same-user process inspection; it is never written to the receipt or runtime logs. Executable trust is configured separately using `--trusted-root` or `RCC_BOOTSTRAPPER_TRUSTED_PROJECT_ROOTS`; approved write roots do not grant execution trust, and the MCP caller's `trust_project` boolean cannot add trusted roots. Execution requires both a server-configured trusted root and explicit per-call confirmation. On Linux with Actions Runtime `1.1.1`, API-key mode also enables native Action Canvas tools and `/api/managed-work-items/v1` Bearer-authenticated routes.
 5. **Coordinated SQLite Backup & Upgrade/Rollback**:
    - Before upgrading the runtime version or migrating an existing datadir (`server.db` + `runs.db`), `bootstrapper_runtime.py` stops any owned running server, verifies no active writer holds the datadir lock, and copies `server.db`, `runs.db` (if present), and `server-info.json` into a timestamped backup directory (`<datadir>/backups/<timestamp>-<from_version>-to-<to_version>/`) using SQLite's online backup API (`sqlite3.Connection.backup`) for `server.db` and `runs.db` so WAL/journal state is consistent.
    - Rollback restores the backed-up SQLite files while the runtime is stopped.
@@ -65,7 +64,8 @@ The bootstrapper launcher enforces strict instance ownership via `<datadir>/serv
   - `pid` and `process_create_time` / `proc_stat_starttime`
   - `host`, `port`, `mcp_url`, `datadir`, `package_dir`
   - `runtime_binary`, `runtime_version`, `runtime_sha256`
-  - `auth_mode` (`none` or `api-key`)
+  - `auth_mode` (`api-key`; anonymous mode is refused)
+  - `trusted_project_roots` (operator-configured executable trust boundary)
   - `started_at`
 - **Occupied-port protection**: Before starting on `host:port`, `bootstrapper_runtime.py` probes whether a listener already occupies the port.
   - If the listener belongs to the **same owned instance** (matching `server-info.json` PID, process identity, and datadir), `start` is idempotent and returns the active instance metadata.

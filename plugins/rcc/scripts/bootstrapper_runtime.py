@@ -45,6 +45,7 @@ from rcc_bootstrapper.policy import (  # noqa: E402
     PolicyViolationError,
     default_datadir,
     get_approved_roots,
+    get_trusted_project_roots,
     inspect_binary_health,
     verify_binary_before_execution,
 )
@@ -377,6 +378,7 @@ def start_owned_runtime(
     port: int = 8765,
     package_dir: Path = BOOTSTRAPPER_PKG_DIR,
     approved_roots: list[str | Path] | None = None,
+    trusted_roots: list[str | Path] | None = None,
     api_key: str | None = None,
     runtime_binary: str | Path | None = None,
     rcc_binary: str | Path | None = None,
@@ -384,13 +386,12 @@ def start_owned_runtime(
     startup_timeout: float = 90.0,
 ) -> dict[str, Any]:
     """Start an owned action-server instance after fail-closed binary verification and port ownership checks."""
-    verified_as, as_sha256 = verify_binary_before_execution(
-        "action-server",
-        runtime_binary,
-        expected_sha256=expected_runtime_sha256,
-    )
-    verified_rcc, rcc_sha256 = verify_binary_before_execution("rcc", rcc_binary)
-    as_health = inspect_binary_health("action-server", explicit_path=verified_as)
+    resolved_api_key = api_key if api_key is not None else os.environ.get("RCC_BOOTSTRAPPER_API_KEY")
+    if not resolved_api_key or not resolved_api_key.strip():
+        raise PolicyViolationError(
+            "runtime_api_key_required",
+            "Set RCC_BOOTSTRAPPER_API_KEY or pass --api-key before starting the MCP endpoint.",
+        )
 
     datadir = datadir.expanduser().resolve()
     datadir.mkdir(parents=True, exist_ok=True)
@@ -419,6 +420,16 @@ def start_owned_runtime(
             "Refusing to kill, reconfigure, or implicitly attach to a foreign listener.",
         )
 
+    # Do not need host-installed tools to report an occupied listener, but always
+    # verify both pinned binaries before starting the owned Runtime process.
+    verified_as, as_sha256 = verify_binary_before_execution(
+        "action-server",
+        runtime_binary,
+        expected_sha256=expected_runtime_sha256,
+    )
+    verified_rcc, rcc_sha256 = verify_binary_before_execution("rcc", rcc_binary)
+    as_health = inspect_binary_health("action-server", explicit_path=verified_as)
+
     # Check if server-info.json from a previous runtime version exists -> automatic coordinated SQLite backup
     server_info_file = datadir / "server-info.json"
     auto_backup = None
@@ -436,9 +447,12 @@ def start_owned_runtime(
             pass
 
     roots = get_approved_roots(approved_roots)
+    trusted_items = get_trusted_project_roots() if trusted_roots is None else trusted_roots
+    trusted_project_roots = [Path(p).expanduser().resolve() for p in trusted_items]
     env = os.environ.copy()
     env["RCC_BOOTSTRAPPER_DATADIR"] = str(datadir)
     env["RCC_BOOTSTRAPPER_APPROVED_ROOTS"] = os.pathsep.join(str(r) for r in roots)
+    env["RCC_BOOTSTRAPPER_TRUSTED_PROJECT_ROOTS"] = os.pathsep.join(str(r) for r in trusted_project_roots)
     env["RCC_BOOTSTRAPPER_ACTION_SERVER_BIN"] = str(verified_as)
     env["RCC_BOOTSTRAPPER_RCC_BIN"] = str(verified_rcc)
 
@@ -454,9 +468,7 @@ def start_owned_runtime(
         "--datadir",
         str(datadir),
     ]
-    resolved_api_key = api_key if api_key is not None else os.environ.get("RCC_BOOTSTRAPPER_API_KEY")
-    if resolved_api_key:
-        cmd.extend(["--api-key", resolved_api_key])
+    cmd.extend(["--api-key", resolved_api_key])
 
     stdout_log = datadir / "bootstrapper_runtime_stdout.log"
     stderr_log = datadir / "bootstrapper_runtime_stderr.log"
@@ -491,6 +503,7 @@ def start_owned_runtime(
         "datadir": str(datadir),
         "package_dir": str(package_dir.resolve()),
         "approved_roots": [str(r) for r in roots],
+        "trusted_project_roots": [str(r) for r in trusted_project_roots],
         "runtime_binary": str(verified_as),
         "runtime_version": as_health.version,
         "runtime_sha256": as_sha256,
@@ -684,6 +697,7 @@ def build_parser() -> argparse.ArgumentParser:
     start_p.add_argument("--host", default="127.0.0.1")
     start_p.add_argument("--port", type=int, default=8765)
     start_p.add_argument("--approved-root", action="append", dest="approved_roots", default=None)
+    start_p.add_argument("--trusted-root", action="append", dest="trusted_roots", default=None)
     start_p.add_argument("--api-key", default=None)
     start_p.add_argument("--runtime-binary", default=None)
     start_p.add_argument("--rcc-binary", default=None)
@@ -742,6 +756,7 @@ def main(argv: list[str] | None = None) -> int:
                 host=args.host,
                 port=args.port,
                 approved_roots=args.approved_roots,
+                trusted_roots=args.trusted_roots,
                 api_key=args.api_key,
                 runtime_binary=args.runtime_binary,
                 rcc_binary=args.rcc_binary,

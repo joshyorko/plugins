@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import socket
+import subprocess
 import sys
 import tempfile
 import urllib.error
@@ -32,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+BOOTSTRAPPER_PKG_DIR = SCRIPT_DIR.parent / "bootstrapper"
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
@@ -81,6 +84,38 @@ def _http_get_json(url: str, *, bearer_token: str | None = None) -> tuple[int, d
         return exc.code, parsed
 
 
+def _source_identity() -> dict[str, Any]:
+    source_paths = [
+        "plugins/rcc/bootstrapper",
+        "plugins/rcc/scripts/bootstrapper_runtime.py",
+        "plugins/rcc/scripts/dogfood_bootstrapper.py",
+        "plugins/rcc/plugin.json",
+        "plugins/rcc/.codex-plugin/plugin.json",
+        "plugins/rcc/mcp.json",
+        "plugins/rcc/.mcp.json",
+    ]
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        source_clean = subprocess.run(
+            ["git", "diff", "--quiet", "HEAD", "--", *source_paths], check=False
+        ).returncode == 0
+    except (OSError, subprocess.CalledProcessError):
+        commit = None
+        source_clean = False
+    package_text = (BOOTSTRAPPER_PKG_DIR / "package.yaml").read_text(encoding="utf-8")
+    package_version = next(
+        (line.split(":", 1)[1].strip() for line in package_text.splitlines() if line.startswith("version:")),
+        None,
+    )
+    return {
+        "repository_commit": commit,
+        "executable_source_clean_at_run": source_clean,
+        "bootstrapper_package_version": package_version,
+    }
+
+
 def run_dogfood_suite(
     *,
     runtime_binary: str | None = None,
@@ -103,6 +138,7 @@ def run_dogfood_suite(
             host="127.0.0.1",
             port=port,
             approved_roots=[workspace_root],
+            trusted_roots=[workspace_root],
             api_key=api_key,
             runtime_binary=runtime_binary,
             rcc_binary=rcc_binary,
@@ -217,6 +253,7 @@ def run_dogfood_suite(
                         "project_dir": str(action_dir),
                         "target_name": "producer",
                         "work_items_json": json.dumps(work_items_input),
+                        "trust_project": True,
                         "secret_token": secret_marker,
                     },
                 },
@@ -301,6 +338,7 @@ def run_dogfood_suite(
                             "project_kind": "robot",
                             "project_dir": str(robot_dir),
                             "target_name": "minimal_task",
+                            "trust_project": True,
                         },
                     },
                 )
@@ -331,6 +369,7 @@ def run_dogfood_suite(
                             "project_dir": str(robot_dir),
                             "target_name": "minimal_task",
                             "simulate_failure": True,
+                            "trust_project": True,
                         },
                     },
                 )
@@ -367,6 +406,7 @@ def run_dogfood_suite(
                             "project_dir": str(robot_dir),
                             "target_name": "minimal_task",
                             "simulate_failure": False,
+                            "trust_project": True,
                         },
                     },
                 )
@@ -407,6 +447,13 @@ def run_dogfood_suite(
         receipt: dict[str, Any] = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "status": "passed",
+            "source_identity": _source_identity(),
+            "qualification_environment": {
+                "os": platform.system(),
+                "os_release": platform.release(),
+                "architecture": platform.machine(),
+                "python_version": platform.python_version(),
+            },
             "runtime_instance": {
                 "runtime_binary": started["instance"]["runtime_binary"],
                 "runtime_version": started["instance"]["runtime_version"],

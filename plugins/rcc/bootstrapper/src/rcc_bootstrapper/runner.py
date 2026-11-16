@@ -7,6 +7,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -30,11 +31,19 @@ from .policy import (
     sha256_file,
     validate_safe_identifier,
     validate_secret_env_map,
+    is_trusted_project,
     verify_binary_before_execution,
 )
 from .scaffold import validate_project
 
 _ACTIVE_PROCS: dict[str, tuple[subprocess.Popen[str], list[str]]] = {}
+_RUN_STATE_LOCKS: dict[str, threading.Lock] = {}
+_RUN_STATE_LOCKS_GUARD = threading.Lock()
+
+
+def _run_state_lock(run_id: str) -> threading.Lock:
+    with _RUN_STATE_LOCKS_GUARD:
+        return _RUN_STATE_LOCKS.setdefault(run_id, threading.Lock())
 
 
 def _now_iso() -> str:
@@ -375,16 +384,16 @@ def execute_project_run(
     execution_mode: str = "local_python",
     timeout_seconds: float = 60.0,
     simulate_failure: bool = False,
-    trust_project: bool = True,
+    trust_project: bool = False,
     approved_roots: list[str | Path] | None = None,
     datadir: Path | None = None,
     rcc_bin: str | Path | None = None,
 ) -> RunRecord:
     """Execute an approved Action or Robot workload with process-group ownership and secret redaction."""
-    if not trust_project:
+    if not trust_project or not is_trusted_project(project_dir):
         raise PolicyViolationError(
             "untrusted_project_execution_refused",
-            "Refusing to execute code in an untrusted project (trust_project=False).",
+            "Execution requires explicit per-run trust and a project inside operator-configured trusted roots.",
         )
 
     canonical_dir, _ = resolve_approved_target(
@@ -416,6 +425,7 @@ def execute_project_run(
         )
 
     run_id = f"run-{uuid.uuid4().hex[:12]}"
+    run_lock = _run_state_lock(run_id)
     started_at = _now_iso()
     start_monotonic = time.monotonic()
 
@@ -491,7 +501,6 @@ def execute_project_run(
         except Exception:
             stdout_raw, stderr_raw = "", ""
     finally:
-        _ACTIVE_PROCS.pop(run_id, None)
         if config_file.exists():
             config_file.unlink(missing_ok=True)
 
@@ -561,7 +570,22 @@ def execute_project_run(
         artifacts=artifacts,
         work_items=wi_summary,
     )
-    save_run_record(final_record, datadir)
+    with run_lock:
+        persisted_now = _run_file(run_id, datadir)
+        if persisted_now.is_file():
+            try:
+                if json.loads(persisted_now.read_text(encoding="utf-8")).get("state") == "cancelled":
+                    final_record = final_record.model_copy(
+                        update={
+                            "state": "cancelled",
+                            "error_code": "run_cancelled",
+                            "error_message": "Run was cancelled by operator request.",
+                        }
+                    )
+            except Exception:
+                pass
+        save_run_record(final_record, datadir)
+        _ACTIVE_PROCS.pop(run_id, None)
     return final_record
 
 
@@ -570,46 +594,47 @@ def cancel_project_run(run_id: str, *, datadir: Path | None = None) -> CancelRes
     path = _run_file(run_id, datadir)
     if not path.is_file():
         raise PolicyViolationError("run_not_found", f"Run '{run_id}' does not exist.")
-    record = RunRecord.model_validate_json(path.read_text(encoding="utf-8"))
-    prev_state = record.state
+    with _run_state_lock(run_id):
+        record = RunRecord.model_validate_json(path.read_text(encoding="utf-8"))
+        prev_state = record.state
 
-    active_entry = _ACTIVE_PROCS.get(record.run_id)
-    if active_entry is not None:
-        proc, _ = active_entry
-        confirmed = _terminate_process_group(proc)
-        new_state = "cancelled" if confirmed else "unknown_retained"
-        updated = record.model_copy(
-            update={
-                "state": new_state,
-                "completed_at": _now_iso(),
-                "error_code": "run_cancelled",
-                "error_message": "Run cancelled via bootstrapper_cancel.",
-            }
-        )
-        save_run_record(updated, datadir)
+        active_entry = _ACTIVE_PROCS.get(record.run_id)
+        if active_entry is not None:
+            proc, _ = active_entry
+            confirmed = _terminate_process_group(proc)
+            new_state = "cancelled" if confirmed else "unknown_retained"
+            updated = record.model_copy(
+                update={
+                    "state": new_state,
+                    "completed_at": _now_iso(),
+                    "error_code": "run_cancelled",
+                    "error_message": "Run cancelled via bootstrapper_cancel.",
+                }
+            )
+            save_run_record(updated, datadir)
+            return CancelResult(
+                run_id=record.run_id,
+                previous_state=prev_state,
+                state=new_state,
+                process_group_signaled=True,
+                termination_confirmed=confirmed,
+                message="Process group terminated and confirmed." if confirmed else "Signal sent, termination unconfirmed.",
+            )
+
+        # Not in _ACTIVE_PROCS: reconcile if it was marked running
+        reconciled = load_run_record(run_id, datadir)
         return CancelResult(
-            run_id=record.run_id,
+            run_id=reconciled.run_id,
             previous_state=prev_state,
-            state=new_state,
-            process_group_signaled=True,
-            termination_confirmed=confirmed,
-            message="Process group terminated and confirmed." if confirmed else "Signal sent, termination unconfirmed.",
+            state=reconciled.state,
+            process_group_signaled=False,
+            termination_confirmed=reconciled.state in {"succeeded", "failed", "cancelled", "timed_out"},
+            message=(
+                f"Run is already in terminal/reconciled state '{reconciled.state}'."
+                if reconciled.state != "unknown_retained"
+                else "Run belonged to a prior worker session; marked 'unknown_retained' without signaling unrelated PIDs."
+            ),
         )
-
-    # Not in _ACTIVE_PROCS: reconcile if it was marked running
-    reconciled = load_run_record(run_id, datadir)
-    return CancelResult(
-        run_id=reconciled.run_id,
-        previous_state=prev_state,
-        state=reconciled.state,
-        process_group_signaled=False,
-        termination_confirmed=reconciled.state in {"succeeded", "failed", "cancelled", "timed_out"},
-        message=(
-            f"Run is already in terminal/reconciled state '{reconciled.state}'."
-            if reconciled.state != "unknown_retained"
-            else "Run belonged to a prior worker session; marked 'unknown_retained' without signaling unrelated PIDs."
-        ),
-    )
 
 
 def execute_named_query(

@@ -472,6 +472,11 @@ def scaffold_project(
                     )
                 generator_used = f"{verified_as} new --template {tpl_info.name}"
             else:
+                if os.environ.get("RCC_BOOTSTRAPPER_TEST_MODE") != "1":
+                    raise PolicyViolationError(
+                        "generator_binary_missing",
+                        "A verified action-server binary is required to generate published Action templates.",
+                    )
                 generator_used = _fallback_stage_action_template(staging_dir, tpl_info.name)
 
             normalizations.extend(_normalize_action_package(staging_dir, tpl_info.name))
@@ -502,6 +507,11 @@ def scaffold_project(
                     )
                 generator_used = f"{verified_rcc} robot initialize -t {tpl_info.name}"
             else:
+                if os.environ.get("RCC_BOOTSTRAPPER_TEST_MODE") != "1":
+                    raise PolicyViolationError(
+                        "generator_binary_missing",
+                        "A verified rcc binary is required to generate published Robot templates.",
+                    )
                 generator_used = _fallback_stage_robot_template(staging_dir, tpl_info.name)
 
         # Verify expected files exist and are non-empty (fixing the legacy zero-byte wipe bug)

@@ -99,6 +99,31 @@ def get_approved_roots(explicit_roots: list[str | Path] | None = None) -> list[P
     return resolved
 
 
+def get_trusted_project_roots() -> list[Path]:
+    """Return operator-configured roots whose code may be executed by the bootstrapper."""
+    raw = os.environ.get("RCC_BOOTSTRAPPER_TRUSTED_PROJECT_ROOTS", "").strip()
+    if not raw:
+        return []
+    sep = ";" if (";" in raw and os.pathsep == ";") else os.pathsep
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for item in raw.split(sep):
+        item = item.strip()
+        if item:
+            root = Path(item).expanduser().resolve()
+            if root not in seen:
+                seen.add(root)
+                roots.append(root)
+    return roots
+
+
+def is_trusted_project(project_dir: str | Path, trusted_roots: list[Path] | None = None) -> bool:
+    """Check project containment in operator-owned executable trust roots."""
+    target = Path(project_dir).expanduser().resolve()
+    roots = get_trusted_project_roots() if trusted_roots is None else trusted_roots
+    return any(target.is_relative_to(root) for root in roots)
+
+
 def _check_no_symlink_escape(candidate: Path, root: Path) -> None:
     """Verify no existing path component between root and candidate is a symlink escaping root."""
     current = root
@@ -358,4 +383,3 @@ def verify_binary_before_execution(
             f"Refusing to execute '{resolved}': SHA-256 '{actual_digest}' is not in the pinned release allowlist for {name}.",
         )
     return resolved, actual_digest
-

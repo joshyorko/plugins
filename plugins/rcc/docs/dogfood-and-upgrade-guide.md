@@ -12,10 +12,12 @@ The `rcc` plugin registers `http://127.0.0.1:8765/mcp` in [`plugins/rcc/mcp.json
 # 1. Inspect local action-server + rcc binaries and SHA-256 digests
 python3 plugins/rcc/scripts/bootstrapper_runtime.py doctor
 
-# 2. Start the owned runtime on 127.0.0.1:8765 with an approved workspace root
+# 2. Start the owned runtime with an API key and an approved workspace root
+mkdir -p "$PWD/workspace/trusted"
+export RCC_BOOTSTRAPPER_API_KEY="replace-with-a-locally-generated-secret"
 python3 plugins/rcc/scripts/bootstrapper_runtime.py start \
   --approved-root "$PWD/workspace" \
-  --verify-sha256
+  --trusted-root "$PWD/workspace/trusted"
 
 # 3. Check live runtime & /mcp health
 python3 plugins/rcc/scripts/bootstrapper_runtime.py status
@@ -27,15 +29,23 @@ python3 plugins/rcc/scripts/bootstrapper_runtime.py mcp-smoke
 python3 plugins/rcc/scripts/bootstrapper_runtime.py stop
 ```
 
-### Enabling Native Action Canvas & Managed Work Items (`--api-key` Mode on Linux)
+### Authenticated Runtime and Native Runtime Features
 
-When started with `--api-key` (or `RCC_BOOTSTRAPPER_API_KEY`) on Linux x86-64, Actions Runtime `1.1.1` additionally mounts its native Action Canvas MCP tools (`capability_discover`, `canvas_*`, `ui://action-canvas/v1/canvas.html`) and Bearer-authenticated `/api/managed-work-items/v1` endpoints:
+An API key is mandatory: unauthenticated loopback MCP exposes project execution to any local process. Configure the MCP client to send `Authorization: Bearer <same key>` using its user-level secret store or supported environment-backed header setting. The portable plugin manifest cannot safely carry this secret, so client-side authenticated attachment must be configured separately. The launcher passes the key to the Runtime process; process-level exposure to same-user process inspection is an Actions Runtime contract limitation.
+
+For Codex CLI, one supported explicit attachment is `codex mcp add rcc-bootstrapper --url http://127.0.0.1:8765/mcp --bearer-token-env-var RCC_BOOTSTRAPPER_API_KEY`. This is a user-level Codex MCP registration; installing the plugin manifest alone does not inject the key or qualify authenticated host attachment.
+
+Executable trust is separate from workspace write approval. Add `--trusted-root <path>` only for code whose operator has reviewed it; a tool call's `trust_project` flag cannot add roots. Running requires both an explicit per-call `trust_project=true` and containment within a server-configured trusted root. Without that configuration, scaffold and inspection remain available but execution is refused.
+
+On Linux x86-64, the key also enables Actions Runtime `1.1.1` native Action Canvas MCP tools (`capability_discover`, `canvas_*`, `ui://action-canvas/v1/canvas.html`) and Bearer-authenticated `/api/managed-work-items/v1` endpoints:
+
+Current proof covers Canvas tool discovery/resource read and the managed Work Items schema route only. A Canvas create/apply workflow is **NOT QUALIFIED**; managed Work Items `/capabilities` returned HTTP 422 and no operations, so managed Work Items execution is **NOT QUALIFIED**.
 
 ```bash
 RCC_BOOTSTRAPPER_API_KEY="local-dev-secret-token" \
   python3 plugins/rcc/scripts/bootstrapper_runtime.py start \
   --approved-root "$PWD/workspace" \
-  --verify-sha256
+  --trusted-root "$PWD/workspace/trusted"
 ```
 
 ---

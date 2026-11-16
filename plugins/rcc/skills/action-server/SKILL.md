@@ -21,6 +21,12 @@ Use this skill for ACTIONS package authoring, debugging, and container deploymen
 - Do not implement a new MCP server, Action Server runtime, daemon, web service, or marketplace product in this repo. Containerizing an existing Action Server for action packages is in scope.
 - Do not make plugin distribution sound hosted; this skill is for ordinary Action Server action packages.
 
+## Bundled RCC Bootstrapper
+
+- The `rcc` plugin's bootstrapper is a separate Action package hosted by pinned Actions Runtime `/mcp`; read `../../docs/dogfood-and-upgrade-guide.md` before starting it.
+- Runtime startup requires an API key. Configure each MCP client to send it through a user-level secret store or supported environment-backed bearer header; the portable plugin manifest cannot hold it.
+- Separate writable approved roots (`--approved-root`) from executable trusted roots (`--trusted-root`). A caller must request per-run trust, and code runs only inside a server-configured trusted root.
+
 ## First Inspection
 
 1. Locate `package.yaml`, action modules such as `my_actions.py`, `src/**`, `tests/**`, and `.action-server/` or datadir settings if present.

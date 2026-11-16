@@ -198,7 +198,7 @@ def bootstrapper_run(
     execution_mode: str = "local_python",
     timeout_seconds: float = 60.0,
     simulate_failure: bool = False,
-    trust_project: bool = True,
+    trust_project: bool = False,
     secret_token: Secret = Secret.model_validate(""),
 ) -> Response[RunRecord]:
     """Execute an approved Action or Robot workload with process-group ownership, work-items support, and secret redaction.
@@ -390,5 +390,3 @@ def bootstrapper_dogfood_workflow(project_kind: str = "action", template: str = 
         "5. Call bootstrapper_run(...) to execute a harmless run or work-item batch, then inspect "
         "bootstrapper_results(query='run_summary') and bootstrapper_results(query='work_items_summary')."
     )
-
-
