@@ -295,33 +295,46 @@ class BootstrapperUnitAndSecurityTests(unittest.TestCase):
                     "robot",
                     dest,
                     target_name="minimal_task",
-                    timeout_seconds=20,
+                    timeout_seconds=10,
                     trust_project=True,
                     approved_roots=[self.approved_root],
                     datadir=self.datadir,
                 ),
             ),
         )
-        worker.start()
-        deadline = time.monotonic() + 5
-        active_run_id = None
-        while time.monotonic() < deadline:
-            for path in self.datadir.glob("bootstrapper_runs/*.json"):
-                saved = RunRecord.model_validate_json(path.read_text(encoding="utf-8"))
-                if saved.state == "running" and saved.run_id in runner._ACTIVE_PROCS:
-                    active_run_id = saved.run_id
-                    break
-            if active_run_id:
-                break
-            time.sleep(0.05)
 
-        self.assertIsNotNone(active_run_id, "run never became active")
-        cancelled = cancel_project_run(active_run_id, datadir=self.datadir)
-        worker.join(timeout=5)
-        self.assertFalse(worker.is_alive(), "cancelled run worker did not return")
-        self.assertEqual(cancelled.state, "cancelled")
-        self.assertTrue(cancelled.process_group_signaled)
-        self.assertTrue(cancelled.termination_confirmed)
+        def active_run_for_project() -> str | None:
+            for run_id in tuple(runner._ACTIVE_PROCS):
+                saved = load_run_record(run_id, self.datadir)
+                if saved.project_dir == str(dest) and saved.state == "running":
+                    return run_id
+            return None
+
+        worker.start()
+        cancelled = None
+        try:
+            deadline = time.monotonic() + 5
+            active_run_id = None
+            while time.monotonic() < deadline:
+                active_run_id = active_run_for_project()
+                if active_run_id:
+                    break
+                time.sleep(0.05)
+
+            self.assertIsNotNone(active_run_id, "run never became active")
+            cancelled = cancel_project_run(active_run_id, datadir=self.datadir)
+            self.assertEqual(cancelled.state, "cancelled")
+            self.assertTrue(cancelled.process_group_signaled)
+            self.assertTrue(cancelled.termination_confirmed)
+        finally:
+            if worker.is_alive():
+                active_run_id = active_run_for_project()
+                if active_run_id:
+                    cancel_project_run(active_run_id, datadir=self.datadir)
+                worker.join(timeout=12)
+            self.assertFalse(worker.is_alive(), "run worker remained active after cancellation/timeout cleanup")
+
+        self.assertIsNotNone(cancelled)
         self.assertEqual(result["record"].state, "cancelled")
 
     def test_occupied_port_refusal_in_runtime_launcher(self) -> None:
