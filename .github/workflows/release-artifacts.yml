@@ -97,6 +97,29 @@ jobs:
           git archive --format=tar.gz --prefix="plugins-${tag}/" -o "dist/plugins-${tag}.tar.gz" "${GITHUB_SHA}"
           git archive --format=zip --prefix="plugins-${tag}/" -o "dist/plugins-${tag}.zip" "${GITHUB_SHA}"
 
+      - name: Build and stage the RCC bootstrapper Action package
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if [ "$RELEASE_TAG" = "v0.6.0" ]; then
+            curl -fsSL -o "$RUNNER_TEMP/action-server" \
+              https://github.com/joshyorko/actions/releases/download/actions-runtime-1.1.1/actions-runtime-1.1.1-linux64
+            echo "8c27fbed198aef16c98cdc7a45230fbc4708b06dff1c3523aeddfcdf7840efd0  $RUNNER_TEMP/action-server" | sha256sum -c -
+            chmod 755 "$RUNNER_TEMP/action-server"
+            python3 plugins/rcc/scripts/build_bootstrapper_package.py \
+              --action-server "$RUNNER_TEMP/action-server" \
+              --output dist/rcc-actions-bootstrapper-0.6.0.zip
+            python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          from plugins.rcc.scripts.install_bootstrapper import PACKAGE_SHA256
+          artifact = Path("dist/rcc-actions-bootstrapper-0.6.0.zip")
+          actual = hashlib.sha256(artifact.read_bytes()).hexdigest()
+          if actual != PACKAGE_SHA256:
+              raise SystemExit(f"bootstrapper package digest mismatch: {actual}")
+          PY
+          fi
+
       - name: Include verified Luna bundle
         if: steps.luna.outputs.enabled == 'true'
         run: cp "$RUNNER_TEMP/luna-release/"* dist/

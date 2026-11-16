@@ -45,6 +45,7 @@ from bootstrapper_runtime import (  # noqa: E402
     start_owned_runtime,
     stop_owned_runtime,
 )
+from install_bootstrapper import PACKAGE_SHA256, digest_file, extract_package  # noqa: E402
 
 
 def _find_free_port() -> int:
@@ -122,6 +123,7 @@ def run_dogfood_suite(
     rcc_binary: str | None = None,
     output_receipt: Path | None = None,
     baseline_receipt: Path | None = None,
+    package_zip: Path | None = None,
 ) -> dict[str, Any]:
     api_key = "dogfood-local-auth-token-109"
     secret_marker = "TOPSECRET_VALUE_99412_DO_NOT_LEAK"
@@ -130,8 +132,21 @@ def run_dogfood_suite(
     with tempfile.TemporaryDirectory(prefix="rcc-bootstrapper-dogfood-") as tmp_root_str:
         tmp_root = Path(tmp_root_str).resolve()
         datadir = tmp_root / "datadir"
+        package_dir = BOOTSTRAPPER_PKG_DIR
+        package_digest = None
+        if package_zip:
+            package_zip = package_zip.expanduser().resolve()
+            package_digest = digest_file(package_zip)
+            if package_digest != PACKAGE_SHA256:
+                raise RuntimeError(f"package ZIP SHA-256 mismatch: expected {PACKAGE_SHA256}, got {package_digest}")
+            package_dir = tmp_root / "verified-package"
+            extract_package(package_zip, package_dir)
         workspace_root = tmp_root / "workspace"
         workspace_root.mkdir(parents=True, exist_ok=True)
+        runtime_home = tmp_root / "runtime-home"
+        runtime_home.mkdir()
+        robocorp_home = tmp_root / "ROBOCORP_HOME"
+        robocorp_home.mkdir()
 
         started = start_owned_runtime(
             datadir=datadir,
@@ -140,8 +155,11 @@ def run_dogfood_suite(
             approved_roots=[workspace_root],
             trusted_roots=[workspace_root],
             api_key=api_key,
+            package_dir=package_dir,
             runtime_binary=runtime_binary,
             rcc_binary=rcc_binary,
+            runtime_home=runtime_home,
+            robocorp_home=robocorp_home,
         )
         mcp_url = f"http://127.0.0.1:{port}/mcp"
         base_url = f"http://127.0.0.1:{port}"
@@ -448,6 +466,13 @@ def run_dogfood_suite(
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "status": "passed",
             "source_identity": _source_identity(),
+            "packaged_install": {
+                "package_zip": str(package_zip) if package_zip else None,
+                "package_sha256": package_digest,
+                "extracted_package_dir": str(package_dir) if package_digest else None,
+                "runtime_home": str(runtime_home),
+                "robocorp_home": str(robocorp_home),
+            },
             "qualification_environment": {
                 "os": platform.system(),
                 "os_release": platform.release(),
@@ -528,6 +553,12 @@ def main() -> int:
     parser.add_argument("--rcc-binary", default=None)
     parser.add_argument("--output-receipt", default=None)
     parser.add_argument("--baseline-receipt", default=None)
+    parser.add_argument(
+        "--package-zip",
+        type=Path,
+        default=None,
+        help="Dogfood a SHA-pinned released Action package ZIP.",
+    )
     args = parser.parse_args()
 
     out_path = Path(args.output_receipt).expanduser().resolve() if args.output_receipt else None
@@ -538,6 +569,7 @@ def main() -> int:
         rcc_binary=args.rcc_binary,
         output_receipt=out_path,
         baseline_receipt=base_path,
+        package_zip=args.package_zip,
     )
     print(json.dumps(receipt, indent=2))
     return 0

@@ -32,7 +32,22 @@ from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_ROOT = SCRIPT_DIR.parent
-BOOTSTRAPPER_PKG_DIR = PLUGIN_ROOT / "bootstrapper"
+_configured_package_dir = os.environ.get("RCC_BOOTSTRAPPER_PACKAGE_DIR")
+if os.environ.get("RCC_BOOTSTRAPPER_HOME"):
+    _bootstrapper_home = Path(os.environ["RCC_BOOTSTRAPPER_HOME"]).expanduser()
+elif sys.platform == "win32":
+    local_app_data = os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
+    _bootstrapper_home = Path(local_app_data) / "rcc-bootstrapper"
+else:
+    xdg_data_home = os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
+    _bootstrapper_home = Path(xdg_data_home) / "rcc-bootstrapper"
+_installed_package_dir = _bootstrapper_home / "versions" / "0.6.0" / "package"
+if _configured_package_dir:
+    BOOTSTRAPPER_PKG_DIR = Path(_configured_package_dir).expanduser().resolve()
+elif _installed_package_dir.is_dir():
+    BOOTSTRAPPER_PKG_DIR = _installed_package_dir.resolve()
+else:
+    BOOTSTRAPPER_PKG_DIR = PLUGIN_ROOT / "bootstrapper"
 BOOTSTRAPPER_SRC_DIR = BOOTSTRAPPER_PKG_DIR / "src"
 
 if str(BOOTSTRAPPER_SRC_DIR) not in sys.path:
@@ -46,6 +61,7 @@ from rcc_bootstrapper.policy import (  # noqa: E402
     default_datadir,
     get_approved_roots,
     get_trusted_project_roots,
+    default_robocorp_home,
     inspect_binary_health,
     verify_binary_before_execution,
 )
@@ -382,6 +398,8 @@ def start_owned_runtime(
     api_key: str | None = None,
     runtime_binary: str | Path | None = None,
     rcc_binary: str | Path | None = None,
+    runtime_home: str | Path | None = None,
+    robocorp_home: str | Path | None = None,
     expected_runtime_sha256: str | None = None,
     startup_timeout: float = 90.0,
 ) -> dict[str, Any]:
@@ -455,6 +473,19 @@ def start_owned_runtime(
     env["RCC_BOOTSTRAPPER_TRUSTED_PROJECT_ROOTS"] = os.pathsep.join(str(r) for r in trusted_project_roots)
     env["RCC_BOOTSTRAPPER_ACTION_SERVER_BIN"] = str(verified_as)
     env["RCC_BOOTSTRAPPER_RCC_BIN"] = str(verified_rcc)
+    env["ROBOCORP_HOME"] = str(
+        Path(robocorp_home).expanduser().resolve() if robocorp_home else default_robocorp_home()
+    )
+    isolated_home = (
+        Path(runtime_home).expanduser().resolve()
+        if runtime_home
+        else (datadir.parent / "action-server-home").resolve()
+    )
+    isolated_home.mkdir(parents=True, exist_ok=True)
+    env["HOME"] = str(isolated_home)
+    if sys.platform == "win32":
+        env["USERPROFILE"] = str(isolated_home)
+    env["ACTIONS_HOME"] = str(isolated_home / ".actions")
 
     cmd = [
         str(verified_as),

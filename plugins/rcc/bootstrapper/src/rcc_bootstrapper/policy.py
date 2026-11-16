@@ -8,9 +8,8 @@ import re
 import shutil
 import subprocess
 import sys
+from dataclasses import asdict, dataclass
 from pathlib import Path
-
-from .models import BinaryHealth
 
 PINNED_SHA256_BY_ARTIFACT: dict[str, str] = {
     "actions-runtime-1.1.1-linux64": "8c27fbed198aef16c98cdc7a45230fbc4708b06dff1c3523aeddfcdf7840efd0",
@@ -55,6 +54,39 @@ class PolicyViolationError(ValueError):
         self.message = message
 
 
+try:
+    from .models import BinaryHealth
+except ModuleNotFoundError as exc:
+    if exc.name != "pydantic":
+        raise
+
+    @dataclass
+    class BinaryHealth:
+        """Small stdlib-only binary report used by the extracted-package launcher."""
+
+        name: str
+        available: bool
+        executable_path: str | None = None
+        version: str | None = None
+        sha256: str | None = None
+        pinned_version: str | None = None
+        digest_verified: bool = False
+
+        def model_dump(self) -> dict[str, object]:
+            return asdict(self)
+
+
+def _default_home() -> Path:
+    configured = os.environ.get("RCC_BOOTSTRAPPER_HOME")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+    return (base / "rcc-bootstrapper").resolve()
+
+
 def default_datadir() -> Path:
     """Return the per-user external state directory for the bootstrapper."""
     configured = (
@@ -64,13 +96,15 @@ def default_datadir() -> Path:
     )
     if configured:
         return Path(configured).expanduser().resolve()
-    if sys.platform == "win32":
-        local_app_data = os.environ.get("LOCALAPPDATA")
-        base = Path(local_app_data) if local_app_data else (Path.home() / "AppData" / "Local")
-        return (base / "rcc-bootstrapper" / "runtime").resolve()
-    xdg = os.environ.get("XDG_DATA_HOME")
-    base = Path(xdg) if xdg else (Path.home() / ".local" / "share")
-    return (base / "rcc-bootstrapper" / "runtime").resolve()
+    return (_default_home() / "state" / "runtime").resolve()
+
+
+def default_robocorp_home() -> Path:
+    """Return isolated, persistent RCC cache and Holotree state for this user."""
+    configured = os.environ.get("RCC_BOOTSTRAPPER_ROBOCORP_HOME")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return (_default_home() / "state" / "robocorp").resolve()
 
 
 def get_approved_roots(explicit_roots: list[str | Path] | None = None) -> list[Path]:
@@ -287,6 +321,16 @@ def resolve_binary(name: str, explicit_path: str | Path | None = None) -> Path |
             return p.resolve()
         found = shutil.which(str(candidate))
         return Path(found).resolve() if found else None
+
+    versioned_bin = _default_home() / "versions" / "0.6.0" / "bin"
+    versioned_name = (
+        "actions-runtime-1.1.1-windows64.exe" if sys.platform == "win32" else "actions-runtime-1.1.1-linux64"
+    )
+    if name == "rcc":
+        versioned_name = "rcc-windows64.exe" if sys.platform == "win32" else "rcc-linux64"
+    versioned_probe = versioned_bin / versioned_name
+    if versioned_probe.is_file():
+        return versioned_probe.resolve()
 
     found = shutil.which(name)
     if found:

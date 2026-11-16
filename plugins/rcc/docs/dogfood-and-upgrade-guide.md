@@ -2,6 +2,26 @@
 
 This guide covers starting, inspecting, dogfooding, backing up, upgrading, and rolling back the `rcc` plugin's bundled Actions & Robot Bootstrapper MCP server (`plugins/rcc/bootstrapper/`).
 
+## 0. Install from the Plugin Release (stdlib Python only)
+
+The release includes a compressed Action package generated from `plugins/rcc/bootstrapper/`. Install it and the pinned native tools on Linux x86-64 or Windows AMD64 with Python's standard library only:
+
+```bash
+python3 plugins/rcc/scripts/install_bootstrapper.py
+```
+
+On Windows PowerShell, run `py -3 plugins/rcc/scripts/install_bootstrapper.py`. Setup verifies SHA-256 pins before atomically publishing the package and binaries under the user's RCC Bootstrapper home. The extracted Action package is self-contained; setup does not import the repository source or require Pydantic. Runtime databases, the private Action Server cache, and `ROBOCORP_HOME` live under the separate `state/` directory. Existing versioned installs are verified and reused on retry.
+
+To start it on Linux, provide a private API key and an approved workspace root:
+
+```bash
+export RCC_BOOTSTRAPPER_API_KEY="replace-with-a-locally-generated-secret"
+python3 plugins/rcc/scripts/bootstrapper_runtime.py start \
+  --approved-root "$PWD/workspace"
+```
+
+Use the equivalent `$env:RCC_BOOTSTRAPPER_API_KEY = ...` and `py -3 ...` form in PowerShell. Add `--trusted-root` only for a directory whose code the operator has reviewed. The package and setup support Linux x86-64 and Windows AMD64; other platforms fail before setup writes or downloads anything. Windows execution remains **NOT QUALIFIED** until its native Action Server MCP path passes CI/live dogfood.
+
 ---
 
 ## 1. Quick Start (`http://127.0.0.1:8765/mcp`)
@@ -65,6 +85,7 @@ Run the dogfood suite:
 
 ```bash
 python3 plugins/rcc/scripts/dogfood_bootstrapper.py \
+  --package-zip dist/rcc-actions-bootstrapper-0.6.0.zip \
   --output-receipt /tmp/rcc-bootstrapper-dogfood-1.1.1.json
 ```
 
