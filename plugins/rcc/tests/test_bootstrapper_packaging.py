@@ -152,7 +152,8 @@ class PackagingTests(unittest.TestCase):
     def test_installed_versioned_binary_precedes_global_path_binary(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             home = Path(temp)
-            pinned = home / "versions" / "0.6.0" / "bin" / "actions-runtime-1.1.1-linux64"
+            runtime_name = installer.platform_pin()[0]
+            pinned = home / "versions" / "0.6.0" / "bin" / runtime_name
             pinned.parent.mkdir(parents=True)
             pinned.write_bytes(b"pinned")
             with (
@@ -384,7 +385,9 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(receipt["package_sha256"], package_sha)
             private_dirs = [home, home / "versions", versions, home / "state", home / "state" / "robocorp"]
             for directory in private_dirs:
-                self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+                self.assertTrue(directory.is_dir())
+                if os.name != "nt":
+                    self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
 
 
 if __name__ == "__main__":
