@@ -4,13 +4,26 @@ This guide covers starting, inspecting, dogfooding, backing up, upgrading, and r
 
 ## 0. Install from the Plugin Release (stdlib Python only)
 
-The release includes a compressed Action package generated from `plugins/rcc/bootstrapper/`. Install it and the pinned native tools on Linux x86-64 or Windows AMD64 with Python's standard library only:
+The release workflow builds a compressed Action package generated from `plugins/rcc/bootstrapper/` and attaches it as `rcc-actions-bootstrapper-0.6.0.zip` when `v0.6.0` is published. That release has not been published from this branch, so its live package URL is not available yet. After publication, install the package and pinned native tools on Linux x86-64 or Windows AMD64 with Python's standard library only:
 
 ```bash
 python3 plugins/rcc/scripts/install_bootstrapper.py
 ```
 
-On Windows PowerShell, run `py -3 plugins/rcc/scripts/install_bootstrapper.py`. Setup verifies SHA-256 pins before atomically publishing the package and binaries under the user's RCC Bootstrapper home. The extracted Action package is self-contained; setup does not import the repository source or require Pydantic. Runtime databases, the private Action Server cache, and `ROBOCORP_HOME` live under the separate `state/` directory. Existing versioned installs are verified and reused on retry.
+On Windows PowerShell, run `py -3 plugins/rcc/scripts/install_bootstrapper.py`. Setup verifies SHA-256 pins before atomically publishing the package and binaries under the user's RCC Bootstrapper home. The extracted Action package is self-contained; setup does not import the repository source or require Pydantic. Runtime databases, the private Action Server caches, UV cache, and `ROBOCORP_HOME` live under the separate `state/` directory. Existing versioned installs are verified and reused on retry. Setup preserves the caller's `HOME` and `USERPROFILE`.
+
+Before the release asset exists, build the package ZIP from canonical source and qualify the actual installer with pinned artifacts:
+
+```bash
+python3 plugins/rcc/scripts/build_bootstrapper_package.py \
+  --action-server /path/to/actions-runtime-1.1.1-linux64 \
+  --output /tmp/rcc-actions-bootstrapper-0.6.0.zip
+python3 plugins/rcc/scripts/dogfood_bootstrapper.py \
+  --package-archive /tmp/rcc-actions-bootstrapper-0.6.0.zip \
+  --output-receipt /tmp/rcc-bootstrapper-dogfood.json
+```
+
+`--package-archive` verifies the generated ZIP and downloads the pinned Runtime and RCC binaries over HTTPS. For a fully offline installer run, pass `--offline-artifact-dir` containing the ZIP plus exact platform-pinned binary filenames.
 
 To start it on Linux, provide a private API key and an approved workspace root:
 
@@ -85,7 +98,7 @@ Run the dogfood suite:
 
 ```bash
 python3 plugins/rcc/scripts/dogfood_bootstrapper.py \
-  --package-zip dist/rcc-actions-bootstrapper-0.6.0.zip \
+  --package-archive dist/rcc-actions-bootstrapper-0.6.0.zip \
   --output-receipt /tmp/rcc-bootstrapper-dogfood-1.1.1.json
 ```
 

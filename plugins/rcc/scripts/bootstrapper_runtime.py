@@ -30,8 +30,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+if __name__ == "__main__":
+    sys.dont_write_bytecode = True
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_ROOT = SCRIPT_DIR.parent
+from install_bootstrapper import (
+    PACKAGE_SHA256,
+    verify_extracted_package,
+    verify_installed_package,
+)  # noqa: E402
+
 _configured_package_dir = os.environ.get("RCC_BOOTSTRAPPER_PACKAGE_DIR")
 if os.environ.get("RCC_BOOTSTRAPPER_HOME"):
     _bootstrapper_home = Path(os.environ["RCC_BOOTSTRAPPER_HOME"]).expanduser()
@@ -45,9 +54,17 @@ _installed_package_dir = _bootstrapper_home / "versions" / "0.6.0" / "package"
 if _configured_package_dir:
     BOOTSTRAPPER_PKG_DIR = Path(_configured_package_dir).expanduser().resolve()
 elif _installed_package_dir.is_dir():
+    receipt = json.loads((_installed_package_dir.parent / "install-receipt.json").read_text(encoding="utf-8"))
+    if receipt.get("package_sha256") != PACKAGE_SHA256:
+        raise RuntimeError("installed package receipt does not match the pinned package version")
+    verify_installed_package(_installed_package_dir.parent / "package.zip", _installed_package_dir)
     BOOTSTRAPPER_PKG_DIR = _installed_package_dir.resolve()
 else:
     BOOTSTRAPPER_PKG_DIR = PLUGIN_ROOT / "bootstrapper"
+if _configured_package_dir:
+    _configured_archive = BOOTSTRAPPER_PKG_DIR.parent / "package.zip"
+    if _configured_archive.is_file():
+        verify_extracted_package(_configured_archive, BOOTSTRAPPER_PKG_DIR)
 BOOTSTRAPPER_SRC_DIR = BOOTSTRAPPER_PKG_DIR / "src"
 
 if str(BOOTSTRAPPER_SRC_DIR) not in sys.path:
@@ -67,6 +84,18 @@ from rcc_bootstrapper.policy import (  # noqa: E402
 )
 
 INSTANCE_METADATA_FILENAME = "bootstrapper-instance.json"
+
+
+def _ensure_private_runtime_dir(path: Path, label: str) -> Path:
+    path = path.expanduser().absolute()
+    if path.is_symlink():
+        raise PolicyViolationError("symlink_runtime_home", f"Refusing symlink runtime directory for {label}.")
+    if path.exists() and not path.is_dir():
+        raise PolicyViolationError("invalid_runtime_home", f"Runtime directory for {label} is not a directory.")
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if path.is_symlink() or not path.is_dir():
+        raise PolicyViolationError("invalid_runtime_home", f"Runtime directory for {label} changed during startup.")
+    return path.resolve()
 
 
 def _now_iso() -> str:
@@ -404,6 +433,13 @@ def start_owned_runtime(
     startup_timeout: float = 90.0,
 ) -> dict[str, Any]:
     """Start an owned action-server instance after fail-closed binary verification and port ownership checks."""
+    installed_archive = package_dir.expanduser().resolve().parent / "package.zip"
+    if installed_archive.is_file():
+        installed_receipt = installed_archive.parent / "install-receipt.json"
+        if installed_receipt.is_file():
+            verify_installed_package(installed_archive, package_dir.expanduser().resolve())
+        else:
+            verify_extracted_package(installed_archive, package_dir.expanduser().resolve())
     resolved_api_key = api_key if api_key is not None else os.environ.get("RCC_BOOTSTRAPPER_API_KEY")
     if not resolved_api_key or not resolved_api_key.strip():
         raise PolicyViolationError(
@@ -411,8 +447,10 @@ def start_owned_runtime(
             "Set RCC_BOOTSTRAPPER_API_KEY or pass --api-key before starting the MCP endpoint.",
         )
 
-    datadir = datadir.expanduser().resolve()
-    datadir.mkdir(parents=True, exist_ok=True)
+    raw_datadir = datadir.expanduser().absolute()
+    if raw_datadir.is_symlink() or raw_datadir.parent.is_symlink():
+        raise PolicyViolationError("symlink_runtime_state", "Refusing symlink runtime state directory.")
+    datadir = _ensure_private_runtime_dir(raw_datadir, "datadir")
 
     # Reconcile stale metadata if present
     stale_reconciled = _reconcile_stale_metadata(datadir)
@@ -473,19 +511,21 @@ def start_owned_runtime(
     env["RCC_BOOTSTRAPPER_TRUSTED_PROJECT_ROOTS"] = os.pathsep.join(str(r) for r in trusted_project_roots)
     env["RCC_BOOTSTRAPPER_ACTION_SERVER_BIN"] = str(verified_as)
     env["RCC_BOOTSTRAPPER_RCC_BIN"] = str(verified_rcc)
-    env["ROBOCORP_HOME"] = str(
-        Path(robocorp_home).expanduser().resolve() if robocorp_home else default_robocorp_home()
-    )
+    requested_robocorp_home = Path(robocorp_home) if robocorp_home else default_robocorp_home()
     isolated_home = (
-        Path(runtime_home).expanduser().resolve()
+        Path(runtime_home).expanduser()
         if runtime_home
-        else (datadir.parent / "action-server-home").resolve()
+        else datadir.parent / "action-server-home"
     )
-    isolated_home.mkdir(parents=True, exist_ok=True)
-    env["HOME"] = str(isolated_home)
-    if sys.platform == "win32":
-        env["USERPROFILE"] = str(isolated_home)
-    env["ACTIONS_HOME"] = str(isolated_home / ".actions")
+    isolated_home = _ensure_private_runtime_dir(isolated_home, "Action Server cache root")
+    for key, path in (
+        ("ACTIONS_HOME", isolated_home / "actions"),
+        ("ROBOTS_HOME", isolated_home / "robots"),
+        ("UV_CACHE_DIR", isolated_home / "uv-cache"),
+        ("ROBOCORP_HOME", requested_robocorp_home),
+    ):
+        env[key] = str(_ensure_private_runtime_dir(path, key))
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
 
     cmd = [
         str(verified_as),

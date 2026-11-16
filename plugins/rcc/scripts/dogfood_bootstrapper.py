@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import socket
 import subprocess
@@ -45,7 +46,7 @@ from bootstrapper_runtime import (  # noqa: E402
     start_owned_runtime,
     stop_owned_runtime,
 )
-from install_bootstrapper import PACKAGE_SHA256, digest_file, extract_package  # noqa: E402
+from install_bootstrapper import PACKAGE_FILENAME  # noqa: E402
 
 
 def _find_free_port() -> int:
@@ -123,7 +124,8 @@ def run_dogfood_suite(
     rcc_binary: str | None = None,
     output_receipt: Path | None = None,
     baseline_receipt: Path | None = None,
-    package_zip: Path | None = None,
+    package_archive: Path | None = None,
+    offline_artifact_dir: Path | None = None,
 ) -> dict[str, Any]:
     api_key = "dogfood-local-auth-token-109"
     secret_marker = "TOPSECRET_VALUE_99412_DO_NOT_LEAK"
@@ -133,14 +135,42 @@ def run_dogfood_suite(
         tmp_root = Path(tmp_root_str).resolve()
         datadir = tmp_root / "datadir"
         package_dir = BOOTSTRAPPER_PKG_DIR
-        package_digest = None
-        if package_zip:
-            package_zip = package_zip.expanduser().resolve()
-            package_digest = digest_file(package_zip)
-            if package_digest != PACKAGE_SHA256:
-                raise RuntimeError(f"package ZIP SHA-256 mismatch: expected {PACKAGE_SHA256}, got {package_digest}")
-            package_dir = tmp_root / "verified-package"
-            extract_package(package_zip, package_dir)
+        installation: dict[str, str] | None = None
+        install_home = tmp_root / "installed-home"
+        if package_archive or offline_artifact_dir:
+            command = [sys.executable, "-S", str(SCRIPT_DIR / "install_bootstrapper.py"), "--home", str(install_home)]
+            if package_archive:
+                command.extend(["--package-archive", str(package_archive.expanduser().resolve())])
+            if offline_artifact_dir:
+                command.extend(["--offline-artifact-dir", str(offline_artifact_dir.expanduser().resolve())])
+            installed = subprocess.run(command, capture_output=True, text=True, check=False)
+            if installed.returncode:
+                raise RuntimeError(f"installer CLI failed: {installed.stderr.strip()}")
+            installation = json.loads(installed.stdout)
+            package_dir = Path(installation["package_dir"])
+            package_archive = Path(installation["package_archive"])
+            runtime_binary = installation["action_server"]
+            rcc_binary = installation["rcc"]
+
+            launcher_env = os.environ.copy()
+            launcher_env["RCC_BOOTSTRAPPER_HOME"] = str(install_home)
+            launcher_env.pop("PYTHONPATH", None)
+            launcher = subprocess.run(
+                [sys.executable, "-S", str(SCRIPT_DIR / "bootstrapper_runtime.py"), "--help"],
+                cwd=tmp_root,
+                env=launcher_env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if launcher.returncode or "start" not in launcher.stdout or "pydantic" in launcher.stderr.lower():
+                raise RuntimeError(f"source-free installed launcher failed: {launcher.stderr.strip()}")
+            package_digest = json.loads(
+                (Path(installation["installation"]) / "install-receipt.json").read_text(encoding="utf-8")
+            )["package_sha256"]
+        else:
+            package_digest = None
+            package_archive = None
         workspace_root = tmp_root / "workspace"
         workspace_root.mkdir(parents=True, exist_ok=True)
         runtime_home = tmp_root / "runtime-home"
@@ -467,9 +497,18 @@ def run_dogfood_suite(
             "status": "passed",
             "source_identity": _source_identity(),
             "packaged_install": {
-                "package_zip": str(package_zip) if package_zip else None,
+                "installer_mode": (
+                    "offline-artifacts"
+                    if offline_artifact_dir
+                    else ("package-archive" if installation else None)
+                ),
+                "package_archive": str(package_archive) if package_archive else None,
                 "package_sha256": package_digest,
-                "extracted_package_dir": str(package_dir) if package_digest else None,
+                "extracted_package_dir": str(package_dir) if installation else None,
+                "installation_home": str(install_home) if installation else None,
+                "installed_action_server": runtime_binary if installation else None,
+                "installed_rcc": rcc_binary if installation else None,
+                "source_free_launcher": "passed" if installation else "not-run",
                 "runtime_home": str(runtime_home),
                 "robocorp_home": str(robocorp_home),
             },
@@ -553,11 +592,18 @@ def main() -> int:
     parser.add_argument("--rcc-binary", default=None)
     parser.add_argument("--output-receipt", default=None)
     parser.add_argument("--baseline-receipt", default=None)
-    parser.add_argument(
-        "--package-zip",
+    package_input = parser.add_mutually_exclusive_group()
+    package_input.add_argument(
+        "--package-archive",
         type=Path,
         default=None,
-        help="Dogfood a SHA-pinned released Action package ZIP.",
+        help="Install from a generated ZIP and download pinned binaries over HTTPS.",
+    )
+    package_input.add_argument(
+        "--offline-artifact-dir",
+        type=Path,
+        default=None,
+        help=f"Install from local files named {PACKAGE_FILENAME} and the platform-pinned native binaries.",
     )
     args = parser.parse_args()
 
@@ -569,7 +615,8 @@ def main() -> int:
         rcc_binary=args.rcc_binary,
         output_receipt=out_path,
         baseline_receipt=base_path,
-        package_zip=args.package_zip,
+        package_archive=args.package_archive,
+        offline_artifact_dir=args.offline_artifact_dir,
     )
     print(json.dumps(receipt, indent=2))
     return 0

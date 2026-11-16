@@ -79,12 +79,12 @@ except ModuleNotFoundError as exc:
 def _default_home() -> Path:
     configured = os.environ.get("RCC_BOOTSTRAPPER_HOME")
     if configured:
-        return Path(configured).expanduser().resolve()
+        return Path(configured).expanduser().absolute()
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
     else:
         base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
-    return (base / "rcc-bootstrapper").resolve()
+    return (base / "rcc-bootstrapper").absolute()
 
 
 def default_datadir() -> Path:
@@ -95,16 +95,16 @@ def default_datadir() -> Path:
         or os.environ.get("ACTIONS_RUNTIME_DATADIR")
     )
     if configured:
-        return Path(configured).expanduser().resolve()
-    return (_default_home() / "state" / "runtime").resolve()
+        return Path(configured).expanduser().absolute()
+    return (_default_home() / "state" / "runtime").absolute()
 
 
 def default_robocorp_home() -> Path:
     """Return isolated, persistent RCC cache and Holotree state for this user."""
     configured = os.environ.get("RCC_BOOTSTRAPPER_ROBOCORP_HOME")
     if configured:
-        return Path(configured).expanduser().resolve()
-    return (_default_home() / "state" / "robocorp").resolve()
+        return Path(configured).expanduser().absolute()
+    return (_default_home() / "state" / "robocorp").absolute()
 
 
 def get_approved_roots(explicit_roots: list[str | Path] | None = None) -> list[Path]:

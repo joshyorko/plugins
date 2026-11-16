@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import stat
 import subprocess
 import tempfile
 import zipfile
@@ -22,22 +24,18 @@ def build(action_server: str, output: Path) -> None:
         native_zip = Path(temp) / "rcc-actions-bootstrapper.zip"
         datadir = Path(temp) / "datadir"
         native_dir = Path(temp) / "native"
-        private_home = Path(temp) / "home"
+        private_cache_root = Path(temp) / "runtime-state"
         native_dir.mkdir()
-        private_home.mkdir()
+        private_cache_root.mkdir()
         env = os.environ.copy()
         env.update(
             {
-                "HOME": str(private_home),
-                "ACTIONS_HOME": str(private_home / ".actions"),
-                "ROBOCORP_HOME": str(private_home / "robocorp"),
-                "XDG_CACHE_HOME": str(private_home / ".cache"),
-                "XDG_CONFIG_HOME": str(private_home / ".config"),
-                "XDG_DATA_HOME": str(private_home / ".local" / "share"),
+                "ACTIONS_HOME": str(private_cache_root / "actions"),
+                "ROBOTS_HOME": str(private_cache_root / "robots"),
+                "ROBOCORP_HOME": str(private_cache_root / "robocorp"),
+                "UV_CACHE_DIR": str(private_cache_root / "uv-cache"),
             }
         )
-        if os.name == "nt":
-            env["USERPROFILE"] = str(private_home)
         result = subprocess.run(
             [
                 action_server,
@@ -69,17 +67,21 @@ def build(action_server: str, output: Path) -> None:
                 output_tmp, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
             ) as target:
                 names: set[str] = set()
-                for item in source.infolist():
+                for item in sorted(source.infolist(), key=lambda entry: entry.filename):
                     if item.filename in names:
                         raise RuntimeError(f"duplicate package member: {item.filename}")
                     names.add(item.filename)
                     if item.is_dir():
                         continue
                     data = source.read(item)
+                    if item.filename == "__action_server_metadata__.json":
+                        data = json.dumps(
+                            json.loads(data), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                        ).encode("utf-8") + b"\n"
                     info = zipfile.ZipInfo(item.filename, date_time=(1980, 1, 1, 0, 0, 0))
                     info.compress_type = zipfile.ZIP_DEFLATED
-                    info.external_attr = item.external_attr
-                    info.create_system = item.create_system
+                    info.external_attr = (stat.S_IFREG | 0o644) << 16
+                    info.create_system = 3
                     target.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
             with zipfile.ZipFile(output_tmp) as check:
                 if check.testzip() is not None:

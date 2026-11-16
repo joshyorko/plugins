@@ -39,7 +39,13 @@ Before executing `action-server` or `rcc`, `plugins/rcc` verifies the binary's S
 | `rcc-linux64` (`v18.19.11`) | `18.19.11` | Linux x86-64 | `26,349,568` | `4d68609044d3a39a1728d571d54c77a6174215adb40eb9acd69ce5ad34a6db1f` | Verified on local Linux host (`/home/linuxbrew/.linuxbrew/bin/rcc`) |
 | `rcc-windows64.exe` (`v18.19.11`) | `18.19.11` | Windows AMD64 | `27,492,352` | `58f43a3b3c54032740f224cb4a8bbf68c47c865cf2652084fb139b8ecc01cfd0` | Published upstream; Windows plugin CI execution `PENDING` |
 
-### 1.3 PyPI Package & Wheel SHA-256 Digests
+### 1.3 RCC Bootstrapper Release Package
+
+| Release Asset | Version | Source | SHA-256 Digest | Status |
+| --- | --- | --- | --- | --- |
+| `rcc-actions-bootstrapper-0.6.0.zip` | `0.6.0` | Generated from `plugins/rcc/bootstrapper/` with Actions Runtime `1.1.1` | `6b1eaa525e5a1c57c6648f498c09d5fae04d1dd02b14db66cba36b4d15ce0622` | Two independent isolated builds at different output paths matched; release asset awaits publication of tag `v0.6.0`. |
+
+### 1.4 PyPI Package & Wheel SHA-256 Digests
 
 | Package | Version | Distribution Filename | SHA-256 Digest |
 | --- | --- | --- | --- |
@@ -62,14 +68,17 @@ We distinguish four evidence levels and never conflate them:
 1. **`ACTUAL-NATIVE-RUNTIME`**: Driven through the real `action-server` (`1.1.1`) binary over `/mcp` (`initialize` → `notifications/initialized` → `tools/list` → `resources/list` → `prompts/list` → `tools/call`) with retained output receipt.
 2. **`ACTUAL-SOURCE-UNIT`**: Executed in local pytest against `plugins/rcc/bootstrapper` source with real filesystem/process isolation.
 3. **`ACTUAL-INSTALLED-CLIENT`**: Executed through the installed Codex CLI MCP client using an environment-backed Bearer token.
-4. **`PENDING`**: Implementation in progress or awaiting CI / independent reviewer run; **not yet qualified**.
-5. **`NOT QUALIFIED`**: Unsupported or unexecuted in this environment (e.g., zero-touch plugin auth, Windows native Canvas storage, macOS plugin runtime, ChatGPT Mode E1 public tunnel, `celld`).
+4. **`ACTUAL-INSTALLED-PACKAGE`**: Installed through `install_bootstrapper.py` from checksum-verified package and native artifacts, then launched from the extracted package without site packages or the source tree.
+5. **`PENDING`**: Implementation in progress or awaiting CI / independent reviewer run; **not yet qualified**.
+6. **`NOT QUALIFIED`**: Unsupported or unexecuted in this environment (e.g., zero-touch plugin auth, Windows native Canvas storage, macOS plugin runtime, ChatGPT Mode E1 public tunnel, `celld`).
 
 | Capability / Surface | Linux x86-64 (This Branch) | Windows AMD64 | macOS arm64 | Evidence Level & Notes |
 | --- | --- | --- | --- | --- |
 | **Plugin Manifests (`mcp.json`, `.mcp.json`, `.codex-plugin/plugin.json`)** | `ACTUAL-SOURCE-UNIT` (`bin/check` + `test_rcc_distribution.py` passed) | `PENDING` (Windows CI) | `NOT QUALIFIED` | Verified locally on Linux via `bin/check` (82 tests) and `tests/test_rcc_distribution.py`. |
-| **Bootstrapper Core Unit & Security Regression Suite (`test_bootstrapper_unit.py`)** | `ACTUAL-SOURCE-UNIT` (16/16 passed) | `PENDING` (Windows CI) | `NOT QUALIFIED` | Covers approved/trusted roots, traversal/symlink, overwrite, secret redaction, fail-closed generator/binary checks, timeout, active cancellation, stale run/runtime metadata, and occupied ports. |
+| **Bootstrapper Core Unit & Security Regression Suite (`test_bootstrapper_unit.py`)** | `ACTUAL-SOURCE-UNIT` (17/17 passed) | `PENDING` (Windows CI) | `NOT QUALIFIED` | Covers approved/trusted roots, traversal/symlink, overwrite, secret redaction, fail-closed generator/binary checks, timeout, active cancellation, stale run/runtime metadata, occupied ports, and caller HOME preservation. |
+| **Packaging/Installer Security Regression Suite (`test_bootstrapper_packaging.py`)** | `ACTUAL-SOURCE-UNIT` (12/12 passed) | `PENDING` (Windows CI) | `NOT QUALIFIED` | Covers stdlib-only setup, checksum/download retry and Windows-style rename semantics, ZIP path/content validation, symlink rejection, idempotency, and pinned binary priority. |
 | **Runtime Launcher Lifecycle (`bootstrapper_runtime.py`: fail-closed SHA-256, occupied-port, stale-PID, SQLite backup)** | `ACTUAL-NATIVE-RUNTIME` (pinned startup, owned stop and SQLite backup) + `ACTUAL-SOURCE-UNIT` (stale metadata and occupied-port fixtures) | `PENDING` (Windows CI) | `NOT QUALIFIED` | Binary digests are checked before Runtime spawn; missing auth and unrelated listeners fail closed before launch. |
+| **Packaged installer, extracted tree verification, and source-free launcher** | `ACTUAL-INSTALLED-PACKAGE` ([`dogfood-receipt-linux-packaged-install.json`](file:///home/kdlocpanda/plugins/plugins/rcc/docs/dogfood-receipt-linux-packaged-install.json)) | `PENDING` (native Windows CI) | `NOT QUALIFIED` | Linux installed the generated ZIP plus pinned Runtime/RCC assets in a fresh home, verified the extracted tree and `python -S` launcher, then exercised MCP, Action, Robot, and failure/retry paths. The live plugin release URL remains unavailable until `v0.6.0` is published. |
 | **Actions Runtime `1.1.1` `/mcp` Discovery & Authorized Tool Invocation (`dogfood_bootstrapper.py`)** | `ACTUAL-NATIVE-RUNTIME` ([`dogfood-receipt-linux-1.1.1.json`](file:///home/kdlocpanda/plugins/plugins/rcc/docs/dogfood-receipt-linux-1.1.1.json)) | `PENDING` (Windows CI) | `NOT QUALIFIED` | Proved unauthenticated HTTP 403 rejection + Bearer-authenticated `initialize` → `notifications/initialized` → `tools/list` (15 tools) → `resources/list` → `prompts/list` → `tools/call`. |
 | **Golden Path: Action (`workflow-producer-consumer`) + Robot (`01-python`) Preview → Scaffold → Validate → Run → Failure/Retry** | `ACTUAL-NATIVE-RUNTIME` ([`dogfood-receipt-linux-1.1.1.json`](file:///home/kdlocpanda/plugins/plugins/rcc/docs/dogfood-receipt-linux-1.1.1.json)) | `PENDING` (Windows CI) | `NOT QUALIFIED` | Reuses published `action-server new` and `rcc robot initialize` templates; verified non-empty overwrite refusal, work-item producer/consumer SQLite queue (`seeded=2`, `done=2`), secret redaction, controlled failure (`exit_code=2`), `failure_diagnosis`, and retry to `succeeded`. |
 | **Runtime authentication and executable trust boundaries** | `ACTUAL-NATIVE-RUNTIME` (unauthenticated startup refused; keyed `/mcp` rejects missing Bearer; execution requires configured trusted root and explicit run confirmation) | `PENDING` | `NOT QUALIFIED` | Workspace write approval does not imply executable trust; caller-provided `trust_project=true` cannot add server-owned trusted roots. |

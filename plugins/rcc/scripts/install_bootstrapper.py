@@ -9,6 +9,7 @@ import json
 import os
 import platform
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -19,7 +20,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 PACKAGE_VERSION = "0.6.0"
-PACKAGE_SHA256 = "465a10d9de21e9f8cf869513afbe83fceb284dd57933ce32835a4499da00628b"
+PACKAGE_SHA256 = "6b1eaa525e5a1c57c6648f498c09d5fae04d1dd02b14db66cba36b4d15ce0622"
 RUNTIME_VERSION = "1.1.1"
 RCC_VERSION = "18.19.11"
 PINS = {
@@ -47,6 +48,7 @@ PACKAGE_URL = (
     "https://github.com/joshyorko/plugins/releases/download/v0.6.0/"
     "rcc-actions-bootstrapper-0.6.0.zip"
 )
+PACKAGE_FILENAME = f"rcc-actions-bootstrapper-{PACKAGE_VERSION}.zip"
 MAX_DOWNLOAD_BYTES = 130 * 1024 * 1024
 MAX_PACKAGE_BYTES = 256 * 1024 * 1024
 MAX_PACKAGE_FILES = 256
@@ -76,32 +78,32 @@ def download(url: str, destination: Path, expected_sha256: str) -> None:
     if urlparse(url).scheme != "https":
         raise RuntimeError("pinned release downloads must use HTTPS")
     for attempt in range(3):
+        temp_path: Path | None = None
         try:
             destination.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=".download-", delete=False) as out:
                 temp_path = Path(out.name)
-                try:
-                    request = urllib.request.Request(url, headers={"User-Agent": "rcc-bootstrapper-setup/0.6.0"})
-                    with urllib.request.urlopen(request, timeout=60) as response:
-                        if urlparse(response.geturl()).scheme != "https":
-                            raise RuntimeError("release server redirected to a non-HTTPS URL")
-                        if response.status != 200:
-                            raise RuntimeError(f"download returned HTTP {response.status}: {url}")
-                        size = 0
-                        while chunk := response.read(1024 * 1024):
-                            size += len(chunk)
-                            if size > MAX_DOWNLOAD_BYTES:
-                                raise RuntimeError(f"download exceeded {MAX_DOWNLOAD_BYTES} bytes")
-                            out.write(chunk)
-                    out.flush()
-                    os.fsync(out.fileno())
-                    actual = digest_file(temp_path)
-                    if actual != expected_sha256:
-                        raise RuntimeError(f"SHA-256 mismatch for {url}: expected {expected_sha256}, got {actual}")
-                    os.replace(temp_path, destination)
-                    return
-                finally:
-                    temp_path.unlink(missing_ok=True)
+                request = urllib.request.Request(url, headers={"User-Agent": "rcc-bootstrapper-setup/0.6.0"})
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    if urlparse(response.geturl()).scheme != "https":
+                        raise RuntimeError("release server redirected to a non-HTTPS URL")
+                    if response.status != 200:
+                        raise RuntimeError(f"download returned HTTP {response.status}: {url}")
+                    size = 0
+                    while chunk := response.read(1024 * 1024):
+                        size += len(chunk)
+                        if size > MAX_DOWNLOAD_BYTES:
+                            raise RuntimeError(f"download exceeded {MAX_DOWNLOAD_BYTES} bytes")
+                        out.write(chunk)
+                out.flush()
+                os.fsync(out.fileno())
+            # Close the temporary file before replacing the destination; Windows
+            # refuses to replace a path while a handle is open without delete sharing.
+            actual = digest_file(temp_path)
+            if actual != expected_sha256:
+                raise RuntimeError(f"SHA-256 mismatch for {url}: expected {expected_sha256}, got {actual}")
+            os.replace(temp_path, destination)
+            return
         except urllib.error.HTTPError as exc:
             if exc.code != 429 and not 500 <= exc.code < 600:
                 raise RuntimeError(f"download returned HTTP {exc.code}: {url}") from exc
@@ -110,7 +112,53 @@ def download(url: str, destination: Path, expected_sha256: str) -> None:
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             if attempt == 2:
                 raise RuntimeError(f"download retries exhausted for {url}: {exc}") from exc
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
         time.sleep(0.5 * (attempt + 1))
+
+
+def stage_local_artifact(source: Path, destination: Path, expected_sha256: str) -> None:
+    source = source.expanduser().absolute()
+    if not source.is_file() or _is_link_like(source):
+        raise RuntimeError(f"local pinned artifact is missing or redirected: {source}")
+    if source.stat().st_size > MAX_DOWNLOAD_BYTES:
+        raise RuntimeError(f"local artifact exceeds {MAX_DOWNLOAD_BYTES} bytes: {source}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=".artifact-", delete=False) as out:
+            temp_path = Path(out.name)
+            with source.open("rb") as inp:
+                shutil.copyfileobj(inp, out)
+            out.flush()
+            os.fsync(out.fileno())
+        actual = digest_file(temp_path)
+        if actual != expected_sha256:
+            raise RuntimeError(f"SHA-256 mismatch for {source}: expected {expected_sha256}, got {actual}")
+        os.replace(temp_path, destination)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
+def _is_link_like(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    if os.name == "nt" and hasattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT") and path.exists():
+        return bool(path.stat(follow_symlinks=False).st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    return False
+
+
+def _ensure_private_directory(path: Path) -> Path:
+    if _is_link_like(path):
+        raise RuntimeError(f"refusing redirected user state directory: {path}")
+    if path.exists() and not path.is_dir():
+        raise RuntimeError(f"user state path is not a directory: {path}")
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if _is_link_like(path) or not path.is_dir():
+        raise RuntimeError(f"user state path changed during setup: {path}")
+    return path
 
 
 def _safe_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
@@ -174,15 +222,82 @@ def extract_package(archive_path: Path, destination: Path) -> None:
                 shutil.copyfileobj(source, output)
 
 
+def verify_extracted_package(archive_path: Path, package_dir: Path) -> dict[str, str]:
+    """Require an extracted package tree to match every byte in its pinned ZIP."""
+    package_dir = package_dir.absolute()
+    archive_path = archive_path.absolute()
+    if _is_link_like(archive_path) or _is_link_like(archive_path.parent) or _is_link_like(archive_path.parent.parent):
+        raise RuntimeError(f"pinned package or version directory is redirected: {archive_path}")
+    if _is_link_like(package_dir) or not package_dir.is_dir():
+        raise RuntimeError(f"extracted package directory is missing or redirected: {package_dir}")
+    with zipfile.ZipFile(archive_path) as archive:
+        infos = _safe_members(archive)
+        expected_files: dict[str, tuple[int, str]] = {}
+        expected_dirs = {""}
+        for info in infos:
+            relative = PurePosixPath(info.filename).as_posix().rstrip("/")
+            parts = PurePosixPath(relative).parts
+            for index in range(1, len(parts)):
+                expected_dirs.add("/".join(parts[:index]))
+            if info.is_dir():
+                expected_dirs.add(relative)
+                continue
+            digest = hashlib.sha256()
+            with archive.open(info) as member:
+                for chunk in iter(lambda: member.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            expected_files[relative] = (info.file_size, digest.hexdigest())
+
+    actual_files: set[str] = set()
+    actual_dirs = {""}
+    for current, directories, files in os.walk(package_dir, followlinks=False):
+        current_path = Path(current)
+        for name in directories:
+            item = current_path / name
+            if _is_link_like(item):
+                raise RuntimeError(f"extracted package contains a redirected directory: {item}")
+            actual_dirs.add(item.relative_to(package_dir).as_posix())
+        for name in files:
+            item = current_path / name
+            if _is_link_like(item) or not item.is_file():
+                raise RuntimeError(f"extracted package contains a redirected or non-file entry: {item}")
+            if item.stat().st_size > MAX_PACKAGE_BYTES:
+                raise RuntimeError(f"extracted package file exceeds size limit: {item}")
+            actual_files.add(item.relative_to(package_dir).as_posix())
+    if actual_files != set(expected_files) or actual_dirs != expected_dirs:
+        raise RuntimeError(
+            "extracted package file tree differs from the verified ZIP "
+            f"(missing={sorted(set(expected_files) - actual_files)}, "
+            f"extra={sorted(actual_files - set(expected_files))})"
+        )
+    actual_hashes = {
+        name: (
+            (package_dir / PurePosixPath(name)).stat().st_size,
+            digest_file(package_dir / PurePosixPath(name)),
+        )
+        for name in actual_files
+    }
+    if actual_hashes != expected_files:
+        raise RuntimeError("extracted package contents differ from the verified ZIP")
+    return actual_hashes
+
+
+def verify_installed_package(archive_path: Path, package_dir: Path) -> dict[str, str]:
+    actual = digest_file(archive_path)
+    if actual != PACKAGE_SHA256:
+        raise RuntimeError(f"installed package ZIP pin mismatch: expected {PACKAGE_SHA256}, got {actual}")
+    return verify_extracted_package(archive_path, package_dir)
+
+
 def _default_home() -> Path:
     configured = os.environ.get("RCC_BOOTSTRAPPER_HOME")
     if configured:
-        return Path(configured).expanduser().resolve()
+        return Path(configured).expanduser().absolute()
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
     else:
         base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
-    return (base / "rcc-bootstrapper").resolve()
+    return (base / "rcc-bootstrapper").absolute()
 
 
 class SetupLock:
@@ -193,6 +308,8 @@ class SetupLock:
     def __enter__(self) -> "SetupLock":
         deadline = time.monotonic() + 120
         while True:
+            if _is_link_like(self.path):
+                raise RuntimeError(f"refusing redirected setup lock: {self.path}")
             try:
                 self.fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
                 os.write(self.fd, str(os.getpid()).encode())
@@ -210,13 +327,24 @@ class SetupLock:
         self.path.unlink(missing_ok=True)
 
 
-def install(home: Path, *, package_url: str = PACKAGE_URL) -> dict[str, str]:
+def install(
+    home: Path,
+    *,
+    package_url: str = PACKAGE_URL,
+    package_archive: Path | None = None,
+    offline_artifact_dir: Path | None = None,
+) -> dict[str, str]:
     runtime_name, runtime_sha, rcc_name, rcc_sha, runtime_url, rcc_url = platform_pin()
-    home = home.expanduser().resolve()
+    home = home.expanduser().absolute()
+    if _is_link_like(home):
+        raise RuntimeError(f"refusing redirected bootstrapper home: {home}")
     # Unsupported hosts fail before any filesystem changes or network requests.
-    home.mkdir(parents=True, exist_ok=True)
+    _ensure_private_directory(home)
     with SetupLock(home / ".setup.lock"):
-        versions = home / "versions" / PACKAGE_VERSION
+        version_root = _ensure_private_directory(home / "versions")
+        versions = version_root / PACKAGE_VERSION
+        if _is_link_like(versions):
+            raise RuntimeError(f"refusing redirected immutable package version: {versions}")
         if versions.exists():
             receipt_path = versions / "install-receipt.json"
             if not receipt_path.is_file():
@@ -231,15 +359,26 @@ def install(home: Path, *, package_url: str = PACKAGE_URL) -> dict[str, str]:
                 or digest_file(versions / "bin" / rcc_name) != rcc_sha
             ):
                 raise RuntimeError(f"installed package version failed pin verification: {versions}")
+            verify_installed_package(versions / "package.zip", versions / "package")
         else:
             work = Path(tempfile.mkdtemp(prefix=".setup-", dir=home))
             try:
-                download(package_url, work / "package.zip", PACKAGE_SHA256)
-                download(runtime_url, work / runtime_name, runtime_sha)
-                download(rcc_url, work / rcc_name, rcc_sha)
+                if offline_artifact_dir:
+                    artifact_dir = offline_artifact_dir.expanduser().resolve()
+                    stage_local_artifact(artifact_dir / PACKAGE_FILENAME, work / "package.zip", PACKAGE_SHA256)
+                    stage_local_artifact(artifact_dir / runtime_name, work / runtime_name, runtime_sha)
+                    stage_local_artifact(artifact_dir / rcc_name, work / rcc_name, rcc_sha)
+                else:
+                    if package_archive:
+                        stage_local_artifact(package_archive, work / "package.zip", PACKAGE_SHA256)
+                    else:
+                        download(package_url, work / "package.zip", PACKAGE_SHA256)
+                    download(runtime_url, work / runtime_name, runtime_sha)
+                    download(rcc_url, work / rcc_name, rcc_sha)
                 stage = work / "version"
-                stage.mkdir()
+                _ensure_private_directory(stage)
                 extract_package(work / "package.zip", stage / "package")
+                verify_installed_package(work / "package.zip", stage / "package")
                 shutil.copyfile(work / "package.zip", stage / "package.zip")
                 (stage / "bin").mkdir()
                 shutil.copyfile(work / runtime_name, stage / "bin" / runtime_name)
@@ -257,34 +396,60 @@ def install(home: Path, *, package_url: str = PACKAGE_URL) -> dict[str, str]:
                     "platform": f"{platform.system()}/{platform.machine()}",
                 }
                 (stage / "install-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
-                versions.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(stage, versions)
             finally:
                 shutil.rmtree(work, ignore_errors=True)
-    state = home / "state"
-    state.mkdir(parents=True, exist_ok=True)
-    robocorp_home = state / "robocorp"
-    robocorp_home.mkdir(parents=True, exist_ok=True)
+    state = _ensure_private_directory(home / "state")
+    robocorp_home = _ensure_private_directory(state / "robocorp")
+    runtime_state = _ensure_private_directory(state / "runtime")
+    cache_home = _ensure_private_directory(state / "action-server-home")
+    for cache_name in ("actions", "robots", "uv-cache"):
+        _ensure_private_directory(cache_home / cache_name)
     runtime_name, _, rcc_name, _, _, _ = platform_pin()
     return {
         "installation": str(versions),
+        "package_archive": str(versions / "package.zip"),
         "RCC_BOOTSTRAPPER_HOME": str(home),
         "package_dir": str(versions / "package"),
         "RCC_BOOTSTRAPPER_PACKAGE_DIR": str(versions / "package"),
         "action_server": str(versions / "bin" / runtime_name),
         "rcc": str(versions / "bin" / rcc_name),
-        "datadir": str(state / "runtime"),
-        "RCC_BOOTSTRAPPER_DATADIR": str(state / "runtime"),
+        "datadir": str(runtime_state),
+        "RCC_BOOTSTRAPPER_DATADIR": str(runtime_state),
         "ROBOCORP_HOME": str(robocorp_home),
+        "ACTIONS_HOME": str(cache_home / "actions"),
+        "ROBOTS_HOME": str(cache_home / "robots"),
+        "UV_CACHE_DIR": str(cache_home / "uv-cache"),
     }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", type=Path, default=_default_home())
+    parser.add_argument(
+        "--package-archive",
+        type=Path,
+        default=None,
+        help="Use this locally generated pinned package ZIP; binaries still download via HTTPS.",
+    )
+    parser.add_argument(
+        "--offline-artifact-dir",
+        type=Path,
+        default=None,
+        help=f"Use local pinned files named {PACKAGE_FILENAME}, plus native Runtime and RCC assets.",
+    )
     args = parser.parse_args()
     try:
-        print(json.dumps(install(args.home), indent=2))
+        print(
+            json.dumps(
+                install(
+                    args.home,
+                    package_archive=args.package_archive,
+                    offline_artifact_dir=args.offline_artifact_dir,
+                ),
+                indent=2,
+            )
+        )
     except Exception as exc:
         print(f"setup failed: {exc}", file=sys.stderr)
         return 2

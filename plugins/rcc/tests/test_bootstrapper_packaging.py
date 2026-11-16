@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -11,8 +12,10 @@ import urllib.error
 import unittest
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from plugins.rcc.scripts import build_bootstrapper_package as builder
 from plugins.rcc.scripts import install_bootstrapper as installer
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "bootstrapper" / "src"))
@@ -32,6 +35,35 @@ def package_zip(path: Path) -> bytes:
 
 
 class PackagingTests(unittest.TestCase):
+    def test_package_builder_preserves_home_and_sets_runtime_cache_homes(self) -> None:
+        captured: dict[str, str] = {}
+
+        def fake_package_build(args, **kwargs):
+            captured.update(kwargs["env"])
+            output_dir = Path(args[args.index("--output-dir") + 1])
+            with zipfile.ZipFile(output_dir / "rcc-actions-bootstrapper.zip", "w") as archive:
+                archive.writestr("package.yaml", "spec-version: v2\n")
+                archive.writestr("__action_server_metadata__.json", "{}")
+                archive.writestr("src/rcc_bootstrapper/bootstrapper_actions.py", "# fixture\n")
+            return SimpleNamespace(returncode=0, stderr="")
+
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "package.zip"
+            with (
+                patch.dict(os.environ, {"HOME": "/caller/home", "USERPROFILE": r"C:\\Caller\\Profile"}),
+                patch.object(builder.subprocess, "run", side_effect=fake_package_build),
+            ):
+                builder.build("action-server", output)
+            self.assertEqual(captured["HOME"], "/caller/home")
+            self.assertEqual(captured["USERPROFILE"], r"C:\\Caller\\Profile")
+            for key in ("ACTIONS_HOME", "ROBOTS_HOME", "ROBOCORP_HOME", "UV_CACHE_DIR"):
+                self.assertIn("runtime-state", captured[key])
+            self.assertEqual(zipfile.ZipFile(output).namelist(), [
+                "__action_server_metadata__.json",
+                "package.yaml",
+                "src/rcc_bootstrapper/bootstrapper_actions.py",
+            ])
+
     def test_setup_import_uses_only_stdlib_and_windows_assets_are_exe(self) -> None:
         subprocess.run(
             [
@@ -54,9 +86,11 @@ class PackagingTests(unittest.TestCase):
             package_zip(archive_path)
             package_dir = root / "versions" / "0.6.0" / "package"
             installer.extract_package(archive_path, package_dir)
+            shutil.copyfile(archive_path, package_dir.parent / "package.zip")
             env = {
                 **os.environ,
                 "RCC_BOOTSTRAPPER_HOME": str(root),
+                "RCC_BOOTSTRAPPER_PACKAGE_DIR": str(package_dir),
             }
             runtime_script = Path(__file__).parents[1] / "scripts" / "bootstrapper_runtime.py"
             result = subprocess.run(
@@ -69,6 +103,18 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("start", result.stdout)
             self.assertNotIn("pydantic", result.stderr.lower())
+            tampered = package_dir / "src/rcc_bootstrapper/policy.py"
+            original = tampered.read_bytes()
+            tampered.write_bytes(original + b"# tampered\n")
+            rejected = subprocess.run(
+                [sys.executable, "-S", str(runtime_script), "--help"],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("contents differ", rejected.stderr)
 
     def test_platform_gate_rejects_unsupported_before_creating_home(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -77,6 +123,23 @@ class PackagingTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "unsupported platform"):
                     installer.install(home)
             self.assertFalse(home.exists())
+
+    def test_install_rejects_symlink_versions_directory(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks are unavailable")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            home.mkdir(mode=0o700)
+            outside = root / "outside"
+            outside.mkdir()
+            try:
+                (home / "versions").symlink_to(outside, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+            with self.assertRaisesRegex(RuntimeError, "redirected user state"):
+                installer.install(home)
+            self.assertEqual(list(outside.iterdir()), [])
 
     def test_installed_versioned_binary_precedes_global_path_binary(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -151,11 +214,54 @@ class PackagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             destination = Path(temp) / "binary"
             with (
-                patch.object(installer.urllib.request, "urlopen", side_effect=[temporary_error, Response(content)]) as open_url,
+                patch.object(
+                    installer.urllib.request,
+                    "urlopen",
+                    side_effect=[temporary_error, Response(content)],
+                ) as open_url,
                 patch.object(installer.time, "sleep"),
             ):
                 installer.download("https://example.invalid/binary", destination, hashlib.sha256(content).hexdigest())
             self.assertEqual(open_url.call_count, 2)
+            self.assertEqual(destination.read_bytes(), content)
+
+    def test_download_closes_temp_handle_before_windows_style_replace(self) -> None:
+        class Response(io.BytesIO):
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                self.close()
+
+            def geturl(self):
+                return "https://example.invalid/binary"
+
+        content = b"Windows sharing semantics"
+        handles = []
+        original_named_temp = installer.tempfile.NamedTemporaryFile
+        original_replace = installer.os.replace
+
+        def capture_temp(*args, **kwargs):
+            handle = original_named_temp(*args, **kwargs)
+            handles.append(handle)
+            return handle
+
+        def windows_style_replace(source: Path, destination: Path) -> None:
+            if not handles[-1].closed:
+                raise PermissionError("sharing violation: source still open")
+            original_replace(source, destination)
+
+        with tempfile.TemporaryDirectory() as temp:
+            destination = Path(temp) / "binary"
+            with (
+                patch.object(installer.tempfile, "NamedTemporaryFile", side_effect=capture_temp),
+                patch.object(installer.os, "replace", side_effect=windows_style_replace),
+                patch.object(installer.urllib.request, "urlopen", return_value=Response(content)),
+            ):
+                installer.download("https://example.invalid/binary", destination, hashlib.sha256(content).hexdigest())
+            self.assertTrue(handles[0].closed)
             self.assertEqual(destination.read_bytes(), content)
 
     def test_failed_binary_download_never_publishes_partial_version(self) -> None:
@@ -224,7 +330,29 @@ class PackagingTests(unittest.TestCase):
                 patch.object(installer.sys, "platform", "win32"),
             ):
                 first = installer.install(home, package_url="https://package.invalid")
+                package_dir = Path(first["package_dir"])
+                tracked = package_dir / "src/rcc_bootstrapper/policy.py"
+                original = tracked.read_bytes()
+                tracked.write_bytes(original + b"# modified\n")
+                with self.assertRaisesRegex(RuntimeError, "contents differ"):
+                    installer.install(home, package_url="https://package.invalid")
+                tracked.write_bytes(original)
+                extra = package_dir / "unexpected.txt"
+                extra.write_text("unexpected", encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, "file tree differs"):
+                    installer.install(home, package_url="https://package.invalid")
+                extra.unlink()
                 second = installer.install(home, package_url="https://package.invalid")
+                if os.name != "nt":
+                    state = home / "state"
+                    robocorp = state / "robocorp"
+                    saved_robocorp = state / "robocorp.saved"
+                    robocorp.rename(saved_robocorp)
+                    robocorp.symlink_to(temp_root / "outside", target_is_directory=True)
+                    with self.assertRaisesRegex(RuntimeError, "redirected user state"):
+                        installer.install(home, package_url="https://package.invalid")
+                    robocorp.unlink()
+                    saved_robocorp.rename(robocorp)
             self.assertEqual(first, second)
             self.assertEqual(len(calls), 3)
             versions = Path(first["installation"])
@@ -234,6 +362,9 @@ class PackagingTests(unittest.TestCase):
             self.assertFalse((home / "versions" / "0.6.0" / "state").exists())
             receipt = json.loads((versions / "install-receipt.json").read_text(encoding="utf-8"))
             self.assertEqual(receipt["package_sha256"], package_sha)
+            private_dirs = [home, home / "versions", versions, home / "state", home / "state" / "robocorp"]
+            for directory in private_dirs:
+                self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,8 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
 BOOTSTRAPPER_SRC = ROOT / "plugins" / "rcc" / "bootstrapper" / "src"
@@ -374,6 +376,47 @@ class BootstrapperUnitAndSecurityTests(unittest.TestCase):
         finally:
             if old_key is not None:
                 os.environ["RCC_BOOTSTRAPPER_API_KEY"] = old_key
+
+    def test_runtime_start_preserves_home_and_isolates_supported_cache_variables(self) -> None:
+        import bootstrapper_runtime
+
+        runtime_path = self.tmp_root / "runtime"
+        rcc_path = self.tmp_root / "rcc"
+        process = SimpleNamespace(pid=123456, poll=lambda: None)
+        with (
+            patch.dict(
+                os.environ,
+                {"HOME": "/caller/home", "USERPROFILE": r"C:\\Caller\\Profile"},
+            ),
+            patch.object(
+                bootstrapper_runtime,
+                "verify_binary_before_execution",
+                side_effect=[(runtime_path, "a" * 64), (rcc_path, "b" * 64)],
+            ),
+            patch.object(
+                bootstrapper_runtime,
+                "inspect_binary_health",
+                return_value=SimpleNamespace(version="1.1.1"),
+            ),
+            patch.object(bootstrapper_runtime, "_is_port_open", side_effect=[False, True]),
+            patch.object(bootstrapper_runtime.subprocess, "Popen", return_value=process) as popen,
+        ):
+            bootstrapper_runtime.start_owned_runtime(
+                datadir=self.datadir,
+                approved_roots=[self.approved_root],
+                api_key="test-key",
+                runtime_binary=runtime_path,
+                rcc_binary=rcc_path,
+                robocorp_home=self.tmp_root / "private-robocorp",
+            )
+        child_env = popen.call_args.kwargs["env"]
+        self.assertEqual(child_env["HOME"], "/caller/home")
+        self.assertEqual(child_env["USERPROFILE"], r"C:\\Caller\\Profile")
+        cache_root = self.datadir.parent / "action-server-home"
+        self.assertEqual(child_env["ACTIONS_HOME"], str((cache_root / "actions").resolve()))
+        self.assertEqual(child_env["ROBOTS_HOME"], str((cache_root / "robots").resolve()))
+        self.assertEqual(child_env["UV_CACHE_DIR"], str((cache_root / "uv-cache").resolve()))
+        self.assertEqual(child_env["ROBOCORP_HOME"], str((self.tmp_root / "private-robocorp").resolve()))
 
     def test_stale_runtime_metadata_is_archived_without_signaling_pid(self) -> None:
         import bootstrapper_runtime
