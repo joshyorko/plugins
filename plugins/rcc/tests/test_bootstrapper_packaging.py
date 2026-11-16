@@ -19,7 +19,7 @@ from plugins.rcc.scripts import build_bootstrapper_package as builder
 from plugins.rcc.scripts import install_bootstrapper as installer
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "bootstrapper" / "src"))
-from rcc_bootstrapper.policy import resolve_binary  # noqa: E402
+from rcc_bootstrapper.policy import PolicyViolationError, resolve_binary  # noqa: E402
 
 
 def package_zip(path: Path) -> bytes:
@@ -152,6 +152,18 @@ class PackagingTests(unittest.TestCase):
                 patch.object(installer.shutil, "which", return_value="/usr/bin/action-server"),
             ):
                 self.assertEqual(resolve_binary("action-server"), pinned.resolve())
+
+    def test_runtime_binary_resolution_rejects_redirected_version_tree(self) -> None:
+        if os.name == "nt":
+            self.skipTest("directory symlinks may require elevation on Windows")
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            outside = home / "outside"
+            outside.mkdir()
+            (home / "versions").symlink_to(outside, target_is_directory=True)
+            with patch.dict(os.environ, {"RCC_BOOTSTRAPPER_HOME": str(home)}):
+                with self.assertRaisesRegex(PolicyViolationError, "redirected versioned"):
+                    resolve_binary("action-server")
 
     def test_zip_extraction_rejects_traversal_and_symlink(self) -> None:
         for entry_name, mode in (

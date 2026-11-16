@@ -20,7 +20,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 PACKAGE_VERSION = "0.6.0"
-PACKAGE_SHA256 = "6b1eaa525e5a1c57c6648f498c09d5fae04d1dd02b14db66cba36b4d15ce0622"
+PACKAGE_SHA256 = "d58a8711956f8a1ca29bf03d445f6090ad4393ac65319dc8fb4f3b191b19d058"
 RUNTIME_VERSION = "1.1.1"
 RCC_VERSION = "18.19.11"
 PINS = {
@@ -334,6 +334,8 @@ def install(
     package_archive: Path | None = None,
     offline_artifact_dir: Path | None = None,
 ) -> dict[str, str]:
+    if package_archive and offline_artifact_dir:
+        raise ValueError("choose either --package-archive or --offline-artifact-dir")
     runtime_name, runtime_sha, rcc_name, rcc_sha, runtime_url, rcc_url = platform_pin()
     home = home.expanduser().absolute()
     if _is_link_like(home):
@@ -426,13 +428,14 @@ def install(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", type=Path, default=_default_home())
-    parser.add_argument(
+    package_source = parser.add_mutually_exclusive_group()
+    package_source.add_argument(
         "--package-archive",
         type=Path,
         default=None,
         help="Use this locally generated pinned package ZIP; binaries still download via HTTPS.",
     )
-    parser.add_argument(
+    package_source.add_argument(
         "--offline-artifact-dir",
         type=Path,
         default=None,

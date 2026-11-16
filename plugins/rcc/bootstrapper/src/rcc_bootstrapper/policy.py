@@ -6,6 +6,7 @@ import hashlib
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -85,6 +86,14 @@ def _default_home() -> Path:
     else:
         base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
     return (base / "rcc-bootstrapper").absolute()
+
+
+def _is_redirected_directory(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    if sys.platform == "win32" and hasattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT") and path.exists():
+        return bool(path.stat(follow_symlinks=False).st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    return False
 
 
 def default_datadir() -> Path:
@@ -322,13 +331,21 @@ def resolve_binary(name: str, explicit_path: str | Path | None = None) -> Path |
         found = shutil.which(str(candidate))
         return Path(found).resolve() if found else None
 
-    versioned_bin = _default_home() / "versions" / "0.6.0" / "bin"
+    versioned_home = _default_home()
+    versioned_bin = versioned_home / "versions" / "0.6.0" / "bin"
+    if any(
+        _is_redirected_directory(path)
+        for path in (versioned_home, versioned_home / "versions", versioned_home / "versions" / "0.6.0", versioned_bin)
+    ):
+        raise PolicyViolationError("symlink_versioned_install", "Refusing redirected versioned Runtime/RCC paths.")
     versioned_name = (
         "actions-runtime-1.1.1-windows64.exe" if sys.platform == "win32" else "actions-runtime-1.1.1-linux64"
     )
     if name == "rcc":
         versioned_name = "rcc-windows64.exe" if sys.platform == "win32" else "rcc-linux64"
     versioned_probe = versioned_bin / versioned_name
+    if _is_redirected_directory(versioned_probe):
+        raise PolicyViolationError("symlink_versioned_binary", "Refusing a redirected installed Runtime/RCC binary.")
     if versioned_probe.is_file():
         return versioned_probe.resolve()
 
