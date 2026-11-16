@@ -41,4 +41,6 @@ Use this skill for ACTIONS package authoring, debugging, and container deploymen
 - `../rcc-workitems/references/docdb-rpa-patterns.md`: DocDB queue/outbox/retry patterns to reuse only when an action package has real durable work-item semantics.
 - `../rcc-robots/references/troubleshooting-validation.md`: shared failure triage and validation commands.
 - `assets/container/package.yaml`: pinned ACTIONS package v2 starter.
+- `../../bootstrapper/`: canonical bundled `rcc-actions-bootstrapper` Action package served via Actions Runtime `/mcp`.
+- `../../docs/adr-0001-actions-bootstrapper-mcp.md`, `../../docs/capability-and-version-matrix.md`, and `../../docs/dogfood-and-upgrade-guide.md`: architecture decisions, fail-closed SHA-256 release pin matrix, and `/mcp` dogfood workflow.
 - `../rcc/references/source-map.md`: repository source evidence; use the container reference for current PyPI runtime pins.
