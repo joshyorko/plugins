@@ -1,6 +1,11 @@
 {
-  "timestamp": "2026-11-16T19:07:47.317587+00:00",
+  "timestamp": "2026-11-16T19:13:19.276694+00:00",
   "status": "passed",
+  "source_identity": {
+    "repository_commit": "6e7693976677dd03889b3263389c67f808383185",
+    "executable_source_clean_at_run": true,
+    "bootstrapper_package_version": "0.6.0"
+  },
   "qualification_environment": {
     "os": "Linux",
     "os_release": "7.3.1",
@@ -61,7 +66,7 @@
     "scaffolded_files_count": 4,
     "non_empty_overwrite_refused": true,
     "validation_valid": true,
-    "run_id": "run-c434127743ae",
+    "run_id": "run-fc9e6e80d2e3",
     "run_state": "succeeded",
     "secret_redacted": true,
     "work_items_summary": {
@@ -70,10 +75,10 @@
       "done_count": 2,
       "failed_count": 0,
       "outputs_count": 2,
-      "db_path": "/tmp/rcc-bootstrapper-dogfood-lfbrz1h5/workspace/dogfood-workitems-action/output/workitems.db",
+      "db_path": "/tmp/rcc-bootstrapper-dogfood-yl8roij2/workspace/dogfood-workitems-action/output/workitems.db",
       "sample_outputs": [
         {
-          "source_id": "4d0a1bc1-2505-4b83-9808-28b9ac9d5cba",
+          "source_id": "c1dd10f4-2ed6-4f97-9fb6-6e9802f0012f",
           "processed_target": "producer",
           "input": {
             "order_id": "ORD-101",
@@ -82,7 +87,7 @@
           "status": "processed"
         },
         {
-          "source_id": "63df84ba-1898-4eac-8f32-140b27221bc7",
+          "source_id": "2d4c445c-15f5-4328-8500-493f5582aecc",
           "processed_target": "producer",
           "input": {
             "order_id": "ORD-102",
@@ -97,7 +102,7 @@
     "template": "01-python",
     "scaffolded_files_count": 7,
     "validation_valid": true,
-    "run_id": "run-19113316d5c2",
+    "run_id": "run-b9a758201ca0",
     "run_state": "succeeded",
     "artifacts": [
       {
@@ -113,11 +118,11 @@
     ]
   },
   "controlled_failure_and_retry": {
-    "failed_run_id": "run-d1c01f599db9",
+    "failed_run_id": "run-87ac316db5dd",
     "failed_state": "failed",
     "failed_exit_code": 2,
     "diagnosis": {
-      "run_id": "run-d1c01f599db9",
+      "run_id": "run-87ac316db5dd",
       "state": "failed",
       "exit_code": 2,
       "error_code": "nonzero_exit_2",
@@ -139,15 +144,15 @@
   "lifecycle_and_backup": {
     "stop_status": {
       "status": "stopped",
-      "pid": 385486,
-      "datadir": "/tmp/rcc-bootstrapper-dogfood-lfbrz1h5/datadir",
+      "pid": 390103,
+      "datadir": "/tmp/rcc-bootstrapper-dogfood-yl8roij2/datadir",
       "terminated": true
     },
     "sqlite_backup_files": [
       {
         "name": "server.db",
         "size_bytes": 630784,
-        "sha256": "65aec80df4b6c597be619df2d0882f436190ec8f14d6d130987e1c760bc60af9"
+        "sha256": "cd92d7dbbe92a82e6266a2d4598a03827b91b14ca8a8f20d96aa0ff89df03906"
       }
     ]
   },
