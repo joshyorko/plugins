@@ -1,0 +1,206 @@
+{
+  "timestamp": "2026-11-16T19:13:19.276694+00:00",
+  "status": "passed",
+  "source_identity": {
+    "repository_commit": "6e7693976677dd03889b3263389c67f808383185",
+    "executable_source_clean_at_run": true,
+    "bootstrapper_package_version": "0.6.0"
+  },
+  "qualification_environment": {
+    "os": "Linux",
+    "os_release": "7.3.1",
+    "architecture": "x86_64",
+    "python_version": "3.12.13"
+  },
+  "runtime_instance": {
+    "runtime_binary": "/home/linuxbrew/.linuxbrew/Caskroom/action-server/1.1.1/actions-runtime-1.1.1-linux64",
+    "runtime_version": "1.1.1",
+    "runtime_sha256": "8c27fbed198aef16c98cdc7a45230fbc4708b06dff1c3523aeddfcdf7840efd0",
+    "rcc_binary": "/home/linuxbrew/.linuxbrew/Caskroom/rcc/18.19.11/rcc-linux64",
+    "rcc_sha256": "4d68609044d3a39a1728d571d54c77a6174215adb40eb9acd69ce5ad34a6db1f",
+    "auth_mode": "api-key"
+  },
+  "mcp_handshake_and_discovery": {
+    "protocol_version": "2025-03-26",
+    "server_info": {
+      "name": "Action Server",
+      "version": ""
+    },
+    "unauthenticated_rejection_probe": {
+      "rejected_as_expected": true,
+      "error": "MCP HTTP 403 on initialize: {\"detail\":\"Not authenticated\"}"
+    },
+    "discovered_tool_names": [
+      "bootstrapper_cancel",
+      "bootstrapper_discover",
+      "bootstrapper_plan",
+      "bootstrapper_results",
+      "bootstrapper_run",
+      "bootstrapper_scaffold",
+      "bootstrapper_status",
+      "bootstrapper_validate",
+      "canvas_apply",
+      "canvas_create",
+      "canvas_get",
+      "canvas_inspect",
+      "canvas_open",
+      "canvas_preview",
+      "canvas_release"
+    ],
+    "discovered_resource_uris": [
+      "bootstrapper://catalog/templates",
+      "ui://action-canvas/v1/canvas.html"
+    ],
+    "discovered_resource_template_uris": [
+      "bootstrapper://runs/{run_id}"
+    ],
+    "discovered_prompt_names": [
+      "bootstrapper_dogfood_workflow"
+    ],
+    "catalog_resource_read_ok": true,
+    "dogfood_prompt_get_ok": true
+  },
+  "action_golden_path": {
+    "template": "workflow-producer-consumer",
+    "planned_files_count": 3,
+    "scaffolded_files_count": 4,
+    "non_empty_overwrite_refused": true,
+    "validation_valid": true,
+    "run_id": "run-fc9e6e80d2e3",
+    "run_state": "succeeded",
+    "secret_redacted": true,
+    "work_items_summary": {
+      "seeded_count": 2,
+      "processed_count": 2,
+      "done_count": 2,
+      "failed_count": 0,
+      "outputs_count": 2,
+      "db_path": "/tmp/rcc-bootstrapper-dogfood-yl8roij2/workspace/dogfood-workitems-action/output/workitems.db",
+      "sample_outputs": [
+        {
+          "source_id": "c1dd10f4-2ed6-4f97-9fb6-6e9802f0012f",
+          "processed_target": "producer",
+          "input": {
+            "order_id": "ORD-101",
+            "amount": 42
+          },
+          "status": "processed"
+        },
+        {
+          "source_id": "2d4c445c-15f5-4328-8500-493f5582aecc",
+          "processed_target": "producer",
+          "input": {
+            "order_id": "ORD-102",
+            "amount": 99
+          },
+          "status": "processed"
+        }
+      ]
+    }
+  },
+  "robot_golden_path": {
+    "template": "01-python",
+    "scaffolded_files_count": 7,
+    "validation_valid": true,
+    "run_id": "run-b9a758201ca0",
+    "run_state": "succeeded",
+    "artifacts": [
+      {
+        "relative_path": "output/greeting.txt",
+        "size_bytes": 37,
+        "sha256": "248f16ed2570a90463cc390d82362b6a8999c39de75be5bf96a1ec900bfa553f"
+      },
+      {
+        "relative_path": "output/run_result.json",
+        "size_bytes": 109,
+        "sha256": "383c9653acce85995f22412c7316537e5e222bbb035c83b360ac3b83e18cb352"
+      }
+    ]
+  },
+  "controlled_failure_and_retry": {
+    "failed_run_id": "run-87ac316db5dd",
+    "failed_state": "failed",
+    "failed_exit_code": 2,
+    "diagnosis": {
+      "run_id": "run-87ac316db5dd",
+      "state": "failed",
+      "exit_code": 2,
+      "error_code": "nonzero_exit_2",
+      "error_message": "Command exited with code 2: Simulated failure triggered for target 'minimal_task'.",
+      "recommended_remediation": "Re-run bootstrapper_run with simulate_failure=False to complete the retry drill.",
+      "retry_ready": true
+    },
+    "retry_state": "succeeded"
+  },
+  "native_runtime_1_1_1_surfaces": {
+    "platform": "linux",
+    "canvas_ui_resource_read_ok": true,
+    "managed_work_items_unauthenticated_status": 401,
+    "managed_work_items_schema_status": 200,
+    "managed_work_items_schema_version": null,
+    "managed_work_items_capabilities_status": 422,
+    "managed_work_items_operations_count": 0
+  },
+  "lifecycle_and_backup": {
+    "stop_status": {
+      "status": "stopped",
+      "pid": 390103,
+      "datadir": "/tmp/rcc-bootstrapper-dogfood-yl8roij2/datadir",
+      "terminated": true
+    },
+    "sqlite_backup_files": [
+      {
+        "name": "server.db",
+        "size_bytes": 630784,
+        "sha256": "cd92d7dbbe92a82e6266a2d4598a03827b91b14ca8a8f20d96aa0ff89df03906"
+      }
+    ]
+  },
+  "installed_client_validation": {
+    "classification": "ACTUAL-INSTALLED-CLIENT",
+    "client": "Codex CLI",
+    "client_version": "codex-cli 0.169.0",
+    "auth_configuration": "temporary CLI config override references RCC_BOOTSTRAPPER_API_KEY via bearer_token_env_var; generated key remained in process environment",
+    "plugin_manifest_auth": "NOT QUALIFIED; portable and Codex plugin manifests do not inject the per-user API key",
+    "mcp_tool_call": {
+      "tool": "bootstrapper_plan",
+      "project_kind": "robot",
+      "template": "01-python",
+      "can_scaffold": true,
+      "planned_files_count": 3,
+      "writes_performed": false
+    }
+  },
+  "evidence_classification": {
+    "actual_native_runtime": [
+      "authenticated MCP handshake and discovery",
+      "Action golden path",
+      "Robot golden path",
+      "controlled failure and retry",
+      "owned stop and SQLite backup"
+    ],
+    "actual_installed_client": [
+      "Codex CLI authenticated bootstrapper_plan call"
+    ],
+    "source_unit_fixtures": [
+      "path traversal and symlink escape",
+      "overwrite refusal",
+      "trust-root denial",
+      "active cancellation",
+      "timeout",
+      "stale run/runtime metadata",
+      "occupied-port refusal",
+      "missing API key",
+      "missing generator binary"
+    ],
+    "mocked_success_claims": [],
+    "not_qualified": [
+      "Windows native run",
+      "macOS runtime",
+      "zero-touch plugin-manifest authentication",
+      "Action Canvas user workflow",
+      "Managed Work Items operations",
+      "ChatGPT Developer Mode"
+    ]
+  }
+}

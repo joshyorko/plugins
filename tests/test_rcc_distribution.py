@@ -1,4 +1,4 @@
-"""RCC installs expose skills without starting an MCP runtime."""
+"""RCC plugin distribution tests: skills, bundled Actions Bootstrapper MCP manifests, and no-Dagger invariants."""
 
 import json
 import runpy
@@ -12,16 +12,34 @@ PLUGIN = ROOT / "plugins" / "rcc"
 
 
 class RccDistributionTests(unittest.TestCase):
-    def test_manifests_do_not_register_or_advertise_dagger(self):
+    def test_manifests_register_bootstrapper_mcp_without_dagger(self):
         for relative in ("plugin.json", ".codex-plugin/plugin.json",
                          ".claude-plugin/plugin.json", "plugin.yaml"):
             with self.subTest(manifest=relative):
                 manifest = json.loads((PLUGIN / relative).read_text())
-                self.assertNotIn("mcpServers", manifest)
                 self.assertNotIn("dagger", json.dumps(manifest).lower())
+
         codex = json.loads((PLUGIN / ".codex-plugin/plugin.json").read_text())
         self.assertEqual(codex["interface"]["displayName"], "RCC Automation")
-        for relative in ("mcp.json", ".mcp.json", "dagger",
+        self.assertEqual(codex.get("mcpServers"), "./.mcp.json")
+
+        portable_mcp = json.loads((PLUGIN / "mcp.json").read_text())
+        self.assertEqual(
+            portable_mcp["mcpServers"]["rcc-bootstrapper"],
+            {"type": "streamable-http", "url": "http://127.0.0.1:8765/mcp"},
+        )
+
+        codex_mcp = json.loads((PLUGIN / ".mcp.json").read_text())
+        self.assertEqual(
+            codex_mcp["mcpServers"]["rcc-bootstrapper"],
+            {"type": "http", "url": "http://127.0.0.1:8765/mcp"},
+        )
+
+        self.assertTrue((PLUGIN / "bootstrapper" / "package.yaml").is_file())
+        self.assertTrue((PLUGIN / "bootstrapper" / "LICENSE").is_file())
+        self.assertTrue((PLUGIN / "bootstrapper" / "UPSTREAM.md").is_file())
+
+        for relative in ("dagger",
                          "skills/rcc/scripts/rcc-dagger-mcp",
                          "skills/rcc/scripts/rcc-dagger-mcp-filter.py"):
             with self.subTest(path=relative):

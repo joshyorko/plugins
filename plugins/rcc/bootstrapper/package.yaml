@@ -1,0 +1,42 @@
+spec-version: v2
+
+name: rcc-actions-bootstrapper
+description: Bundled MCP and Actions Runtime bootstrapper for scaffolding, validating, running, and inspecting Action packages and RCC robots.
+version: 0.6.0
+
+dependencies:
+  conda-forge:
+    - python=3.12.11
+    - uv=0.11.8
+  pypi:
+    - actions-core=1.1.0
+    - actions-work-items=0.5.0
+    - pydantic=2.13.5
+    - pyyaml=6.0.3
+
+pythonpath:
+  - src
+
+dev-dependencies:
+  conda-forge:
+    - pytest=8.3.3
+    - ruff=0.8.6
+
+dev-tasks:
+  test: pytest ../tests
+  lint: ruff check .
+
+packaging:
+  exclude:
+    - ./.git/**
+    - ./.vscode/**
+    - ./devdata/**
+    - ./output/**
+    - ./venv/**
+    - ./.venv/**
+    - ./**/*.pyc
+    - ./**/*.zip
+    - ./**/.env
+    - ./**/__MACOSX
+    - ./**/__pycache__/**
+    - ./**/*_cache/**

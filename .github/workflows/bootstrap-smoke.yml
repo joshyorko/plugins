@@ -23,6 +23,40 @@ jobs:
       - name: Validate repo
         run: bin/check
 
+      - name: Run RCC bootstrapper unit and security regression suite
+        run: python3 -m unittest plugins/rcc/tests/test_bootstrapper_unit.py plugins/rcc/tests/test_bootstrapper_packaging.py -v
+
+      - name: Build and dogfood packaged RCC bootstrapper through the installer
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/action-server" \
+            https://github.com/joshyorko/actions/releases/download/actions-runtime-1.1.1/actions-runtime-1.1.1-linux64
+          echo "8c27fbed198aef16c98cdc7a45230fbc4708b06dff1c3523aeddfcdf7840efd0  $RUNNER_TEMP/action-server" | sha256sum -c -
+          chmod 755 "$RUNNER_TEMP/action-server"
+          python3 plugins/rcc/scripts/build_bootstrapper_package.py \
+            --action-server "$RUNNER_TEMP/action-server" \
+            --output "$RUNNER_TEMP/rcc-actions-bootstrapper-0.6.0.zip"
+          python3 plugins/rcc/scripts/dogfood_bootstrapper.py \
+            --package-archive "$RUNNER_TEMP/rcc-actions-bootstrapper-0.6.0.zip" \
+            --output-receipt "$RUNNER_TEMP/rcc-bootstrapper-linux-install.json" \
+            > "$RUNNER_TEMP/rcc-bootstrapper-linux-install.log"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          receipt = json.loads(Path(os.environ["RUNNER_TEMP"], "rcc-bootstrapper-linux-install.json").read_text())
+          assert receipt["status"] == "passed"
+          assert receipt["packaged_install"]["source_free_launcher"] == "passed"
+          assert receipt["action_golden_path"]["run_state"] == "succeeded"
+          assert receipt["robot_golden_path"]["run_state"] == "succeeded"
+          assert receipt["controlled_failure_and_retry"]["retry_state"] == "succeeded"
+          print("Linux packaged installer and Action/Robot dogfood passed")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rcc-bootstrapper-package-0.6.0
+          path: ${{ runner.temp }}/rcc-actions-bootstrapper-0.6.0.zip
+          if-no-files-found: error
+
       - name: Lint shell entrypoints
         run: bash -n install.sh scripts/install-codex-assets.sh scripts/uninstall-codex-assets.sh
 
@@ -72,6 +106,7 @@ jobs:
 
   validate-windows:
     runs-on: windows-latest
+    needs: validate-linux
     steps:
       - uses: actions/checkout@v4
 
@@ -80,8 +115,29 @@ jobs:
         with:
           python-version: "3.11"
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: rcc-bootstrapper-package-0.6.0
+          path: ${{ runner.temp }}
+
       - name: Install validation dependencies
         run: python -m pip install -r requirements-dev.txt
+
+      - name: Run RCC bootstrapper unit and security regression suite on Windows
+        run: python -m unittest plugins/rcc/tests/test_bootstrapper_unit.py plugins/rcc/tests/test_bootstrapper_packaging.py -v
+
+      - name: Install and dogfood packaged RCC bootstrapper with pinned Windows binaries
+        run: |
+          python plugins/rcc/scripts/dogfood_bootstrapper.py `
+            --package-archive "$env:RUNNER_TEMP\rcc-actions-bootstrapper-0.6.0.zip" `
+            --output-receipt "$env:RUNNER_TEMP\rcc-bootstrapper-windows-install.json" `
+            > "$env:RUNNER_TEMP\rcc-bootstrapper-windows-install.log"
+          $receipt = Get-Content -Raw "$env:RUNNER_TEMP\rcc-bootstrapper-windows-install.json" | ConvertFrom-Json
+          if ($receipt.status -ne "passed" -or $receipt.packaged_install.source_free_launcher -ne "passed" -or `
+              $receipt.action_golden_path.run_state -ne "succeeded" -or $receipt.robot_golden_path.run_state -ne "succeeded" -or `
+              $receipt.controlled_failure_and_retry.retry_state -ne "succeeded") {
+            throw "Windows packaged installer dogfood failed"
+          }
 
       - name: PowerShell syntax smoke test
         shell: pwsh
