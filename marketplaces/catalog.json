@@ -66,7 +66,7 @@
       "name": "rcc",
       "category": "Developer Tools",
       "claude_category": "development",
-      "description": "RCC & Actions Runtime skills plus bundled Actions/Robot Bootstrapper MCP for Environment Artifacts, providers, trust, coordination, automation projects, Robot/RPA Framework, work items, Action Server, CI, and optional offline Tealdeer quick reference.",
+      "description": "RCC & Actions Runtime skills plus opt-in Actions/Robot Bootstrapper MCP package for Environment Artifacts, providers, trust, coordination, automation projects, Robot/RPA Framework, work items, Action Server, CI, and optional offline Tealdeer quick reference.",
       "tags": [
         "rcc",
         "tealdeer",

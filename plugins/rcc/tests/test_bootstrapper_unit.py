@@ -528,6 +528,192 @@ class BootstrapperUnitAndSecurityTests(unittest.TestCase):
         self.assertIn("03-python-work-items", ROBOT_TEMPLATES)
         self.assertIn("06-python-uv-native", ROBOT_TEMPLATES)
 
+    def test_serve_owned_runtime_tracks_and_cleans_instance_metadata(self) -> None:
+        import bootstrapper_runtime
+
+        runtime_path = self.tmp_root / "runtime"
+        rcc_path = self.tmp_root / "rcc"
+
+        class FakeProc:
+            def __init__(self) -> None:
+                self.pid = 234567
+                self._done = False
+
+            def poll(self) -> int | None:
+                return 0 if self._done else None
+
+            def wait(self, timeout: float | None = None) -> int:
+                # Instance metadata must exist while foreground child is active.
+                meta = bootstrapper_runtime._load_instance_metadata(datadir)
+                assert meta is not None and meta["pid"] == self.pid
+                self._done = True
+                return 0
+
+        datadir = self.datadir
+        with (
+            patch.object(
+                bootstrapper_runtime,
+                "verify_binary_before_execution",
+                side_effect=[(runtime_path, "a" * 64), (rcc_path, "b" * 64)],
+            ),
+            patch.object(
+                bootstrapper_runtime,
+                "inspect_binary_health",
+                return_value=SimpleNamespace(version="1.1.1"),
+            ),
+            patch.object(bootstrapper_runtime, "_is_port_open", return_value=False),
+            patch.object(bootstrapper_runtime.subprocess, "Popen", return_value=FakeProc()) as popen,
+        ):
+            rc = bootstrapper_runtime.serve_owned_runtime(
+                datadir=datadir,
+                approved_roots=[self.approved_root],
+                api_key="serve-secret-key",
+                runtime_binary=runtime_path,
+                rcc_binary=rcc_path,
+                robocorp_home=self.tmp_root / "private-robocorp",
+            )
+        self.assertEqual(rc, 0)
+        self.assertFalse(bootstrapper_runtime._instance_metadata_path(datadir).exists())
+        self.assertIn("--api-key", popen.call_args.args[0])
+
+    def test_systemd_install_writes_private_env_and_unit_without_embedding_secret(self) -> None:
+        import stat as stat_mod
+        import bootstrapper_runtime
+
+        unit_dir = self.tmp_root / "systemd-user"
+        env_file = self.tmp_root / "config" / "rcc-bootstrapper.env"
+        spaced_root = self.tmp_root / "my workspace %100"
+        spaced_root.mkdir(parents=True, exist_ok=True)
+        trusted_root = spaced_root / "trusted"
+        trusted_root.mkdir(parents=True, exist_ok=True)
+
+        old_key = os.environ.pop("RCC_BOOTSTRAPPER_API_KEY", None)
+        try:
+            with patch.object(bootstrapper_runtime.sys, "platform", "linux"):
+                # Missing approved root fails closed
+                with self.assertRaises(PolicyViolationError) as ctx_root:
+                    bootstrapper_runtime.install_systemd_service(
+                        datadir=self.datadir,
+                        unit_dir=unit_dir,
+                        env_file=env_file,
+                        approved_roots=[],
+                        generate_api_key=True,
+                    )
+                self.assertEqual(ctx_root.exception.code, "approved_root_required")
+
+                # Missing API key fails closed
+                with self.assertRaises(PolicyViolationError) as ctx_key:
+                    bootstrapper_runtime.install_systemd_service(
+                        datadir=self.datadir,
+                        unit_dir=unit_dir,
+                        env_file=env_file,
+                        approved_roots=[spaced_root],
+                    )
+                self.assertEqual(ctx_key.exception.code, "runtime_api_key_required")
+
+                # Generate key + install unit
+                installed = bootstrapper_runtime.install_systemd_service(
+                    datadir=self.datadir,
+                    unit_dir=unit_dir,
+                    env_file=env_file,
+                    approved_roots=[spaced_root],
+                    trusted_roots=[trusted_root],
+                    generate_api_key=True,
+                )
+                self.assertEqual(installed["status"], "installed")
+                self.assertEqual(installed["api_key_source"], "generated")
+                self.assertTrue(env_file.is_file())
+                if os.name != "nt":
+                    self.assertEqual(stat_mod.S_IMODE(env_file.stat().st_mode), 0o600)
+
+                generated_key = bootstrapper_runtime._read_env_file_key(env_file, "RCC_BOOTSTRAPPER_API_KEY")
+                self.assertIsNotNone(generated_key)
+                self.assertGreaterEqual(len(generated_key or ""), 32)
+                # Secret must never be echoed in JSON result or unit file
+                self.assertNotIn(generated_key or "", json.dumps(installed))
+                unit_path = Path(installed["unit_path"])
+                unit_text = unit_path.read_text(encoding="utf-8")
+                self.assertNotIn(generated_key or "", unit_text)
+                self.assertIn(f"EnvironmentFile={env_file}", unit_text)
+                self.assertIn("%%100", unit_text)
+                self.assertIn('"serve"', unit_text)
+                self.assertIn("--trusted-root", unit_text)
+
+                # Re-running without --rotate-api-key preserves existing secret idempotently
+                reinstalled = bootstrapper_runtime.install_systemd_service(
+                    datadir=self.datadir,
+                    unit_dir=unit_dir,
+                    env_file=env_file,
+                    approved_roots=[spaced_root],
+                    generate_api_key=True,
+                )
+                self.assertEqual(reinstalled["api_key_source"], "existing_env_file")
+                self.assertEqual(
+                    bootstrapper_runtime._read_env_file_key(env_file, "RCC_BOOTSTRAPPER_API_KEY"),
+                    generated_key,
+                )
+
+                # Uninstall removes unit file, keeps env file by default, never touches datadir
+                sentinel = self.datadir / "server.db"
+                sentinel.write_bytes(b"sqlite-fixture")
+                uninstalled = bootstrapper_runtime.uninstall_systemd_service(
+                    unit_dir=unit_dir,
+                    env_file=env_file,
+                    remove_env_file=False,
+                    run_systemctl=False,
+                )
+                self.assertTrue(uninstalled["unit_removed"])
+                self.assertFalse(uninstalled["env_file_removed"])
+                self.assertFalse(unit_path.exists())
+                self.assertTrue(env_file.exists())
+                self.assertTrue(sentinel.exists())
+
+                # Uninstall with remove_env_file=True removes the env file
+                uninstalled2 = bootstrapper_runtime.uninstall_systemd_service(
+                    unit_dir=unit_dir,
+                    env_file=env_file,
+                    remove_env_file=True,
+                    run_systemctl=False,
+                )
+                self.assertTrue(uninstalled2["env_file_removed"])
+                self.assertFalse(env_file.exists())
+                self.assertTrue(sentinel.exists())
+        finally:
+            if old_key is not None:
+                os.environ["RCC_BOOTSTRAPPER_API_KEY"] = old_key
+
+    def test_systemd_install_rejects_non_linux_and_symlink_paths(self) -> None:
+        import bootstrapper_runtime
+
+        with patch.object(bootstrapper_runtime.sys, "platform", "win32"):
+            with self.assertRaises(PolicyViolationError) as ctx_plat:
+                bootstrapper_runtime.install_systemd_service(
+                    datadir=self.datadir,
+                    approved_roots=[self.approved_root],
+                    api_key="test-key",
+                )
+            self.assertEqual(ctx_plat.exception.code, "systemd_linux_only")
+
+        if hasattr(os, "symlink") and os.name != "nt":
+            outside = self.tmp_root / "outside-systemd"
+            outside.mkdir()
+            symlink_unit_dir = self.tmp_root / "unit-dir-link"
+            symlink_unit_dir.symlink_to(outside)
+            with patch.object(bootstrapper_runtime.sys, "platform", "linux"):
+                with self.assertRaises(PolicyViolationError) as ctx_link:
+                    bootstrapper_runtime.install_systemd_service(
+                        datadir=self.datadir,
+                        unit_dir=symlink_unit_dir,
+                        env_file=self.tmp_root / "ok.env",
+                        approved_roots=[self.approved_root],
+                        api_key="test-key",
+                    )
+                self.assertEqual(ctx_link.exception.code, "symlink_service_path")
+
+        with self.assertRaises(PolicyViolationError) as ctx_ctrl:
+            bootstrapper_runtime._systemd_quote_arg("bad\nExecStart=/bin/sh")
+        self.assertEqual(ctx_ctrl.exception.code, "invalid_service_value")
+
 
 if __name__ == "__main__":
     unittest.main()

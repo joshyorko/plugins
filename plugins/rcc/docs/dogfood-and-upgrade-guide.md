@@ -37,9 +37,11 @@ Use the equivalent `$env:RCC_BOOTSTRAPPER_API_KEY = ...` and `py -3 ...` form in
 
 ---
 
-## 1. Quick Start (`http://127.0.0.1:8765/mcp`)
+## 1. Quick Start (`http://127.0.0.1:8765/mcp`, Opt-In)
 
-The `rcc` plugin registers `http://127.0.0.1:8765/mcp` in [`plugins/rcc/mcp.json`](file:///home/kdlocpanda/plugins/plugins/rcc/mcp.json) and [`plugins/rcc/.mcp.json`](file:///home/kdlocpanda/plugins/plugins/rcc/.mcp.json). Start the local Actions Runtime hosting the bootstrapper package with:
+The `rcc` plugin intentionally does **not** auto-register `http://127.0.0.1:8765/mcp` in `mcp.json` or `.mcp.json` on plugin install: HTTP MCP endpoints never auto-start a local daemon and cannot safely embed a per-user API key in plugin manifests, so always-on registration would fail on unrelated sessions whenever the runtime is stopped.
+
+Start the local Actions Runtime hosting the bootstrapper package on demand, then attach your MCP client explicitly:
 
 ```bash
 # 1. Inspect local action-server + rcc binaries and SHA-256 digests
@@ -62,11 +64,37 @@ python3 plugins/rcc/scripts/bootstrapper_runtime.py mcp-smoke
 python3 plugins/rcc/scripts/bootstrapper_runtime.py stop
 ```
 
+### Optional Linux `systemd --user` Service Helper
+
+If you want the authenticated bootstrapper runtime to start automatically in your Linux user session, generate and install a `systemd --user` unit that runs `bootstrapper_runtime.py serve` in the foreground (keeping fail-closed binary SHA-256 verification, isolated runtime caches, and automatic upgrade backups on every start) while storing `RCC_BOOTSTRAPPER_API_KEY` in a private mode-`0600` environment file outside the unit:
+
+```bash
+# Preview the generated unit without writing files
+python3 plugins/rcc/scripts/bootstrapper_runtime.py systemd-install \
+  --approved-root "$PWD/workspace" \
+  --print-only
+
+# Install the unit and generate a mode-0600 env file (add --enable to reload and start immediately)
+python3 plugins/rcc/scripts/bootstrapper_runtime.py systemd-install \
+  --approved-root "$PWD/workspace" \
+  --generate-api-key \
+  --enable
+
+# Export the generated key into your shell / MCP client environment and register in Codex
+set -a && source ~/.config/rcc-bootstrapper/rcc-bootstrapper.env && set +a
+codex mcp add rcc-bootstrapper \
+  --url http://127.0.0.1:8765/mcp \
+  --bearer-token-env-var RCC_BOOTSTRAPPER_API_KEY
+
+# Remove the unit later without touching datadir SQLite state (add --remove-env-file to delete the key file too)
+python3 plugins/rcc/scripts/bootstrapper_runtime.py systemd-uninstall
+```
+
 ### Authenticated Runtime and Native Runtime Features
 
-An API key is mandatory: unauthenticated loopback MCP exposes project execution to any local process. Configure the MCP client to send `Authorization: Bearer <same key>` using its user-level secret store or supported environment-backed header setting. The portable plugin manifest cannot safely carry this secret, so client-side authenticated attachment must be configured separately. The launcher passes the key to the Runtime process; process-level exposure to same-user process inspection is an Actions Runtime contract limitation.
+An API key is mandatory: unauthenticated loopback MCP exposes project execution to any local process. Configure the MCP client to send `Authorization: Bearer <same key>` using its user-level secret store or supported environment-backed header setting. Because the plugin manifest does not auto-register an unauthenticated HTTP URL, client-side authenticated attachment is always explicit. The launcher passes the key to the Runtime process; process-level exposure to same-user process inspection is an Actions Runtime contract limitation.
 
-For Codex CLI, one supported explicit attachment is `codex mcp add rcc-bootstrapper --url http://127.0.0.1:8765/mcp --bearer-token-env-var RCC_BOOTSTRAPPER_API_KEY`. This is a user-level Codex MCP registration; installing the plugin manifest alone does not inject the key or qualify authenticated host attachment.
+For Codex CLI, register the endpoint explicitly with `codex mcp add rcc-bootstrapper --url http://127.0.0.1:8765/mcp --bearer-token-env-var RCC_BOOTSTRAPPER_API_KEY` (and ensure `RCC_BOOTSTRAPPER_API_KEY` is exported in the environment launching Codex).
 
 Executable trust is separate from workspace write approval. Add `--trusted-root <path>` only for code whose operator has reviewed it; a tool call's `trust_project` flag cannot add roots. Running requires both an explicit per-call `trust_project=true` and containment within a server-configured trusted root. Without that configuration, scaffold and inspection remain available but execution is refused.
 

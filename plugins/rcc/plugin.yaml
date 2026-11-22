@@ -1,6 +1,6 @@
 {
   "name": "rcc",
-  "version": "0.6.0",
-  "description": "RCC & Actions Runtime skills plus bundled Actions/Robot Bootstrapper MCP for Environment Artifacts, providers, trust, coordination, robots, Robot/RPA Framework, work items, Action Server, CI, and optional offline Tealdeer quick reference.",
+  "version": "0.6.1",
+  "description": "RCC & Actions Runtime skills plus opt-in Actions/Robot Bootstrapper MCP package for Environment Artifacts, providers, trust, coordination, robots, Robot/RPA Framework, work items, Action Server, CI, and optional offline Tealdeer quick reference.",
   "kind": "standalone"
 }

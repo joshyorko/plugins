@@ -97,8 +97,6 @@ def _source_identity() -> dict[str, Any]:
         ".github/workflows/release-artifacts.yml",
         "plugins/rcc/plugin.json",
         "plugins/rcc/.codex-plugin/plugin.json",
-        "plugins/rcc/mcp.json",
-        "plugins/rcc/.mcp.json",
     ]
     try:
         commit = subprocess.run(

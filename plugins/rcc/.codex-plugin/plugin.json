@@ -1,7 +1,7 @@
 {
   "name": "rcc",
-  "version": "0.6.0",
-  "description": "RCC & Actions Runtime skills plus bundled Actions/Robot Bootstrapper MCP for Environment Artifacts, providers, trust, coordination, robots, Robot/RPA Framework, work items, Action Server, CI, and optional offline Tealdeer quick reference.",
+  "version": "0.6.1",
+  "description": "RCC & Actions Runtime skills plus opt-in Actions/Robot Bootstrapper MCP package for Environment Artifacts, providers, trust, coordination, robots, Robot/RPA Framework, work items, Action Server, CI, and optional offline Tealdeer quick reference.",
   "author": {
     "name": "Josh Yorko",
     "email": "joshua.yorko@gmail.com",
@@ -30,11 +30,10 @@
     "ci"
   ],
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "RCC Automation",
-    "shortDescription": "RCC skills + Bootstrapper MCP",
-    "longDescription": "RCC & Actions Runtime 1.1.1 workflows split across focused skills for Environment Artifacts, providers, trust, coordination/prewarm, RCC core, robot projects, Robot Framework suites, RPA Framework automation, work items, Action Server packages, and CI maintenance, plus a bundled Actions/Robot Bootstrapper MCP package served via Actions Runtime /mcp. Includes an optional offline Tealdeer quick reference.",
+    "shortDescription": "RCC skills + opt-in Bootstrapper MCP",
+    "longDescription": "RCC & Actions Runtime 1.1.1 workflows split across focused skills for Environment Artifacts, providers, trust, coordination/prewarm, RCC core, robot projects, Robot Framework suites, RPA Framework automation, work items, Action Server packages, and CI maintenance, plus an opt-in Actions/Robot Bootstrapper Action package served on demand via Actions Runtime /mcp. Includes an optional offline Tealdeer quick reference.",
     "developerName": "Josh Yorko",
     "category": "Developer Tools",
     "capabilities": [
@@ -45,7 +44,7 @@
     "privacyPolicyURL": "https://github.com/joshyorko/plugins",
     "termsOfServiceURL": "https://github.com/joshyorko/plugins",
     "defaultPrompt": [
-      "Scaffold and validate a new Action package or RCC robot using the bundled rcc-bootstrapper MCP.",
+      "Set up or use the opt-in rcc-bootstrapper MCP package to scaffold and validate an Action package or RCC robot.",
       "Show me the RCC quick reference with Tealdeer.",
       "Enable optional tldr rcc integration and its managed session-start sync, adopting an existing canonical symlink without replacing it.",
       "Inspect an RCC artifact provider or prewarm workflow.",

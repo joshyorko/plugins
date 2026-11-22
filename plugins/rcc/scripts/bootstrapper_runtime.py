@@ -16,10 +16,13 @@ import argparse
 import hashlib
 import json
 import os
+import secrets
+import shlex
 import shutil
 import signal
 import socket
 import sqlite3
+import stat
 import subprocess
 import sys
 import time
@@ -81,6 +84,7 @@ from rcc_bootstrapper.policy import (  # noqa: E402
     default_robocorp_home,
     inspect_binary_health,
     redact_secrets,
+    validate_safe_identifier,
     verify_binary_before_execution,
 )
 
@@ -454,7 +458,7 @@ class McpHttpClient:
             raise RuntimeError(f"MCP HTTP {exc.code} on {method}: {err_body}") from exc
 
 
-def start_owned_runtime(
+def _prepare_runtime_launch(
     *,
     datadir: Path,
     host: str = "127.0.0.1",
@@ -468,9 +472,9 @@ def start_owned_runtime(
     runtime_home: str | Path | None = None,
     robocorp_home: str | Path | None = None,
     expected_runtime_sha256: str | None = None,
-    startup_timeout: float = 90.0,
+    allow_already_running: bool = True,
 ) -> dict[str, Any]:
-    """Start an owned action-server instance after fail-closed binary verification and port ownership checks."""
+    """Validate auth, state dirs, port ownership, binary digests, and build launch context."""
     installed_archive = package_dir.expanduser().resolve().parent / "package.zip"
     if installed_archive.is_file():
         installed_receipt = installed_archive.parent / "install-receipt.json"
@@ -495,14 +499,16 @@ def start_owned_runtime(
     current = inspect_owned_instance(datadir)
     if current["state"] == "running":
         meta = current["metadata"] or {}
-        if int(meta.get("port") or 0) == port and str(meta.get("host") or "") == host:
+        if allow_already_running and int(meta.get("port") or 0) == port and str(meta.get("host") or "") == host:
             return {
-                "status": "already_running_owned",
+                "already_running": True,
                 "stale_reconciled": stale_reconciled,
                 "instance": meta,
             }
         raise PolicyViolationError(
-            "owned_instance_running_on_different_port",
+            "owned_instance_running_on_different_port"
+            if allow_already_running
+            else "owned_instance_already_running",
             f"Owned runtime in '{datadir}' is already running on {meta.get('host')}:{meta.get('port')}.",
         )
 
@@ -565,6 +571,7 @@ def start_owned_runtime(
         env[key] = str(_ensure_private_runtime_dir(path, key))
     env["PYTHONDONTWRITEBYTECODE"] = "1"
 
+    resolved_pkg = package_dir.resolve()
     cmd = [
         str(verified_as),
         "start",
@@ -573,11 +580,101 @@ def start_owned_runtime(
         "--port",
         str(port),
         "--dir",
-        str(package_dir.resolve()),
+        str(resolved_pkg),
         "--datadir",
         str(datadir),
+        "--api-key",
+        resolved_api_key,
     ]
-    cmd.extend(["--api-key", resolved_api_key])
+    return {
+        "already_running": False,
+        "stale_reconciled": stale_reconciled,
+        "datadir": datadir,
+        "package_dir": resolved_pkg,
+        "host": host,
+        "port": port,
+        "roots": roots,
+        "trusted_project_roots": trusted_project_roots,
+        "verified_as": verified_as,
+        "as_sha256": as_sha256,
+        "as_version": as_health.version,
+        "verified_rcc": verified_rcc,
+        "rcc_sha256": rcc_sha256,
+        "resolved_api_key": resolved_api_key,
+        "auto_backup": auto_backup,
+        "env": env,
+        "cmd": cmd,
+    }
+
+
+def _build_instance_metadata(launch: dict[str, Any], pid: int) -> dict[str, Any]:
+    host = launch["host"]
+    port = launch["port"]
+    return {
+        "instance_id": str(uuid.uuid4()),
+        "pid": pid,
+        "proc_start_token": _proc_start_token(pid),
+        "host": host,
+        "port": port,
+        "mcp_url": f"http://{host}:{port}/mcp",
+        "openapi_url": f"http://{host}:{port}/openapi.json",
+        "datadir": str(launch["datadir"]),
+        "package_dir": str(launch["package_dir"]),
+        "approved_roots": [str(r) for r in launch["roots"]],
+        "trusted_project_roots": [str(r) for r in launch["trusted_project_roots"]],
+        "runtime_binary": str(launch["verified_as"]),
+        "runtime_version": launch["as_version"],
+        "runtime_sha256": launch["as_sha256"],
+        "rcc_binary": str(launch["verified_rcc"]),
+        "rcc_sha256": launch["rcc_sha256"],
+        "auth_mode": "api-key" if launch["resolved_api_key"] else "loopback-no-auth",
+        "started_at": _now_iso(),
+        "auto_backup": launch["auto_backup"],
+    }
+
+
+def start_owned_runtime(
+    *,
+    datadir: Path,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    package_dir: Path = BOOTSTRAPPER_PKG_DIR,
+    approved_roots: list[str | Path] | None = None,
+    trusted_roots: list[str | Path] | None = None,
+    api_key: str | None = None,
+    runtime_binary: str | Path | None = None,
+    rcc_binary: str | Path | None = None,
+    runtime_home: str | Path | None = None,
+    robocorp_home: str | Path | None = None,
+    expected_runtime_sha256: str | None = None,
+    startup_timeout: float = 90.0,
+) -> dict[str, Any]:
+    """Start an owned action-server instance after fail-closed binary verification and port ownership checks."""
+    launch = _prepare_runtime_launch(
+        datadir=datadir,
+        host=host,
+        port=port,
+        package_dir=package_dir,
+        approved_roots=approved_roots,
+        trusted_roots=trusted_roots,
+        api_key=api_key,
+        runtime_binary=runtime_binary,
+        rcc_binary=rcc_binary,
+        runtime_home=runtime_home,
+        robocorp_home=robocorp_home,
+        expected_runtime_sha256=expected_runtime_sha256,
+        allow_already_running=True,
+    )
+    if launch["already_running"]:
+        return {
+            "status": "already_running_owned",
+            "stale_reconciled": launch["stale_reconciled"],
+            "instance": launch["instance"],
+        }
+
+    datadir = launch["datadir"]
+    resolved_api_key = launch["resolved_api_key"]
+    stale_reconciled = launch["stale_reconciled"]
 
     stdout_log = datadir / "bootstrapper_runtime_stdout.log"
     stderr_log = datadir / "bootstrapper_runtime_stderr.log"
@@ -585,8 +682,8 @@ def start_owned_runtime(
     err_handle = stderr_log.open("a", encoding="utf-8")
 
     popen_kwargs: dict[str, Any] = {
-        "cwd": str(package_dir.resolve()),
-        "env": env,
+        "cwd": str(launch["package_dir"]),
+        "env": launch["env"],
         "stdout": out_handle,
         "stderr": err_handle,
         "text": True,
@@ -596,32 +693,12 @@ def start_owned_runtime(
     else:
         popen_kwargs["start_new_session"] = True
 
-    proc = subprocess.Popen(cmd, **popen_kwargs)
+    proc = subprocess.Popen(launch["cmd"], **popen_kwargs)
     _SPAWNED_RUNTIME_PROCS[proc.pid] = proc
     out_handle.close()
     err_handle.close()
 
-    instance_meta = {
-        "instance_id": str(uuid.uuid4()),
-        "pid": proc.pid,
-        "proc_start_token": _proc_start_token(proc.pid),
-        "host": host,
-        "port": port,
-        "mcp_url": f"http://{host}:{port}/mcp",
-        "openapi_url": f"http://{host}:{port}/openapi.json",
-        "datadir": str(datadir),
-        "package_dir": str(package_dir.resolve()),
-        "approved_roots": [str(r) for r in roots],
-        "trusted_project_roots": [str(r) for r in trusted_project_roots],
-        "runtime_binary": str(verified_as),
-        "runtime_version": as_health.version,
-        "runtime_sha256": as_sha256,
-        "rcc_binary": str(verified_rcc),
-        "rcc_sha256": rcc_sha256,
-        "auth_mode": "api-key" if resolved_api_key else "loopback-no-auth",
-        "started_at": _now_iso(),
-        "auto_backup": auto_backup,
-    }
+    instance_meta = _build_instance_metadata(launch, proc.pid)
     _save_instance_metadata(datadir, instance_meta)
 
     def startup_diagnostics() -> str:
@@ -658,6 +735,504 @@ def start_owned_runtime(
         "runtime_startup_timeout",
         f"Timed out after {startup_timeout}s waiting for action-server to listen on {host}:{port}.\n{diagnostics}",
     )
+
+
+def serve_owned_runtime(
+    *,
+    datadir: Path,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    package_dir: Path = BOOTSTRAPPER_PKG_DIR,
+    approved_roots: list[str | Path] | None = None,
+    trusted_roots: list[str | Path] | None = None,
+    api_key: str | None = None,
+    runtime_binary: str | Path | None = None,
+    rcc_binary: str | Path | None = None,
+    runtime_home: str | Path | None = None,
+    robocorp_home: str | Path | None = None,
+    expected_runtime_sha256: str | None = None,
+) -> int:
+    """Run an owned action-server instance in the foreground for systemd --user or interactive supervision."""
+    launch = _prepare_runtime_launch(
+        datadir=datadir,
+        host=host,
+        port=port,
+        package_dir=package_dir,
+        approved_roots=approved_roots,
+        trusted_roots=trusted_roots,
+        api_key=api_key,
+        runtime_binary=runtime_binary,
+        rcc_binary=rcc_binary,
+        runtime_home=runtime_home,
+        robocorp_home=robocorp_home,
+        expected_runtime_sha256=expected_runtime_sha256,
+        allow_already_running=False,
+    )
+    datadir = launch["datadir"]
+
+    popen_kwargs: dict[str, Any] = {
+        "cwd": str(launch["package_dir"]),
+        "env": launch["env"],
+    }
+    if sys.platform == "win32":
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        popen_kwargs["start_new_session"] = True
+
+    proc = subprocess.Popen(launch["cmd"], **popen_kwargs)
+    _SPAWNED_RUNTIME_PROCS[proc.pid] = proc
+    instance_meta = _build_instance_metadata(launch, proc.pid)
+    _save_instance_metadata(datadir, instance_meta)
+
+    stopping = False
+    previous_handlers: dict[int, Any] = {}
+
+    def _terminate_child() -> None:
+        if proc.poll() is not None:
+            return
+        if sys.platform == "win32":
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                timeout=15.0,
+                check=False,
+            )
+            return
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except Exception:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+    def _handle_stop(signum: int, _frame: Any) -> None:
+        nonlocal stopping
+        stopping = True
+        _terminate_child()
+
+    for sig_name in ("SIGTERM", "SIGINT"):
+        sig = getattr(signal, sig_name, None)
+        if sig is not None:
+            try:
+                previous_handlers[int(sig)] = signal.signal(sig, _handle_stop)
+            except (ValueError, OSError):
+                pass
+
+    try:
+        while True:
+            try:
+                code = proc.wait(timeout=0.5)
+                return 0 if stopping else int(code)
+            except subprocess.TimeoutExpired:
+                if stopping:
+                    try:
+                        proc.wait(timeout=15.0)
+                    except subprocess.TimeoutExpired:
+                        if sys.platform != "win32":
+                            try:
+                                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                            except Exception:
+                                pass
+                        else:
+                            _terminate_child()
+                        proc.wait(timeout=5.0)
+                    return 0
+    finally:
+        for sig_num, handler in previous_handlers.items():
+            try:
+                signal.signal(sig_num, handler)
+            except (ValueError, OSError):
+                pass
+        _SPAWNED_RUNTIME_PROCS.pop(proc.pid, None)
+        if proc.poll() is None:
+            _terminate_child()
+        meta_path = _instance_metadata_path(datadir)
+        current_meta = _load_instance_metadata(datadir)
+        if current_meta and current_meta.get("instance_id") == instance_meta["instance_id"]:
+            meta_path.unlink(missing_ok=True)
+
+
+def _default_systemd_unit_dir() -> Path:
+    xdg_config = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg_config).expanduser() if xdg_config else (Path.home() / ".config")
+    return (base / "systemd" / "user").absolute()
+
+
+def _default_systemd_env_file(service_name: str) -> Path:
+    xdg_config = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg_config).expanduser() if xdg_config else (Path.home() / ".config")
+    return (base / "rcc-bootstrapper" / f"{service_name}.env").absolute()
+
+
+def _validate_no_control_chars(value: str, label: str) -> str:
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        raise PolicyViolationError(
+            "invalid_service_value",
+            f"Refusing control character in {label}.",
+        )
+    return value
+
+
+def _systemd_quote_arg(value: str) -> str:
+    _validate_no_control_chars(value, "systemd ExecStart argument")
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    return f'"{escaped}"'
+
+
+def _systemd_quote_unit_path(value: str) -> str:
+    _validate_no_control_chars(value, "systemd unit path")
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    if any(ch.isspace() for ch in value) or any(ch in value for ch in ('"', "\\")):
+        return f'"{escaped}"'
+    return escaped
+
+
+def _read_env_file_key(env_file: Path, key: str) -> str | None:
+    if not env_file.is_file():
+        return None
+    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        found_key, found_val = line.split("=", 1)
+        if found_key.strip() == key:
+            val = found_val.strip()
+            if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+                val = val[1:-1]
+            return val or None
+    return None
+
+
+def _write_private_env_file(env_file: Path, values: dict[str, str]) -> None:
+    env_file = env_file.expanduser().absolute()
+    if env_file.is_symlink() or env_file.parent.is_symlink():
+        raise PolicyViolationError("symlink_service_path", f"Refusing symlink env file path: {env_file}")
+    if env_file.exists() and not env_file.is_file():
+        raise PolicyViolationError("invalid_service_path", f"Env file path is not a regular file: {env_file}")
+    _ensure_private_runtime_dir(env_file.parent, "systemd environment directory")
+
+    lines = [
+        "# Managed by plugins/rcc/scripts/bootstrapper_runtime.py (mode 0600)",
+    ]
+    for key, val in values.items():
+        _validate_no_control_chars(key, "env key")
+        _validate_no_control_chars(val, f"env value for {key}")
+        if "'" in val:
+            escaped = val.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
+            lines.append(f'{key}="{escaped}"')
+        elif any(ch.isspace() or ch in '#$"' for ch in val):
+            lines.append(f"{key}='{val}'")
+        else:
+            lines.append(f"{key}={val}")
+    payload = ("\n".join(lines) + "\n").encode("utf-8")
+
+    tmp_path = env_file.with_name(f".{env_file.name}.tmp-{uuid.uuid4().hex[:8]}")
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, env_file)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def render_systemd_unit(
+    *,
+    service_name: str = "rcc-bootstrapper",
+    datadir: Path,
+    env_file: Path,
+    approved_roots: list[str | Path],
+    trusted_roots: list[str | Path] | None = None,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    python_executable: str | Path | None = None,
+    runtime_binary: str | Path | None = None,
+    rcc_binary: str | Path | None = None,
+) -> tuple[str, list[str]]:
+    """Render a Linux systemd --user unit running `bootstrapper_runtime.py serve`."""
+    safe_name = validate_safe_identifier(service_name, field_name="service_name")
+    if not approved_roots:
+        raise PolicyViolationError(
+            "approved_root_required",
+            "Pass at least one --approved-root when configuring a persistent systemd user service.",
+        )
+    if not host or any(ch.isspace() for ch in host):
+        raise PolicyViolationError("invalid_host", "Service host must be a non-empty hostname or IP address.")
+    _validate_no_control_chars(host, "service host")
+    if not (1 <= int(port) <= 65535):
+        raise PolicyViolationError("invalid_port", f"Service port must be between 1 and 65535, got {port}.")
+
+    py_bin = str(Path(python_executable).expanduser().absolute() if python_executable else Path(sys.executable).absolute())
+    script_path = str(Path(__file__).resolve())
+    resolved_datadir = str(datadir.expanduser().absolute())
+    resolved_env_file = str(env_file.expanduser().absolute())
+    resolved_approved = [str(Path(p).expanduser().resolve()) for p in approved_roots]
+    resolved_trusted = [str(Path(p).expanduser().resolve()) for p in (trusted_roots or [])]
+
+    argv = [
+        py_bin,
+        script_path,
+        "serve",
+        "--datadir",
+        resolved_datadir,
+        "--host",
+        host,
+        "--port",
+        str(int(port)),
+    ]
+    for root in resolved_approved:
+        argv.extend(["--approved-root", root])
+    for root in resolved_trusted:
+        argv.extend(["--trusted-root", root])
+    if runtime_binary:
+        argv.extend(["--runtime-binary", str(Path(runtime_binary).expanduser().resolve())])
+    if rcc_binary:
+        argv.extend(["--rcc-binary", str(Path(rcc_binary).expanduser().resolve())])
+
+    exec_start = " ".join(_systemd_quote_arg(arg) for arg in argv)
+    env_line = f"EnvironmentFile={_systemd_quote_unit_path(resolved_env_file)}"
+    unit_text = (
+        "[Unit]\n"
+        f"Description=RCC Actions & Robot Bootstrapper MCP Runtime ({safe_name})\n"
+        "After=network-online.target\n"
+        "\n"
+        "[Service]\n"
+        "Type=simple\n"
+        f"{env_line}\n"
+        f"ExecStart={exec_start}\n"
+        "Restart=on-failure\n"
+        "RestartSec=3\n"
+        "TimeoutStopSec=20\n"
+        "NoNewPrivileges=yes\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=default.target\n"
+    )
+    return unit_text, argv
+
+
+def install_systemd_service(
+    *,
+    service_name: str = "rcc-bootstrapper",
+    datadir: Path | None = None,
+    unit_dir: Path | None = None,
+    env_file: Path | None = None,
+    approved_roots: list[str | Path] | None = None,
+    trusted_roots: list[str | Path] | None = None,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    api_key: str | None = None,
+    generate_api_key: bool = False,
+    rotate_api_key: bool = False,
+    python_executable: str | Path | None = None,
+    runtime_binary: str | Path | None = None,
+    rcc_binary: str | Path | None = None,
+    print_only: bool = False,
+    enable: bool = False,
+) -> dict[str, Any]:
+    """Install an opt-in Linux systemd --user service and mode-0600 env file for the bootstrapper runtime."""
+    if sys.platform != "linux" and not print_only:
+        raise PolicyViolationError(
+            "systemd_linux_only",
+            "systemd --user service installation is supported on Linux only.",
+        )
+
+    safe_name = validate_safe_identifier(service_name, field_name="service_name")
+    unit_name = f"{safe_name}.service"
+    resolved_datadir = (datadir.expanduser().absolute() if datadir else default_datadir())
+    resolved_unit_dir = (unit_dir.expanduser().absolute() if unit_dir else _default_systemd_unit_dir())
+    resolved_env_file = (env_file.expanduser().absolute() if env_file else _default_systemd_env_file(safe_name))
+    unit_path = resolved_unit_dir / unit_name
+
+    unit_text, argv = render_systemd_unit(
+        service_name=safe_name,
+        datadir=resolved_datadir,
+        env_file=resolved_env_file,
+        approved_roots=list(approved_roots or []),
+        trusted_roots=list(trusted_roots or []),
+        host=host,
+        port=port,
+        python_executable=python_executable,
+        runtime_binary=runtime_binary,
+        rcc_binary=rcc_binary,
+    )
+
+    mcp_url = f"http://{host}:{int(port)}/mcp"
+    codex_add_cmd = (
+        f"codex mcp add {safe_name} --url {mcp_url} --bearer-token-env-var RCC_BOOTSTRAPPER_API_KEY"
+    )
+    systemctl_cmds = [
+        "systemctl --user daemon-reload",
+        f"systemctl --user enable --now {unit_name}",
+    ]
+
+    if print_only:
+        return {
+            "status": "rendered",
+            "service_name": safe_name,
+            "unit_name": unit_name,
+            "unit_path": str(unit_path),
+            "env_file": str(resolved_env_file),
+            "mcp_url": mcp_url,
+            "exec_argv": argv,
+            "unit_content": unit_text,
+            "systemctl_commands": systemctl_cmds,
+            "codex_mcp_add_command": codex_add_cmd,
+        }
+
+    if resolved_unit_dir.is_symlink() or unit_path.is_symlink():
+        raise PolicyViolationError("symlink_service_path", f"Refusing symlink systemd unit path: {unit_path}")
+    if resolved_env_file.is_symlink() or resolved_env_file.parent.is_symlink():
+        raise PolicyViolationError("symlink_service_path", f"Refusing symlink env file path: {resolved_env_file}")
+
+    existing_key = _read_env_file_key(resolved_env_file, "RCC_BOOTSTRAPPER_API_KEY")
+    env_provided_key = os.environ.get("RCC_BOOTSTRAPPER_API_KEY")
+    api_key_source: str
+    chosen_key: str | None = None
+
+    if api_key is not None and api_key.strip():
+        chosen_key = api_key.strip()
+        api_key_source = "provided"
+    elif rotate_api_key:
+        chosen_key = secrets.token_urlsafe(32)
+        api_key_source = "rotated"
+    elif existing_key:
+        chosen_key = existing_key
+        api_key_source = "existing_env_file"
+    elif env_provided_key and env_provided_key.strip() and not generate_api_key:
+        chosen_key = env_provided_key.strip()
+        api_key_source = "environment"
+    elif generate_api_key:
+        chosen_key = secrets.token_urlsafe(32)
+        api_key_source = "generated"
+    else:
+        raise PolicyViolationError(
+            "runtime_api_key_required",
+            "Provide --api-key, export RCC_BOOTSTRAPPER_API_KEY, pass --generate-api-key, or keep an existing env file.",
+        )
+
+    env_values: dict[str, str] = {"RCC_BOOTSTRAPPER_API_KEY": chosen_key}
+    if os.environ.get("RCC_BOOTSTRAPPER_HOME"):
+        env_values["RCC_BOOTSTRAPPER_HOME"] = str(Path(os.environ["RCC_BOOTSTRAPPER_HOME"]).expanduser().absolute())
+    if os.environ.get("RCC_BOOTSTRAPPER_PACKAGE_DIR"):
+        env_values["RCC_BOOTSTRAPPER_PACKAGE_DIR"] = str(
+            Path(os.environ["RCC_BOOTSTRAPPER_PACKAGE_DIR"]).expanduser().resolve()
+        )
+    _write_private_env_file(resolved_env_file, env_values)
+
+    resolved_unit_dir.mkdir(parents=True, exist_ok=True)
+    tmp_unit = unit_path.with_name(f".{unit_path.name}.tmp-{uuid.uuid4().hex[:8]}")
+    try:
+        tmp_unit.write_text(unit_text, encoding="utf-8")
+        os.chmod(tmp_unit, 0o644)
+        os.replace(tmp_unit, unit_path)
+    except Exception:
+        tmp_unit.unlink(missing_ok=True)
+        raise
+
+    enabled_now = False
+    if enable:
+        for cmd in (
+            ["systemctl", "--user", "daemon-reload"],
+            ["systemctl", "--user", "enable", "--now", unit_name],
+        ):
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout or "").strip()
+                raise PolicyViolationError(
+                    "systemctl_failed",
+                    f"Command '{' '.join(cmd)}' failed (exit {proc.returncode}): {detail}",
+                )
+        enabled_now = True
+
+    return {
+        "status": "installed_and_enabled" if enabled_now else "installed",
+        "service_name": safe_name,
+        "unit_name": unit_name,
+        "unit_path": str(unit_path),
+        "env_file": str(resolved_env_file),
+        "env_file_mode": oct(stat.S_IMODE(resolved_env_file.stat().st_mode)),
+        "api_key_source": api_key_source,
+        "mcp_url": mcp_url,
+        "enabled": enabled_now,
+        "systemctl_commands": systemctl_cmds,
+        "codex_mcp_add_command": codex_add_cmd,
+        "shell_export_hint": f"set -a && source {shlex.quote(str(resolved_env_file))} && set +a",
+    }
+
+
+def uninstall_systemd_service(
+    *,
+    service_name: str = "rcc-bootstrapper",
+    unit_dir: Path | None = None,
+    env_file: Path | None = None,
+    remove_env_file: bool = False,
+    run_systemctl: bool = True,
+) -> dict[str, Any]:
+    """Remove an opt-in Linux systemd --user unit without touching datadir or SQLite state."""
+    if sys.platform != "linux":
+        raise PolicyViolationError(
+            "systemd_linux_only",
+            "systemd --user service removal is supported on Linux only.",
+        )
+
+    safe_name = validate_safe_identifier(service_name, field_name="service_name")
+    unit_name = f"{safe_name}.service"
+    resolved_unit_dir = (unit_dir.expanduser().absolute() if unit_dir else _default_systemd_unit_dir())
+    resolved_env_file = (env_file.expanduser().absolute() if env_file else _default_systemd_env_file(safe_name))
+    unit_path = resolved_unit_dir / unit_name
+
+    if unit_path.is_symlink():
+        raise PolicyViolationError("symlink_service_path", f"Refusing symlink systemd unit path: {unit_path}")
+    if remove_env_file and resolved_env_file.is_symlink():
+        raise PolicyViolationError("symlink_service_path", f"Refusing symlink env file path: {resolved_env_file}")
+
+    systemctl_ran = False
+    if run_systemctl and shutil.which("systemctl"):
+        subprocess.run(
+            ["systemctl", "--user", "disable", "--now", unit_name],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        systemctl_ran = True
+
+    unit_removed = False
+    if unit_path.is_file():
+        unit_path.unlink()
+        unit_removed = True
+
+    env_removed = False
+    if remove_env_file and resolved_env_file.is_file():
+        resolved_env_file.unlink()
+        env_removed = True
+
+    if systemctl_ran:
+        subprocess.run(
+            ["systemctl", "--user", "daemon-reload"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    return {
+        "status": "uninstalled",
+        "service_name": safe_name,
+        "unit_name": unit_name,
+        "unit_path": str(unit_path),
+        "unit_removed": unit_removed,
+        "env_file": str(resolved_env_file),
+        "env_file_removed": env_removed,
+        "systemctl_invoked": systemctl_ran,
+    }
 
 
 def stop_owned_runtime(*, datadir: Path, timeout: float = 15.0) -> dict[str, Any]:
@@ -834,6 +1409,51 @@ def build_parser() -> argparse.ArgumentParser:
     start_p.add_argument("--rcc-binary", default=None)
     start_p.add_argument("--expected-runtime-sha256", default=None)
 
+    serve_p = sub.add_parser(
+        "serve",
+        help="Run the owned action-server instance in the foreground (for systemd --user or interactive use).",
+    )
+    serve_p.add_argument("--datadir", default=None)
+    serve_p.add_argument("--host", default="127.0.0.1")
+    serve_p.add_argument("--port", type=int, default=8765)
+    serve_p.add_argument("--approved-root", action="append", dest="approved_roots", default=None)
+    serve_p.add_argument("--trusted-root", action="append", dest="trusted_roots", default=None)
+    serve_p.add_argument("--api-key", default=None)
+    serve_p.add_argument("--runtime-binary", default=None)
+    serve_p.add_argument("--rcc-binary", default=None)
+    serve_p.add_argument("--expected-runtime-sha256", default=None)
+
+    svc_install_p = sub.add_parser(
+        "systemd-install",
+        help="Install an optional Linux systemd --user service and mode-0600 env file for the bootstrapper runtime.",
+    )
+    svc_install_p.add_argument("--service-name", default="rcc-bootstrapper")
+    svc_install_p.add_argument("--datadir", default=None)
+    svc_install_p.add_argument("--unit-dir", default=None)
+    svc_install_p.add_argument("--env-file", default=None)
+    svc_install_p.add_argument("--host", default="127.0.0.1")
+    svc_install_p.add_argument("--port", type=int, default=8765)
+    svc_install_p.add_argument("--approved-root", action="append", dest="approved_roots", default=None)
+    svc_install_p.add_argument("--trusted-root", action="append", dest="trusted_roots", default=None)
+    svc_install_p.add_argument("--api-key", default=None)
+    svc_install_p.add_argument("--generate-api-key", action="store_true")
+    svc_install_p.add_argument("--rotate-api-key", action="store_true")
+    svc_install_p.add_argument("--python", dest="python_executable", default=None)
+    svc_install_p.add_argument("--runtime-binary", default=None)
+    svc_install_p.add_argument("--rcc-binary", default=None)
+    svc_install_p.add_argument("--print-only", action="store_true")
+    svc_install_p.add_argument("--enable", action="store_true")
+
+    svc_uninstall_p = sub.add_parser(
+        "systemd-uninstall",
+        help="Disable and remove an opt-in Linux systemd --user service without touching datadir state.",
+    )
+    svc_uninstall_p.add_argument("--service-name", default="rcc-bootstrapper")
+    svc_uninstall_p.add_argument("--unit-dir", default=None)
+    svc_uninstall_p.add_argument("--env-file", default=None)
+    svc_uninstall_p.add_argument("--remove-env-file", action="store_true")
+    svc_uninstall_p.add_argument("--no-systemctl", action="store_true")
+
     stop_p = sub.add_parser("stop", help="Stop the owned action-server instance for datadir.")
     stop_p.add_argument("--datadir", default=None)
 
@@ -892,6 +1512,56 @@ def main(argv: list[str] | None = None) -> int:
                 runtime_binary=args.runtime_binary,
                 rcc_binary=args.rcc_binary,
                 expected_runtime_sha256=args.expected_runtime_sha256,
+            )
+            print(json.dumps(res, indent=2))
+            return 0
+
+        if args.command == "serve":
+            ddir = Path(args.datadir) if args.datadir else default_datadir()
+            return serve_owned_runtime(
+                datadir=ddir,
+                host=args.host,
+                port=args.port,
+                approved_roots=args.approved_roots,
+                trusted_roots=args.trusted_roots,
+                api_key=args.api_key,
+                runtime_binary=args.runtime_binary,
+                rcc_binary=args.rcc_binary,
+                expected_runtime_sha256=args.expected_runtime_sha256,
+            )
+
+        if args.command == "systemd-install":
+            res = install_systemd_service(
+                service_name=args.service_name,
+                datadir=Path(args.datadir) if args.datadir else None,
+                unit_dir=Path(args.unit_dir) if args.unit_dir else None,
+                env_file=Path(args.env_file) if args.env_file else None,
+                approved_roots=args.approved_roots,
+                trusted_roots=args.trusted_roots,
+                host=args.host,
+                port=args.port,
+                api_key=args.api_key,
+                generate_api_key=args.generate_api_key,
+                rotate_api_key=args.rotate_api_key,
+                python_executable=args.python_executable,
+                runtime_binary=args.runtime_binary,
+                rcc_binary=args.rcc_binary,
+                print_only=args.print_only,
+                enable=args.enable,
+            )
+            if args.print_only:
+                print(res["unit_content"], end="")
+            else:
+                print(json.dumps(res, indent=2))
+            return 0
+
+        if args.command == "systemd-uninstall":
+            res = uninstall_systemd_service(
+                service_name=args.service_name,
+                unit_dir=Path(args.unit_dir) if args.unit_dir else None,
+                env_file=Path(args.env_file) if args.env_file else None,
+                remove_env_file=args.remove_env_file,
+                run_systemctl=not args.no_systemctl,
             )
             print(json.dumps(res, indent=2))
             return 0

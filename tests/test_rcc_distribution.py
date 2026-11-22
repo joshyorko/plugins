@@ -1,4 +1,4 @@
-"""RCC plugin distribution tests: skills, bundled Actions Bootstrapper MCP manifests, and no-Dagger invariants."""
+"""RCC plugin distribution tests: skills, opt-in Actions Bootstrapper package, and no-Dagger invariants."""
 
 import json
 import runpy
@@ -12,7 +12,7 @@ PLUGIN = ROOT / "plugins" / "rcc"
 
 
 class RccDistributionTests(unittest.TestCase):
-    def test_manifests_register_bootstrapper_mcp_without_dagger(self):
+    def test_manifests_keep_bootstrapper_mcp_opt_in_without_dagger(self):
         for relative in ("plugin.json", ".codex-plugin/plugin.json",
                          ".claude-plugin/plugin.json", "plugin.yaml"):
             with self.subTest(manifest=relative):
@@ -21,23 +21,15 @@ class RccDistributionTests(unittest.TestCase):
 
         codex = json.loads((PLUGIN / ".codex-plugin/plugin.json").read_text())
         self.assertEqual(codex["interface"]["displayName"], "RCC Automation")
-        self.assertEqual(codex.get("mcpServers"), "./.mcp.json")
-
-        portable_mcp = json.loads((PLUGIN / "mcp.json").read_text())
-        self.assertEqual(
-            portable_mcp["mcpServers"]["rcc-bootstrapper"],
-            {"type": "streamable-http", "url": "http://127.0.0.1:8765/mcp"},
-        )
-
-        codex_mcp = json.loads((PLUGIN / ".mcp.json").read_text())
-        self.assertEqual(
-            codex_mcp["mcpServers"]["rcc-bootstrapper"],
-            {"type": "http", "url": "http://127.0.0.1:8765/mcp"},
-        )
+        self.assertIsNone(codex.get("mcpServers"))
+        self.assertFalse((PLUGIN / "mcp.json").exists())
+        self.assertFalse((PLUGIN / ".mcp.json").exists())
 
         self.assertTrue((PLUGIN / "bootstrapper" / "package.yaml").is_file())
         self.assertTrue((PLUGIN / "bootstrapper" / "LICENSE").is_file())
         self.assertTrue((PLUGIN / "bootstrapper" / "UPSTREAM.md").is_file())
+        self.assertTrue((PLUGIN / "scripts" / "bootstrapper_runtime.py").is_file())
+        self.assertTrue((PLUGIN / "scripts" / "install_bootstrapper.py").is_file())
 
         for relative in ("dagger",
                          "skills/rcc/scripts/rcc-dagger-mcp",

@@ -16,7 +16,7 @@ The legacy standalone repository `joshyorko/actions-robot-boostrapper` (`2769fb7
 5. **Broken self-management & invalid CLI flags**: `start_action_server` resolves `Path(__file__).parent / "start_action_server.py"` (which does not exist inside `src/actions_bootrapper/`), `stop_action_server` posts unauthenticated `/api/shutdown`, and multiple robot actions call nonexistent RCC subcommands (`rcc create`, `rcc robot init --name`, `rcc robot dependencies`, `rcc task list`).
 6. **Split ownership**: Maintaining a separate standalone repository drifted behind the `rcc` plugin skills (`rcc`, `action-server`, `rcc-robots`, `rcc-workitems`, `verify-rcc`) and the modern `joshyorko/actions` runtime (`actions-runtime` `1.1.1`, `actions-core` `1.1.0`, `actions-work-items` `0.5.0`).
 
-At the same time, the `rcc` plugin in `joshyorko/plugins` previously shipped as a **skills-only** package without a bundled MCP surface (`plugins/rcc/mcp.json` / `plugins/rcc/.mcp.json`) or an executable release-dogfood harness that exercises the real Actions Runtime `/mcp` transport end-to-end.
+At the same time, the `rcc` plugin in `joshyorko/plugins` previously shipped as a **skills-only** package without a bundled bootstrapper Action package or an executable release-dogfood harness that exercises the real Actions Runtime `/mcp` transport end-to-end.
 
 ## Decisions
 
@@ -27,12 +27,11 @@ At the same time, the `rcc` plugin in `joshyorko/plugins` previously shipped as 
 - Upstream provenance (`joshyorko/actions-robot-boostrapper@2769fb7a939af7db6111428dd27153a1a15e4c53`) and its Apache-2.0 license are preserved in [`plugins/rcc/bootstrapper/LICENSE`](file:///home/kdlocpanda/plugins/plugins/rcc/bootstrapper/LICENSE) and [`plugins/rcc/bootstrapper/UPSTREAM.md`](file:///home/kdlocpanda/plugins/plugins/rcc/bootstrapper/UPSTREAM.md).
 - The standalone `joshyorko/actions-robot-boostrapper` repository is **retired/archived in favor of `plugins/rcc/bootstrapper/`**. No dual-write mirror is maintained; downstream users consume the bootstrapper directly from the `rcc` plugin or point `action-server start --dir` at `plugins/rcc/bootstrapper`.
 
-### Decision 2: Host `/mcp` via the Existing Actions Runtime (`action-server`)
+### Decision 2: Host `/mcp` via the Existing Actions Runtime (`action-server`) as an Opt-In Local Service
 
-We **do not** build a custom Python MCP server or stdio wrapper around `rcc` and `action-server`. Instead, the existing Actions Runtime (`action-server start`) hosts the bootstrapper Action package and exposes its native Streamable HTTP `/mcp` endpoint (`http://127.0.0.1:8765/mcp` by default):
+We **do not** build a custom Python MCP server or stdio wrapper around `rcc` and `action-server`, and we **do not** auto-register an unauthenticated loopback URL in `plugins/rcc/mcp.json` or `plugins/rcc/.mcp.json`. Instead, the existing Actions Runtime (`action-server start`) hosts the bootstrapper Action package on demand and exposes its native Streamable HTTP `/mcp` endpoint (`http://127.0.0.1:8765/mcp` by default):
 
-- Portable plugin manifest [`plugins/rcc/mcp.json`](file:///home/kdlocpanda/plugins/plugins/rcc/mcp.json) registers `rcc-bootstrapper` with `"type": "streamable-http"` and `"url": "http://127.0.0.1:8765/mcp"`.
-- Codex plugin manifest [`plugins/rcc/.mcp.json`](file:///home/kdlocpanda/plugins/plugins/rcc/.mcp.json) registers `rcc-bootstrapper` with `"type": "http"` and `"url": "http://127.0.0.1:8765/mcp"`, linked from [`plugins/rcc/.codex-plugin/plugin.json`](file:///home/kdlocpanda/plugins/plugins/rcc/.codex-plugin/plugin.json) via `"mcpServers": "./.mcp.json"`.
+- **Opt-in client registration (no always-on plugin MCP entry)**: HTTP MCP entries never auto-start a local daemon and cannot safely embed a per-user Bearer token inside portable/Codex plugin manifests. Auto-registering `http://127.0.0.1:8765/mcp` in `plugins/rcc/mcp.json` / `.mcp.json` caused every unrelated Codex session to fail MCP startup when the local runtime was stopped (or fail with HTTP 403 once `--api-key` was enforced). Operators therefore register the endpoint explicitly (for example via `codex mcp add rcc-bootstrapper --url http://127.0.0.1:8765/mcp --bearer-token-env-var RCC_BOOTSTRAPPER_API_KEY`) and start the runtime on demand (`bootstrapper_runtime.py start` / `serve`) or via the optional Linux `systemd --user` service helper (`bootstrapper_runtime.py systemd-install`).
 - All bootstrapper capabilities are authored with standard `actions-core` (`1.1.0`) primitives (`@tool`, `@action`, `@resource`, `@prompt`, Pydantic models, `Response[T]`, `ActionError`, `Secret`, and MCP tool annotations `read_only_hint`, `destructive_hint`, `idempotent_hint`, `open_world_hint`).
 - Hosting on Actions Runtime `/mcp` ensures every bootstrapper invocation dogfoods the real runtime's FastMCP v2 transport, OpenAPI schema generation, action invocation pipeline, SQLite run store, and (when started with `--api-key` on Linux) native Action Canvas MCP tools (`capability_discover`, `canvas_*`) and `/api/managed-work-items/v1` endpoints.
 - The retained Linux receipt qualifies bootstrapper tools, the Canvas resource read, and managed Work Items schema authentication only. It does **not** qualify a Canvas create/apply workflow or managed Work Items operations (`/capabilities` returned HTTP 422 with zero operations).
@@ -40,7 +39,7 @@ We **do not** build a custom Python MCP server or stdio wrapper around `rcc` and
 ### Decision 3: Local Installation, First-Use Behavior, Datadir, Ports, Auth, and Upgrade/Rollback
 
 1. **Installation & Mandatory Fail-Closed Binary Verification**:
-   - [`plugins/rcc/scripts/bootstrapper_runtime.py`](file:///home/kdlocpanda/plugins/plugins/rcc/scripts/bootstrapper_runtime.py) manages the local runtime lifecycle (`doctor`, `start`, `stop`, `status`, `backup`, `restore`, `mcp-smoke`).
+   - [`plugins/rcc/scripts/bootstrapper_runtime.py`](file:///home/kdlocpanda/plugins/plugins/rcc/scripts/bootstrapper_runtime.py) manages the local runtime lifecycle (`doctor`, `start`, `serve`, `stop`, `status`, `backup`, `restore`, `mcp-smoke`, and optional Linux `systemd-install` / `systemd-uninstall`).
    - **Fail-Closed Checksum Enforcement Before Execution**: Before executing `action-server` or `rcc`, both the runtime launcher and the bootstrapper core (`policy.py`) compute the binary's SHA-256 digest and compare it against the pinned release matrix ([`capability-and-version-matrix.md`](file:///home/kdlocpanda/plugins/plugins/rcc/docs/capability-and-version-matrix.md)). Any binary whose SHA-256 digest does not match an approved pinned release digest **fails closed before subprocess launch** (`PolicyViolationError("untrusted_binary_digest", ...)`).
 2. **External Per-User Datadir**:
    - Runtime state is stored **outside** the git checkout in a per-user state directory so plugin upgrades never clobber runtime state or dirty the repository:
@@ -102,7 +101,7 @@ The 36 legacy actions are replaced by **8 typed MCP tools/actions**, **2 read-on
 ## Consequences
 
 - **Positive**:
-  - The `rcc` plugin now provides both expert skills and an immediately usable, schema-validated MCP server configuration (`plugins/rcc/mcp.json` and `plugins/rcc/.mcp.json`) backed by Actions Runtime `1.1.1`.
+  - The `rcc` plugin provides both expert skills and an opt-in bundled bootstrapper Action package backed by Actions Runtime `1.1.1` without causing MCP startup failures on unrelated sessions where the local runtime is not running.
   - Release qualification (`plugins/rcc/scripts/dogfood_bootstrapper.py`) tests the real `/mcp` streamable HTTP transport, tool/resource/prompt discovery, Action and Robot scaffolding, work-item producer/consumer execution, failure diagnosis/retry, and Runtime `1.1.0` vs `1.1.1` comparison.
   - All 36 legacy actions have an explicit disposition in [`legacy-action-inventory.md`](file:///home/kdlocpanda/plugins/plugins/rcc/docs/legacy-action-inventory.md) with unit regression tests preventing recurrence of the legacy bugs.
 - **Boundaries & Non-Goals**:
