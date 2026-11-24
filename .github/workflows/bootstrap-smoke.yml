@@ -9,6 +9,8 @@ on:
 jobs:
   validate-linux:
     runs-on: ubuntu-latest
+    outputs:
+      candidate-package-sha256: ${{ steps.dogfood.outputs.candidate-package-sha256 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -27,6 +29,7 @@ jobs:
         run: python3 -m unittest plugins/rcc/tests/test_bootstrapper_unit.py plugins/rcc/tests/test_bootstrapper_packaging.py -v
 
       - name: Build and dogfood packaged RCC bootstrapper through the installer
+        id: dogfood
         run: |
           curl -fsSL -o "$RUNNER_TEMP/action-server" \
             https://github.com/joshyorko/actions/releases/download/actions-runtime-1.1.1/actions-runtime-1.1.1-linux64
@@ -35,8 +38,11 @@ jobs:
           python3 plugins/rcc/scripts/build_bootstrapper_package.py \
             --action-server "$RUNNER_TEMP/action-server" \
             --output "$RUNNER_TEMP/rcc-actions-bootstrapper-0.6.0.zip"
+          read -r candidate_sha256 _ < <(sha256sum "$RUNNER_TEMP/rcc-actions-bootstrapper-0.6.0.zip")
+          echo "candidate-package-sha256=$candidate_sha256" >> "$GITHUB_OUTPUT"
           python3 plugins/rcc/scripts/dogfood_bootstrapper.py \
             --package-archive "$RUNNER_TEMP/rcc-actions-bootstrapper-0.6.0.zip" \
+            --candidate-package-sha256 "$candidate_sha256" \
             --output-receipt "$RUNNER_TEMP/rcc-bootstrapper-linux-install.json" \
             > "$RUNNER_TEMP/rcc-bootstrapper-linux-install.log"
           python3 - <<'PY'
@@ -53,7 +59,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: rcc-bootstrapper-package-0.6.0
+          name: rcc-bootstrapper-candidate-0.6.0
           path: ${{ runner.temp }}/rcc-actions-bootstrapper-0.6.0.zip
           if-no-files-found: error
 
@@ -117,7 +123,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: rcc-bootstrapper-package-0.6.0
+          name: rcc-bootstrapper-candidate-0.6.0
           path: ${{ runner.temp }}
 
       - name: Install validation dependencies
@@ -127,11 +133,15 @@ jobs:
         run: python -m unittest plugins/rcc/tests/test_bootstrapper_unit.py plugins/rcc/tests/test_bootstrapper_packaging.py -v
 
       - name: Install and dogfood packaged RCC bootstrapper with pinned Windows binaries
+        env:
+          CANDIDATE_PACKAGE_SHA256: ${{ needs.validate-linux.outputs.candidate-package-sha256 }}
         run: |
           python plugins/rcc/scripts/dogfood_bootstrapper.py `
             --package-archive "$env:RUNNER_TEMP\rcc-actions-bootstrapper-0.6.0.zip" `
+            --candidate-package-sha256 "$env:CANDIDATE_PACKAGE_SHA256" `
             --output-receipt "$env:RUNNER_TEMP\rcc-bootstrapper-windows-install.json" `
             > "$env:RUNNER_TEMP\rcc-bootstrapper-windows-install.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $receipt = Get-Content -Raw "$env:RUNNER_TEMP\rcc-bootstrapper-windows-install.json" | ConvertFrom-Json
           if ($receipt.status -ne "passed" -or $receipt.packaged_install.source_free_launcher -ne "passed" -or `
               $receipt.action_golden_path.run_state -ne "succeeded" -or $receipt.robot_golden_path.run_state -ne "succeeded" -or `
