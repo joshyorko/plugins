@@ -424,6 +424,33 @@ def execute_project_run(
             "timeout_seconds must be between 0.1 and 600 seconds.",
         )
 
+    if execution_mode not in {"local_python", "rcc_cli"}:
+        raise PolicyViolationError(
+            "invalid_execution_mode",
+            "execution_mode must be 'local_python' or 'rcc_cli'.",
+        )
+    if execution_mode == "rcc_cli":
+        if project_kind != "robot":
+            raise PolicyViolationError(
+                "rcc_cli_project_kind_unsupported",
+                "rcc_cli executes Robot tasks only; select local_python explicitly for Actions.",
+            )
+        if inputs:
+            raise PolicyViolationError(
+                "rcc_cli_inputs_unsupported",
+                "rcc_cli does not forward keyword inputs; use the Robot's declared input interface or select local_python explicitly.",
+            )
+        if work_items:
+            raise PolicyViolationError(
+                "rcc_cli_work_items_unsupported",
+                "rcc_cli does not seed work items; select local_python explicitly for bootstrapper-managed work items.",
+            )
+        if simulate_failure:
+            raise PolicyViolationError(
+                "rcc_cli_simulation_unsupported",
+                "rcc_cli does not simulate failures; select local_python explicitly for the failure control.",
+            )
+
     run_id = f"run-{uuid.uuid4().hex[:12]}"
     run_lock = _run_state_lock(run_id)
     started_at = _now_iso()
@@ -437,7 +464,7 @@ def execute_project_run(
     for sec_key, sec_val in validated_secrets.items():
         env[sec_key] = sec_val
 
-    if execution_mode == "rcc_cli" and project_kind == "robot" and not simulate_failure and not work_items:
+    if execution_mode == "rcc_cli":
         verified_rcc, _ = verify_binary_before_execution("rcc", rcc_bin)
         robot_yaml = canonical_dir / "robot.yaml"
         task_arg = clean_target if clean_target != "default" else (validation.entrypoints[0] if validation.entrypoints else "RunTask")
