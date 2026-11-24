@@ -581,7 +581,7 @@ class BootstrapperUnitAndSecurityTests(unittest.TestCase):
         import bootstrapper_runtime
 
         unit_dir = self.tmp_root / "systemd-user"
-        env_file = self.tmp_root / "config" / "rcc-bootstrapper.env"
+        env_file = self.tmp_root / "service config" / "rcc-bootstrapper.env"
         spaced_root = self.tmp_root / "my workspace %100"
         spaced_root.mkdir(parents=True, exist_ok=True)
         trusted_root = spaced_root / "trusted"
@@ -634,7 +634,10 @@ class BootstrapperUnitAndSecurityTests(unittest.TestCase):
                 unit_path = Path(installed["unit_path"])
                 unit_text = unit_path.read_text(encoding="utf-8")
                 self.assertNotIn(generated_key or "", unit_text)
-                self.assertIn(f"EnvironmentFile={env_file}", unit_text)
+                # The space forces quoting on all hosts. JSON supplies the
+                # expected quote and backslash escaping.
+                quoted_env_file = json.dumps(str(env_file), ensure_ascii=False).replace("%", "%%")
+                self.assertIn(f"EnvironmentFile={quoted_env_file}", unit_text.splitlines())
                 self.assertIn("%%100", unit_text)
                 self.assertIn('"serve"', unit_text)
                 self.assertIn("--trusted-root", unit_text)
