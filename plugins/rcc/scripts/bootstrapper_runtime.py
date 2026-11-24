@@ -66,7 +66,10 @@ else:
     BOOTSTRAPPER_PKG_DIR = PLUGIN_ROOT / "bootstrapper"
 if _configured_package_dir:
     _configured_archive = BOOTSTRAPPER_PKG_DIR.parent / "package.zip"
-    if _configured_archive.is_file():
+    _candidate_sha256 = os.environ.get("RCC_BOOTSTRAPPER_CANDIDATE_SHA256")
+    if _candidate_sha256 is not None:
+        verify_installed_package(_configured_archive, BOOTSTRAPPER_PKG_DIR, expected_sha256=_candidate_sha256)
+    elif _configured_archive.is_file():
         verify_extracted_package(_configured_archive, BOOTSTRAPPER_PKG_DIR)
 BOOTSTRAPPER_SRC_DIR = BOOTSTRAPPER_PKG_DIR / "src"
 
@@ -472,16 +475,17 @@ def _prepare_runtime_launch(
     runtime_home: str | Path | None = None,
     robocorp_home: str | Path | None = None,
     expected_runtime_sha256: str | None = None,
+    expected_package_sha256: str | None = None,
     allow_already_running: bool = True,
 ) -> dict[str, Any]:
     """Validate auth, state dirs, port ownership, binary digests, and build launch context."""
-    installed_archive = package_dir.expanduser().resolve().parent / "package.zip"
-    if installed_archive.is_file():
-        installed_receipt = installed_archive.parent / "install-receipt.json"
-        if installed_receipt.is_file():
-            verify_installed_package(installed_archive, package_dir.expanduser().resolve())
-        else:
-            verify_extracted_package(installed_archive, package_dir.expanduser().resolve())
+    resolved_package_dir = package_dir.expanduser().resolve()
+    installed_archive = resolved_package_dir.parent / "package.zip"
+    installed_receipt = installed_archive.parent / "install-receipt.json"
+    if expected_package_sha256 is not None or (installed_archive.is_file() and installed_receipt.is_file()):
+        verify_installed_package(installed_archive, resolved_package_dir, expected_sha256=expected_package_sha256)
+    elif installed_archive.is_file():
+        verify_extracted_package(installed_archive, resolved_package_dir)
     resolved_api_key = api_key if api_key is not None else os.environ.get("RCC_BOOTSTRAPPER_API_KEY")
     if not resolved_api_key or not resolved_api_key.strip():
         raise PolicyViolationError(
@@ -647,6 +651,7 @@ def start_owned_runtime(
     runtime_home: str | Path | None = None,
     robocorp_home: str | Path | None = None,
     expected_runtime_sha256: str | None = None,
+    expected_package_sha256: str | None = None,
     startup_timeout: float = 90.0,
 ) -> dict[str, Any]:
     """Start an owned action-server instance after fail-closed binary verification and port ownership checks."""
@@ -663,6 +668,7 @@ def start_owned_runtime(
         runtime_home=runtime_home,
         robocorp_home=robocorp_home,
         expected_runtime_sha256=expected_runtime_sha256,
+        expected_package_sha256=expected_package_sha256,
         allow_already_running=True,
     )
     if launch["already_running"]:

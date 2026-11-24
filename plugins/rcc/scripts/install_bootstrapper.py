@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import stat
 import sys
@@ -282,10 +283,14 @@ def verify_extracted_package(archive_path: Path, package_dir: Path) -> dict[str,
     return actual_hashes
 
 
-def verify_installed_package(archive_path: Path, package_dir: Path) -> dict[str, str]:
+def verify_installed_package(
+    archive_path: Path, package_dir: Path, *, expected_sha256: str | None = None
+) -> dict[str, str]:
+    if expected_sha256 is None:
+        expected_sha256 = PACKAGE_SHA256
     actual = digest_file(archive_path)
-    if actual != PACKAGE_SHA256:
-        raise RuntimeError(f"installed package ZIP pin mismatch: expected {PACKAGE_SHA256}, got {actual}")
+    if actual != expected_sha256:
+        raise RuntimeError(f"installed package ZIP pin mismatch: expected {expected_sha256}, got {actual}")
     return verify_extracted_package(archive_path, package_dir)
 
 
@@ -333,9 +338,17 @@ def install(
     package_url: str = PACKAGE_URL,
     package_archive: Path | None = None,
     offline_artifact_dir: Path | None = None,
+    candidate_package_sha256: str | None = None,
 ) -> dict[str, str]:
     if package_archive and offline_artifact_dir:
         raise ValueError("choose either --package-archive or --offline-artifact-dir")
+    package_sha256 = PACKAGE_SHA256
+    versions_dir = "versions"
+    if candidate_package_sha256 is not None:
+        if package_archive is None or not re.fullmatch(r"[0-9a-f]{64}", candidate_package_sha256):
+            raise ValueError("candidate installation requires --package-archive and a lowercase SHA-256 digest")
+        package_sha256 = candidate_package_sha256
+        versions_dir = "candidate-versions"
     runtime_name, runtime_sha, rcc_name, rcc_sha, runtime_url, rcc_url = platform_pin()
     home = home.expanduser().absolute()
     if _is_link_like(home):
@@ -343,7 +356,7 @@ def install(
     # Unsupported hosts fail before any filesystem changes or network requests.
     _ensure_private_directory(home)
     with SetupLock(home / ".setup.lock"):
-        version_root = _ensure_private_directory(home / "versions")
+        version_root = _ensure_private_directory(home / versions_dir)
         versions = version_root / PACKAGE_VERSION
         if _is_link_like(versions):
             raise RuntimeError(f"refusing redirected immutable package version: {versions}")
@@ -353,15 +366,14 @@ def install(
                 raise RuntimeError(f"incomplete immutable package version exists: {versions}")
             receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
             if (
-                receipt.get("package_sha256") != PACKAGE_SHA256
+                receipt.get("package_sha256") != package_sha256
                 or receipt.get("runtime_sha256") != runtime_sha
                 or receipt.get("rcc_sha256") != rcc_sha
-                or digest_file(versions / "package.zip") != PACKAGE_SHA256
                 or digest_file(versions / "bin" / runtime_name) != runtime_sha
                 or digest_file(versions / "bin" / rcc_name) != rcc_sha
             ):
                 raise RuntimeError(f"installed package version failed pin verification: {versions}")
-            verify_installed_package(versions / "package.zip", versions / "package")
+            verify_installed_package(versions / "package.zip", versions / "package", expected_sha256=package_sha256)
         else:
             work = Path(tempfile.mkdtemp(prefix=".setup-", dir=home))
             try:
@@ -372,7 +384,7 @@ def install(
                     stage_local_artifact(artifact_dir / rcc_name, work / rcc_name, rcc_sha)
                 else:
                     if package_archive:
-                        stage_local_artifact(package_archive, work / "package.zip", PACKAGE_SHA256)
+                        stage_local_artifact(package_archive, work / "package.zip", package_sha256)
                     else:
                         download(package_url, work / "package.zip", PACKAGE_SHA256)
                     download(runtime_url, work / runtime_name, runtime_sha)
@@ -380,7 +392,7 @@ def install(
                 stage = work / "version"
                 _ensure_private_directory(stage)
                 extract_package(work / "package.zip", stage / "package")
-                verify_installed_package(work / "package.zip", stage / "package")
+                verify_installed_package(work / "package.zip", stage / "package", expected_sha256=package_sha256)
                 shutil.copyfile(work / "package.zip", stage / "package.zip")
                 (stage / "bin").mkdir()
                 shutil.copyfile(work / runtime_name, stage / "bin" / runtime_name)
@@ -390,7 +402,7 @@ def install(
                         binary.chmod(0o755)
                 receipt = {
                     "package_version": PACKAGE_VERSION,
-                    "package_sha256": PACKAGE_SHA256,
+                    "package_sha256": package_sha256,
                     "runtime_version": RUNTIME_VERSION,
                     "runtime_sha256": runtime_sha,
                     "rcc_version": RCC_VERSION,
@@ -427,7 +439,7 @@ def install(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--home", type=Path, default=_default_home())
+    parser.add_argument("--home", type=Path)
     package_source = parser.add_mutually_exclusive_group()
     package_source.add_argument(
         "--package-archive",
@@ -441,14 +453,22 @@ def main() -> int:
         default=None,
         help=f"Use local pinned files named {PACKAGE_FILENAME}, plus native Runtime and RCC assets.",
     )
+    parser.add_argument(
+        "--candidate-package-sha256",
+        help="Verify a CI candidate against its build digest in a separate installation directory. "
+        "Requires --home and --package-archive.",
+    )
     args = parser.parse_args()
+    if args.candidate_package_sha256 is not None and args.home is None:
+        parser.error("--candidate-package-sha256 requires an explicit --home")
     try:
         print(
             json.dumps(
                 install(
-                    args.home,
+                    args.home if args.home is not None else _default_home(),
                     package_archive=args.package_archive,
                     offline_artifact_dir=args.offline_artifact_dir,
+                    candidate_package_sha256=args.candidate_package_sha256,
                 ),
                 indent=2,
             )

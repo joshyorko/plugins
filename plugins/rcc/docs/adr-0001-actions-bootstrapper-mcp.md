@@ -107,3 +107,20 @@ The 36 legacy actions are replaced by **8 typed MCP tools/actions**, **2 read-on
 - **Boundaries & Non-Goals**:
   - Action Canvas interactive workflows remain owned by `action-server` skill guidance (`#108`); we do not create a duplicate `action-canvas` skill.
   - Unverified client/platform combinations (e.g., ChatGPT Developer Mode E1 public tunnel, macOS plugin runtime qualification, Windows native Canvas storage) remain explicitly gated as `NOT QUALIFIED` in [`capability-and-version-matrix.md`](file:///home/kdlocpanda/plugins/plugins/rcc/docs/capability-and-version-matrix.md).
+
+
+## Execution-mode contract
+
+`bootstrapper_run(execution_mode="rcc_cli")` runs a declared Robot task through
+verified RCC. It accepts empty `inputs_json` and `work_items_json` only and
+refuses `simulate_failure` or Action projects. Unsupported combinations and
+unknown modes fail before creating a run record or launching a process; they
+never silently discard input or switch to host Python.
+
+For bootstrapper-managed keyword inputs, seeded work items or the simulated
+failure control, explicitly choose `local_python`. That mode is not RCC
+execution evidence. An RCC robot can instead use its own declared input adapter,
+such as a bounded, task-owned file inbox, independently of `inputs_json`.
+Each bootstrapper run owns a separate process group; repeated runs do not retain
+a browser session. A persistent target must be owned inside one bounded robot
+run, not inferred from a sequence of successful subprocesses.

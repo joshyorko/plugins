@@ -128,7 +128,10 @@ def run_dogfood_suite(
     baseline_receipt: Path | None = None,
     package_archive: Path | None = None,
     offline_artifact_dir: Path | None = None,
+    candidate_package_sha256: str | None = None,
 ) -> dict[str, Any]:
+    if candidate_package_sha256 is not None and package_archive is None:
+        raise ValueError("--candidate-package-sha256 requires --package-archive")
     api_key = "dogfood-local-auth-token-109"
     secret_marker = "TOPSECRET_VALUE_99412_DO_NOT_LEAK"
     port = _find_free_port()
@@ -145,6 +148,8 @@ def run_dogfood_suite(
                 command.extend(["--package-archive", str(package_archive.expanduser().resolve())])
             if offline_artifact_dir:
                 command.extend(["--offline-artifact-dir", str(offline_artifact_dir.expanduser().resolve())])
+            if candidate_package_sha256 is not None:
+                command.extend(["--candidate-package-sha256", candidate_package_sha256])
             installed = subprocess.run(command, capture_output=True, text=True, check=False)
             if installed.returncode:
                 raise RuntimeError(f"installer CLI failed: {installed.stderr.strip()}")
@@ -157,6 +162,11 @@ def run_dogfood_suite(
             launcher_env = os.environ.copy()
             launcher_env["RCC_BOOTSTRAPPER_HOME"] = str(install_home)
             launcher_env.pop("PYTHONPATH", None)
+            launcher_env.pop("RCC_BOOTSTRAPPER_PACKAGE_DIR", None)
+            launcher_env.pop("RCC_BOOTSTRAPPER_CANDIDATE_SHA256", None)
+            if candidate_package_sha256 is not None:
+                launcher_env["RCC_BOOTSTRAPPER_PACKAGE_DIR"] = str(package_dir)
+                launcher_env["RCC_BOOTSTRAPPER_CANDIDATE_SHA256"] = candidate_package_sha256
             launcher = subprocess.run(
                 [sys.executable, "-S", str(SCRIPT_DIR / "bootstrapper_runtime.py"), "--help"],
                 cwd=tmp_root,
@@ -192,6 +202,7 @@ def run_dogfood_suite(
             rcc_binary=rcc_binary,
             runtime_home=runtime_home,
             robocorp_home=robocorp_home,
+            expected_package_sha256=candidate_package_sha256,
             startup_timeout=300.0 if sys.platform == "win32" else 90.0,
         )
         mcp_url = f"http://127.0.0.1:{port}/mcp"
@@ -501,9 +512,9 @@ def run_dogfood_suite(
             "source_identity": _source_identity(),
             "packaged_install": {
                 "installer_mode": (
-                    "offline-artifacts"
-                    if offline_artifact_dir
-                    else ("package-archive" if installation else None)
+                    "candidate-package" if candidate_package_sha256 is not None
+                    else "offline-artifacts" if offline_artifact_dir
+                    else "package-archive" if installation else None
                 ),
                 "package_archive": str(package_archive) if package_archive else None,
                 "package_sha256": package_digest,
@@ -608,6 +619,10 @@ def main() -> int:
         default=None,
         help=f"Install from local files named {PACKAGE_FILENAME} and the platform-pinned native binaries.",
     )
+    parser.add_argument(
+        "--candidate-package-sha256",
+        help="Verify a locally built ZIP against this build digest. Requires --package-archive.",
+    )
     args = parser.parse_args()
 
     out_path = Path(args.output_receipt).expanduser().resolve() if args.output_receipt else None
@@ -620,6 +635,7 @@ def main() -> int:
         baseline_receipt=base_path,
         package_archive=args.package_archive,
         offline_artifact_dir=args.offline_artifact_dir,
+        candidate_package_sha256=args.candidate_package_sha256,
     )
     print(json.dumps(receipt, indent=2))
     return 0

@@ -209,7 +209,7 @@ def bootstrapper_run(
         target_name: Action function or Robot task name to run (or 'default' for the primary entrypoint).
         inputs_json: JSON object of keyword arguments for the entrypoint.
         work_items_json: Optional JSON array of input work item payloads for producer/consumer batch runs.
-        execution_mode: 'local_python' (default fast deterministic runner) or 'rcc_cli' (full rcc run).
+        execution_mode: 'local_python' (default) or 'rcc_cli' (Robot tasks only; nonempty inputs, work items and simulate_failure are rejected).
         timeout_seconds: Maximum runtime in seconds before process-group termination (0.1 to 600).
         simulate_failure: Trigger a controlled non-zero exit (code 2) and diagnostic artifact for failure/retry testing.
         trust_project: Explicit operator confirmation that the target project code is trusted to execute.

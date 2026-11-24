@@ -389,6 +389,59 @@ class PackagingTests(unittest.TestCase):
                 if os.name != "nt":
                     self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
 
+    def test_candidate_digest_is_required_at_install_and_source_free_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive = root / "candidate.zip"
+            digest = hashlib.sha256(package_zip(archive)).hexdigest()
+            home = root / "install"
+            runtime_name, _, rcc_name, _, runtime_url, rcc_url = installer.platform_pin()
+            binary = b"native fixture"
+            binary_sha256 = hashlib.sha256(binary).hexdigest()
+            pins = (runtime_name, binary_sha256, rcc_name, binary_sha256, runtime_url, rcc_url)
+
+            def fake_download(url: str, destination: Path, expected_sha256: str) -> None:
+                self.assertIn(url, (runtime_url, rcc_url))
+                self.assertEqual(expected_sha256, binary_sha256)
+                destination.write_bytes(binary)
+
+            with (
+                patch.object(installer, "platform_pin", return_value=pins),
+                patch.object(installer, "download", side_effect=fake_download) as download,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "SHA-256 mismatch"):
+                    installer.install(home, package_archive=archive)
+                with self.assertRaisesRegex(RuntimeError, "SHA-256 mismatch"):
+                    installer.install(home, package_archive=archive, candidate_package_sha256="0" * 64)
+                download.assert_not_called()
+                installed = installer.install(home, package_archive=archive, candidate_package_sha256=digest)
+                self.assertEqual(
+                    installed,
+                    installer.install(home, package_archive=archive, candidate_package_sha256=digest),
+                )
+                self.assertEqual(download.call_count, 2)
+            self.assertFalse((home / "versions" / installer.PACKAGE_VERSION).exists())
+
+            launcher = Path(__file__).resolve().parents[1] / "scripts" / "bootstrapper_runtime.py"
+            env = {
+                **os.environ,
+                "RCC_BOOTSTRAPPER_HOME": str(home),
+                "RCC_BOOTSTRAPPER_PACKAGE_DIR": installed["package_dir"],
+                "RCC_BOOTSTRAPPER_CANDIDATE_SHA256": digest,
+            }
+            env.pop("PYTHONPATH", None)
+            command = [sys.executable, "-S", str(launcher), "--help"]
+            result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("start", result.stdout)
+
+            # A ZIP comment changes its digest without changing any extracted file.
+            with zipfile.ZipFile(installed["package_archive"], "a") as staged:
+                staged.comment = b"modified after install"
+            result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("installed package ZIP pin mismatch", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
